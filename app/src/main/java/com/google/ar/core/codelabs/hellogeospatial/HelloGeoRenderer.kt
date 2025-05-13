@@ -48,8 +48,11 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     private val Z_FAR = 1000f
     
     // Constants for fallback detection - increasing values to give more time
-    private const val MAX_EARTH_INIT_WAIT_TIME_MS = 60000L // 60 seconds (was 30)
-    private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 600 // ~20 seconds at 30fps (was 300)
+    private const val MAX_EARTH_INIT_WAIT_TIME_MS = 120000L // 2 minutes to initialize Earth
+    private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 900 // ~30 seconds at 30fps
+    
+    // Track Earth quality
+    private const val REQUIRED_TRACKING_CONFIDENCE = 0.7f // Min confidence to consider tracking reliable
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -89,6 +92,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   private var earthInitializedTime = 0L
   private var framesWithoutEarthTracking = 0
   private var hasFallenBackToMapMode = false
+  private var lastTrackingQualityWarningTime = 0L
 
   override fun onResume(owner: LifecycleOwner) {
     displayRotationHelper.onResume()
@@ -227,6 +231,15 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           if (earthInitializedTime == 0L) {
             earthInitializedTime = System.currentTimeMillis()
             Log.d(TAG, "Starting Earth initialization timer")
+            
+            // Show a toast to let user know we're initializing Earth
+            activity.runOnUiThread {
+              Toast.makeText(
+                activity,
+                "Initializing Earth tracking. Please walk around slowly in an open outdoor area.",
+                Toast.LENGTH_LONG
+              ).show()
+            }
           } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
             // Earth hasn't initialized in the maximum wait time, fall back to map mode
             Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
@@ -240,11 +253,26 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
         if (earthInitializedTime > 0) {
           Log.d(TAG, "Earth initialized after ${System.currentTimeMillis() - earthInitializedTime}ms")
           earthInitializedTime = 0
+          
+          // Show a success toast when Earth is initialized
+          activity.runOnUiThread {
+            Toast.makeText(
+              activity,
+              "Earth tracking initialized! You can now search for destinations.",
+              Toast.LENGTH_LONG
+            ).show()
+          }
         }
 
         // Check Earth tracking state
         if (earth.trackingState != TrackingState.TRACKING) {
-          Log.d(TAG, "Earth tracking state: ${earth.trackingState}, frames without tracking: $framesWithoutEarthTracking")
+          val stateDescription = when(earth.trackingState) {
+            TrackingState.PAUSED -> "PAUSED"
+            TrackingState.STOPPED -> "STOPPED" 
+            else -> "UNKNOWN"
+          }
+          
+          Log.d(TAG, "Earth tracking state: $stateDescription, frames without tracking: $framesWithoutEarthTracking")
           activity.view.updateStatusText(earth, null)
           
           // Increment counter for frames without Earth tracking
@@ -256,7 +284,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
             activity.runOnUiThread {
               Toast.makeText(
                 activity,
-                "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal.",
+                "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal and walk around slowly.",
                 Toast.LENGTH_LONG
               ).show()
             }
@@ -277,10 +305,52 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           framesWithoutEarthTracking = 0
         }
         
-        // Earth is tracking properly
+        // Earth is tracking - evaluate quality
         val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
-        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
+        val horizontalAccuracy = cameraGeospatialPose.horizontalAccuracy
+        val headingAccuracy = cameraGeospatialPose.headingAccuracy
         
+        // Calculate a confidence metric (0-1) - lower is better for accuracies
+        val locationConfidence = if (horizontalAccuracy > 0) Math.min(1.0, 10.0 / horizontalAccuracy) else 0.0
+        val headingConfidence = if (headingAccuracy > 0) Math.min(1.0, 15.0 / headingAccuracy) else 0.0
+        val overallConfidence = (locationConfidence + headingConfidence) / 2.0
+        
+        val qualityString = when {
+            overallConfidence >= 0.8 -> "Excellent"
+            overallConfidence >= REQUIRED_TRACKING_CONFIDENCE -> "Good"
+            overallConfidence >= 0.4 -> "Fair"
+            else -> "Poor"
+        }
+        
+        Log.d(TAG, "Earth tracking quality: $qualityString ($overallConfidence), " +
+              "location accuracy: ${horizontalAccuracy}m, heading accuracy: ${headingAccuracy}°")
+        
+        // Update UI with quality indicators
+        activity.runOnUiThread {
+          activity.view.updateTrackingQuality(qualityString, overallConfidence)
+        }
+        
+        // Provide tracking quality feedback to user if poor
+        if (overallConfidence < REQUIRED_TRACKING_CONFIDENCE && 
+            System.currentTimeMillis() - lastTrackingQualityWarningTime > 30000) {
+          lastTrackingQualityWarningTime = System.currentTimeMillis()
+          activity.runOnUiThread {
+            Toast.makeText(
+              activity,
+              "Location accuracy is $qualityString. For better AR, walk slowly in an open area.",
+              Toast.LENGTH_LONG
+            ).show()
+          }
+        }
+        
+        // Log tracking state details
+        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: " +
+              "lat=${cameraGeospatialPose.latitude}, " +
+              "lng=${cameraGeospatialPose.longitude}, " +
+              "alt=${cameraGeospatialPose.altitude}, " +
+              "accuracy=${horizontalAccuracy}m")
+        
+        // Update map position
         activity.view.mapView?.updateMapPosition(
           latitude = cameraGeospatialPose.latitude,
           longitude = cameraGeospatialPose.longitude,

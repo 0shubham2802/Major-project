@@ -370,6 +370,57 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     return R * c // Distance in meters
   }
 
+  // Add a method to update tracking quality indicators
+  fun updateTrackingQuality(quality: String, confidence: Double) {
+    activity.runOnUiThread {
+      // Create or update the quality indicator
+      var qualityText = textViews["quality_indicator"]
+      
+      if (qualityText == null) {
+        // Create quality indicator if it doesn't exist
+        qualityText = TextView(activity).apply {
+          setPadding(16, 8, 16, 8)
+          gravity = Gravity.CENTER
+          textSize = 14f
+          setTextColor(Color.WHITE)
+          
+          // Add shadow for better visibility
+          setShadowLayer(2f, 1f, 1f, Color.BLACK)
+          
+          // Set rounded background
+          background = ContextCompat.getDrawable(activity, android.R.drawable.dialog_holo_light_frame)
+          
+          // Position at top-right
+          val layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+          ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = 80
+            rightMargin = 16
+          }
+          
+          (root as FrameLayout).addView(this, layoutParams)
+          textViews["quality_indicator"] = this
+        }
+      }
+      
+      // Set appropriate background color based on quality
+      val backgroundColor = when (quality) {
+        "Excellent" -> Color.parseColor("#4CAF50") // Green
+        "Good" -> Color.parseColor("#8BC34A") // Light Green
+        "Fair" -> Color.parseColor("#FFC107") // Amber
+        else -> Color.parseColor("#F44336") // Red
+      }
+      
+      // Set text and background
+      qualityText.apply {
+        text = "Tracking: $quality"
+        setBackgroundColor(backgroundColor)
+      }
+    }
+  }
+
   override fun onResume(owner: LifecycleOwner) {
     surfaceView.onResume()
   }

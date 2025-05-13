@@ -70,8 +70,8 @@
     <!-- Indicates whether "Google Play Services for AR" (ARCore) is "required" or "optional". -->
     <meta-data android:name="com.google.ar.core" android:value="optional" />
     
-    <!-- For the emulator support - commenting out as it may interfere with real devices -->
-    <!-- <meta-data android:name="com.google.android.ar.arcore.emulator" android:value="true"/> -->
+    <!-- Re-enabling the emulator support but with proper checking in code -->
+    <meta-data android:name="com.google.android.ar.arcore.emulator" android:value="true"/>
 
     <meta-data
         android:name="com.google.android.ar.API_KEY"

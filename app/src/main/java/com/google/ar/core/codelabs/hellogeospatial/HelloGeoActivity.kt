@@ -35,6 +35,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -94,10 +95,10 @@ class HelloGeoActivity : AppCompatActivity() {
     }
 
     try {
-      // TEMPORARY FIX: Skip AR initialization entirely and go straight to map mode
-      Log.d(TAG, "Bypassing AR mode entirely to prevent crashes")
+      // RE-ENABLING AR: Try AR mode with proper fallback
+      Log.d(TAG, "Attempting to initialize AR mode")
       
-      // Show a loading message
+      // Show a loading message while we set things up
       val loadingLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
@@ -105,33 +106,28 @@ class HelloGeoActivity : AppCompatActivity() {
       }
       
       val loadingText = TextView(this).apply {
-        text = "Loading navigation..."
+        text = "Initializing AR Navigation..."
         textSize = 18f
         gravity = Gravity.CENTER
         setTextColor(Color.BLACK)
       }
       
+      val progressBar = ProgressBar(this)
+      loadingLayout.addView(progressBar)
       loadingLayout.addView(loadingText)
       setContentView(loadingLayout)
       
-      // Launch the fallback activity with a slight delay to ensure clean state
-      Handler(Looper.getMainLooper()).postDelayed({
-        try {
+      // Check if device supports AR
+      if (!checkIsARCoreSupportedAndUpToDate()) {
+        Log.d(TAG, "Device doesn't support ARCore, falling back to map mode")
+        Handler(Looper.getMainLooper()).postDelayed({
           startActivity(Intent(this, FallbackActivity::class.java))
           finish()
-        } catch (e: Exception) {
-          Log.e(TAG, "Error launching FallbackActivity", e)
-          showFallbackUserInterface()
-        }
-      }, 500) // 500ms delay
+        }, 500)
+        return
+      }
       
-      return
-    } catch (e: Exception) {
-      Log.e(TAG, "Error in bypass", e)
-      // Continue with normal flow if the bypass fails
-    }
-
-    try {
+      // AR is supported, continue with AR initialization
       // Initialize location services
       fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
@@ -320,22 +316,37 @@ class HelloGeoActivity : AppCompatActivity() {
       Log.d(TAG, "Configuring ARCore session with geospatial mode")
       session.configure(
         session.config.apply {
+          // Enable geospatial mode
           geospatialMode = Config.GeospatialMode.ENABLED
           
-          // Use more basic settings for better compatibility
-          planeFindingMode = Config.PlaneFindingMode.DISABLED
+          // Balanced settings for AR navigation
+          planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
           
-          // Disable depth for better compatibility
-          depthMode = Config.DepthMode.DISABLED
+          // Enable depth for better occlusion but only if device supports it
+          try {
+            if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+              depthMode = Config.DepthMode.AUTOMATIC
+              Log.d(TAG, "Depth mode enabled")
+            } else {
+              depthMode = Config.DepthMode.DISABLED
+              Log.d(TAG, "Depth mode not supported on this device")
+            }
+          } catch (e: Exception) {
+            depthMode = Config.DepthMode.DISABLED
+            Log.e(TAG, "Error checking depth support", e)
+          }
           
-          // Disable lighting estimation for performance
-          lightEstimationMode = Config.LightEstimationMode.DISABLED
+          // Use lighter lighting estimation mode for better performance
+          lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
           
-          // Set to FAST mode for better performance
+          // Use latest camera image for best tracking
           updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
           
-          // Focus mode for better tracking stability
+          // Enable auto focus for better tracking
           focusMode = Config.FocusMode.AUTO
+          
+          // Enable cloud anchors for potential future social/shared AR features
+          cloudAnchorMode = Config.CloudAnchorMode.ENABLED
         }
       )
       Log.d(TAG, "ARCore session configured successfully")
