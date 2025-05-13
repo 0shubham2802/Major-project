@@ -41,18 +41,27 @@
         android:inputType="text"
         android:padding="16dp" />
 
-    <Button
-        android:id="@+id/navigateButton"
+    <!-- Container for buttons -->
+    <LinearLayout
+        android:id="@+id/container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginLeft="16dp"
-        android:layout_marginRight="16dp"
-        android:layout_marginBottom="16dp"
-        android:background="@android:color/holo_blue_dark"
-        android:padding="12dp"
-        android:text="Navigate with Google Maps"
-        android:textColor="@android:color/white"
-        android:visibility="gone" />
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/navigateButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="16dp"
+            android:layout_marginRight="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="@android:color/holo_blue_dark"
+            android:padding="12dp"
+            android:text="Navigate with Google Maps"
+            android:textColor="@android:color/white"
+            android:visibility="gone" />
+
+    </LinearLayout>
 
     <FrameLayout
         android:id="@+id/map_container"

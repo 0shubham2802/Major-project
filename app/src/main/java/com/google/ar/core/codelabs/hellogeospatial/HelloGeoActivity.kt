@@ -130,7 +130,7 @@ class HelloGeoActivity : AppCompatActivity() {
     }
   }
   
-  private fun startFallbackActivity() {
+  fun startFallbackActivity() {
     try {
       startActivity(Intent(this, FallbackActivity::class.java))
       finish()

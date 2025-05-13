@@ -166,6 +166,24 @@ class FallbackActivity : AppCompatActivity() {
         }
         
         try {
+            // Check if ARActivity exists
+            val arActivityClass = try {
+                Class.forName("com.google.ar.core.codelabs.hellogeospatial.ARActivity")
+                true
+            } catch (e: ClassNotFoundException) {
+                Log.e(TAG, "ARActivity class not found", e)
+                false
+            }
+            
+            if (!arActivityClass) {
+                Toast.makeText(
+                    this,
+                    "AR mode is not available in this version of the app", 
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+            
             // Launch the AR activity but keep this one in background
             val arIntent = Intent(this, ARActivity::class.java)
             

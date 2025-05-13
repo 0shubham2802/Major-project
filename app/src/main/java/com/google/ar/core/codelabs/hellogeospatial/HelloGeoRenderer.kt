@@ -15,6 +15,7 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial
 
+import android.content.Context
 import android.content.Intent
 import android.opengl.Matrix
 import android.util.Log
@@ -25,6 +26,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.ar.core.Anchor
 import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
+import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.examples.java.common.helpers.DisplayRotationHelper
 import com.google.ar.core.examples.java.common.helpers.TrackingStateHelper
@@ -38,7 +40,7 @@ import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.io.IOException
 
 
-class HelloGeoRenderer(val activity: HelloGeoActivity) :
+class HelloGeoRenderer(val context: Context) :
   SampleRender.Renderer, DefaultLifecycleObserver {
   //<editor-fold desc="ARCore initialization" defaultstate="collapsed">
   companion object {
@@ -77,22 +79,29 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
   val modelViewProjectionMatrix = FloatArray(16) // projection x view x model
 
-  val session
-    get() = activity.arCoreSessionHelper.session
-    
+  private var arSession: Session? = null
+  
   // Store multiple anchors for navigation path
   private val anchors = mutableListOf<Anchor>()
   private var destinationAnchor: Anchor? = null
   private var isNavigating = false
 
-  val displayRotationHelper = DisplayRotationHelper(activity)
-  val trackingStateHelper = TrackingStateHelper(activity)
+  val displayRotationHelper = DisplayRotationHelper(context)
+  val trackingStateHelper = TrackingStateHelper(context)
   
   private var lastEarthTrackingErrorTime = 0L
   private var earthInitializedTime = 0L
   private var framesWithoutEarthTracking = 0
   private var hasFallenBackToMapMode = false
   private var lastTrackingQualityWarningTime = 0L
+
+  // Reference to the view - can be HelloGeoView or ARActivity's view
+  private var helloGeoView: HelloGeoView? = null
+  
+  // Set view reference
+  fun setView(view: HelloGeoView) {
+    this.helloGeoView = view
+  }
 
   override fun onResume(owner: LifecycleOwner) {
     displayRotationHelper.onResume()
@@ -225,7 +234,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
         if (earth == null) {
           Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
           // No need to show an error - just wait
-          activity.view.updateStatusText(null, null)
+          updateStatusText(null, null)
           
           // Track time waiting for Earth to initialize
           if (earthInitializedTime == 0L) {
@@ -233,13 +242,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
             Log.d(TAG, "Starting Earth initialization timer")
             
             // Show a toast to let user know we're initializing Earth
-            activity.runOnUiThread {
-              Toast.makeText(
-                activity,
-                "Initializing Earth tracking. Please walk around slowly in an open outdoor area.",
-                Toast.LENGTH_LONG
-              ).show()
-            }
+            updateStatusText(null, null)
           } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
             // Earth hasn't initialized in the maximum wait time, fall back to map mode
             Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
@@ -255,13 +258,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           earthInitializedTime = 0
           
           // Show a success toast when Earth is initialized
-          activity.runOnUiThread {
-            Toast.makeText(
-              activity,
-              "Earth tracking initialized! You can now search for destinations.",
-              Toast.LENGTH_LONG
-            ).show()
-          }
+          updateStatusText(earth, null)
         }
 
         // Check Earth tracking state
@@ -273,7 +270,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           }
           
           Log.d(TAG, "Earth tracking state: $stateDescription, frames without tracking: $framesWithoutEarthTracking")
-          activity.view.updateStatusText(earth, null)
+          updateStatusText(earth, null)
           
           // Increment counter for frames without Earth tracking
           framesWithoutEarthTracking++
@@ -281,13 +278,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           // Wait at least 10 seconds before showing error to the user
           if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
             lastEarthTrackingErrorTime = System.currentTimeMillis()
-            activity.runOnUiThread {
-              Toast.makeText(
-                activity,
-                "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal and walk around slowly.",
-                Toast.LENGTH_LONG
-              ).show()
-            }
+            updateStatusText(earth, null)
           }
           
           // Check if we've gone too long without Earth tracking
@@ -326,21 +317,13 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
               "location accuracy: ${horizontalAccuracy}m, heading accuracy: ${headingAccuracy}°")
         
         // Update UI with quality indicators
-        activity.runOnUiThread {
-          activity.view.updateTrackingQuality(qualityString, overallConfidence)
-        }
+        updateStatusText(earth, earth.cameraGeospatialPose)
         
         // Provide tracking quality feedback to user if poor
         if (overallConfidence < REQUIRED_TRACKING_CONFIDENCE && 
             System.currentTimeMillis() - lastTrackingQualityWarningTime > 30000) {
           lastTrackingQualityWarningTime = System.currentTimeMillis()
-          activity.runOnUiThread {
-            Toast.makeText(
-              activity,
-              "Location accuracy is $qualityString. For better AR, walk slowly in an open area.",
-              Toast.LENGTH_LONG
-            ).show()
-          }
+          updateStatusText(earth, earth.cameraGeospatialPose)
         }
         
         // Log tracking state details
@@ -351,18 +334,14 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
               "accuracy=${horizontalAccuracy}m")
         
         // Update map position
-        activity.view.mapView?.updateMapPosition(
-          latitude = cameraGeospatialPose.latitude,
-          longitude = cameraGeospatialPose.longitude,
-          heading = cameraGeospatialPose.heading
-        )
+        updateMapPosition(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude, cameraGeospatialPose.heading)
         
         // Update AR navigation visuals if navigating
         if (isNavigating) {
           updateNavigationAnchors(earth, cameraGeospatialPose)
         }
         
-        activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
+        updateStatusText(earth, earth.cameraGeospatialPose)
 
         // Draw all anchors
         for (anchor in anchors) {
@@ -387,10 +366,8 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     } catch (e: Exception) {
       // Catch any GL thread errors that might crash the app
       Log.e(TAG, "Critical error in GL thread", e)
-      activity.runOnUiThread {
-        Toast.makeText(activity, "Critical rendering error: ${e.message}", Toast.LENGTH_LONG).show()
-        handlePersistentEarthFailure("Rendering error: ${e.message}")
-      }
+      updateStatusText(null, null)
+      showError("Critical rendering error: ${e.message}")
     }
   }
   
@@ -431,7 +408,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
       destinationAnchor = anchor
       
       // Update map marker
-      activity.view.mapView?.earthMarker?.apply {
+      helloGeoView?.mapView?.earthMarker?.apply {
         position = LatLng(latitude, longitude)
         isVisible = true
       }
@@ -558,7 +535,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
       1f
     )
 
-    activity.view.mapView?.earthMarker?.apply {
+    helloGeoView?.mapView?.earthMarker?.apply {
       position = latLng
       isVisible = true
     }
@@ -591,8 +568,15 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     draw(mesh, shader, virtualSceneFramebuffer)
   }
 
-  private fun showError(errorMessage: String) =
-    activity.view.snackbarHelper.showError(activity, errorMessage)
+  private fun showError(errorMessage: String) {
+    if (context is HelloGeoActivity) {
+      context.view.snackbarHelper.showError(context, errorMessage)
+    } else if (context is ARActivity) {
+      context.runOnUiThread {
+        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+      }
+    }
+  }
 
   private fun handlePersistentEarthFailure(reason: String) {
     if (hasFallenBackToMapMode) return // Prevent multiple fallbacks
@@ -600,23 +584,51 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     hasFallenBackToMapMode = true
     Log.e(TAG, "Falling back to map mode: $reason")
     
-    activity.runOnUiThread {
-      // Show a toast explaining the issue
-      Toast.makeText(
-        activity,
-        "AR features unavailable: $reason. Switching to map-only mode.",
-        Toast.LENGTH_LONG
-      ).show()
-      
-      // Start the fallback activity
-      try {
-        activity.startActivity(Intent(activity, FallbackActivity::class.java))
-        activity.finish()
-      } catch (e: Exception) {
-        Log.e(TAG, "Error launching FallbackActivity", e)
-        // Call the public method
-        activity.showFallbackUserInterface()
+    if (context is HelloGeoActivity) {
+      context.runOnUiThread {
+        // Show a toast explaining the issue
+        Toast.makeText(
+          context,
+          "AR features unavailable: $reason. Switching to map-only mode.",
+          Toast.LENGTH_LONG
+        ).show()
+        
+        // Start the fallback activity
+        try {
+          context.startActivity(Intent(context, FallbackActivity::class.java))
+          context.finish()
+        } catch (e: Exception) {
+          Log.e(TAG, "Error launching FallbackActivity", e)
+          // Call the public method
+          context.showFallbackUserInterface()
+        }
+      }
+    } else if (context is ARActivity) {
+      context.runOnUiThread {
+        Toast.makeText(context, "AR features unavailable: $reason. Switching to map-only mode.", Toast.LENGTH_LONG).show()
+        context.returnToMapMode()
       }
     }
+  }
+
+  fun setSession(session: Session) {
+    this.arSession = session
+  }
+
+  val session: Session?
+    get() = arSession
+
+  private fun updateMapPosition(latitude: Double, longitude: Double, heading: Double) {
+    if (context is HelloGeoActivity) {
+      context.view.mapView?.updateMapPosition(latitude, longitude, heading)
+    }
+    // In ARActivity we don't have a mapView to update
+  }
+
+  private fun updateStatusText(earth: Earth, geospatialPose: GeospatialPose) {
+    if (context is HelloGeoActivity) {
+      context.view.updateStatusText(earth, geospatialPose)
+    }
+    // ARActivity has its own status indicator
   }
 }
