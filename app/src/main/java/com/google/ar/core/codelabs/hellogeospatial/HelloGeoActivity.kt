@@ -46,6 +46,7 @@ import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
+import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
@@ -80,6 +81,15 @@ class HelloGeoActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    // Wrap everything in a try-catch to prevent crashes
+    Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+      Log.e(TAG, "Uncaught exception", throwable)
+      runOnUiThread {
+        Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
+        showFallbackUserInterface()
+      }
+    }
 
     try {
       // Initialize location services
@@ -137,6 +147,33 @@ class HelloGeoActivity : AppCompatActivity() {
       Log.e(TAG, "Error initializing app", e)
       showFallbackUserInterface()
       Toast.makeText(this, "Could not initialize AR features. Using map only mode.", Toast.LENGTH_LONG).show()
+    }
+  }
+  
+  override fun onResume() {
+    super.onResume()
+    try {
+      // Additional check for AR availability
+      if (!checkIsARCoreSupportedAndUpToDate()) {
+        showFallbackUserInterface()
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in onResume", e)
+    }
+  }
+  
+  private fun checkIsARCoreSupportedAndUpToDate(): Boolean {
+    return try {
+      when (ArCoreApk.getInstance().checkAvailability(this)) {
+        ArCoreApk.Availability.SUPPORTED_INSTALLED -> true
+        else -> {
+          Log.w(TAG, "ARCore not available")
+          false
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error checking ARCore availability", e)
+      false
     }
   }
   

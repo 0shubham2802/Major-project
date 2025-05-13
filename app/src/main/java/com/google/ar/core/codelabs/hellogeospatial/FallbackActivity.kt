@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.location.Geocoder
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -41,99 +42,129 @@ class FallbackActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Create a linear layout for our UI
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
+        // Set a default uncaught exception handler
+        Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+            Log.e("FallbackActivity", "Uncaught exception", throwable)
+            Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
         }
         
-        // Add a title
-        val titleText = TextView(this).apply {
-            text = "AR Navigation (Map Mode)"
-            textSize = 20f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(16, 16, 16, 16)
-        }
-        layout.addView(titleText)
-        
-        // Add a subtitle explaining why we're in fallback mode
-        val subtitleText = TextView(this).apply {
-            text = "Your device doesn't fully support AR features. Using map-only mode."
-            textSize = 14f
-            setTextColor(Color.GRAY)
-            gravity = Gravity.CENTER
-            setPadding(16, 0, 16, 16)
-        }
-        layout.addView(subtitleText)
-        
-        // Add a search bar
-        val searchBar = EditText(this).apply {
-            hint = "Search location"
-            setPadding(16, 16, 16, 16)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(16, 0, 16, 16)
+        try {
+            // Create a linear layout for our UI
+            val layout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT
+                )
             }
             
-            imeOptions = EditorInfo.IME_ACTION_SEARCH
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            // Add a title
+            val titleText = TextView(this).apply {
+                text = "AR Navigation (Map Mode)"
+                textSize = 20f
+                setTextColor(Color.BLACK)
+                gravity = Gravity.CENTER
+                setPadding(16, 16, 16, 16)
+            }
+            layout.addView(titleText)
             
-            setOnEditorActionListener { textView, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    val query = textView.text.toString()
-                    if (query.isNotBlank()) {
-                        searchLocation(query)
-                        return@setOnEditorActionListener true
+            // Add a subtitle explaining why we're in fallback mode
+            val subtitleText = TextView(this).apply {
+                text = "Your device doesn't fully support AR features. Using map-only mode."
+                textSize = 14f
+                setTextColor(Color.GRAY)
+                gravity = Gravity.CENTER
+                setPadding(16, 0, 16, 16)
+            }
+            layout.addView(subtitleText)
+            
+            // Add a search bar
+            val searchBar = EditText(this).apply {
+                hint = "Search location"
+                setPadding(16, 16, 16, 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(16, 0, 16, 16)
+                }
+                
+                imeOptions = EditorInfo.IME_ACTION_SEARCH
+                inputType = android.text.InputType.TYPE_CLASS_TEXT
+                
+                setOnEditorActionListener { textView, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                        val query = textView.text.toString()
+                        if (query.isNotBlank()) {
+                            searchLocation(query)
+                            return@setOnEditorActionListener true
+                        }
+                    }
+                    return@setOnEditorActionListener false
+                }
+            }
+            layout.addView(searchBar)
+            
+            // Add navigation button (initially hidden)
+            val navigateButton = Button(this).apply {
+                text = "Navigate with Google Maps"
+                visibility = View.GONE
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(16, 0, 16, 16)
+                }
+                setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_dark))
+                setTextColor(Color.WHITE)
+                
+                setOnClickListener {
+                    destinationLatLng?.let { destination ->
+                        openGoogleMapsNavigation(destination)
                     }
                 }
-                return@setOnEditorActionListener false
             }
-        }
-        layout.addView(searchBar)
-        
-        // Add navigation button (initially hidden)
-        val navigateButton = Button(this).apply {
-            text = "Navigate with Google Maps"
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(16, 0, 16, 16)
-            }
-            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_dark))
-            setTextColor(Color.WHITE)
+            layout.addView(navigateButton)
             
-            setOnClickListener {
-                destinationLatLng?.let { destination ->
-                    openGoogleMapsNavigation(destination)
+            // Set the content view to our layout
+            setContentView(layout)
+            
+            // Add the map fragment
+            try {
+                mapFragment = SupportMapFragment()
+                supportFragmentManager.beginTransaction()
+                    .add(View.generateViewId(), mapFragment)
+                    .commit()
+                
+                mapFragment.getMapAsync { map ->
+                    googleMap = map
+                    setupMap(navigateButton)
                 }
+            } catch (e: Exception) {
+                Log.e("FallbackActivity", "Error setting up map", e)
+                Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            
+            // Check for location permissions
+            checkLocationPermission()
+        } catch (e: Exception) {
+            Log.e("FallbackActivity", "Error in onCreate", e)
+            Toast.makeText(this, "Error initializing map view: ${e.message}", Toast.LENGTH_LONG).show()
+            
+            // Create a simple fallback for the fallback
+            try {
+                val simpleText = TextView(this).apply {
+                    text = "Error loading map interface. Please restart the app."
+                    gravity = Gravity.CENTER
+                    textSize = 18f
+                    setTextColor(Color.BLACK)
+                }
+                setContentView(simpleText)
+            } catch (t: Throwable) {
+                // At this point, there's not much else we can do
+                Log.e("FallbackActivity", "Fatal error creating UI", t)
             }
         }
-        layout.addView(navigateButton)
-        
-        // Set the content view to our layout
-        setContentView(layout)
-        
-        // Add the map fragment
-        mapFragment = SupportMapFragment()
-        supportFragmentManager.beginTransaction()
-            .add(View.generateViewId(), mapFragment)
-            .commit()
-        
-        mapFragment.getMapAsync { map ->
-            googleMap = map
-            setupMap(navigateButton)
-        }
-        
-        // Check for location permissions
-        checkLocationPermission()
     }
     
     private fun setupMap(navigateButton: Button) {

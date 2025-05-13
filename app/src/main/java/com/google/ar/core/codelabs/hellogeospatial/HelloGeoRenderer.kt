@@ -154,164 +154,173 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   //</editor-fold>
 
   override fun onDrawFrame(render: SampleRender) {
-    val session = session ?: return
-
     try {
-      //<editor-fold desc="ARCore frame boilerplate" defaultstate="collapsed">
-      // Texture names should only be set once on a GL thread unless they change. This is done during
-      // onDrawFrame rather than onSurfaceCreated since the session is not guaranteed to have been
-      // initialized during the execution of onSurfaceCreated.
-      if (!hasSetTextureNames) {
-        session.setCameraTextureNames(intArrayOf(backgroundRenderer.cameraColorTexture.textureId))
-        hasSetTextureNames = true
-        Log.d(TAG, "Camera texture names set")
-      }
+      val session = session ?: return
 
-      // -- Update per-frame state
+      try {
+        //<editor-fold desc="ARCore frame boilerplate" defaultstate="collapsed">
+        // Texture names should only be set once on a GL thread unless they change. This is done during
+        // onDrawFrame rather than onSurfaceCreated since the session is not guaranteed to have been
+        // initialized during the execution of onSurfaceCreated.
+        if (!hasSetTextureNames) {
+          session.setCameraTextureNames(intArrayOf(backgroundRenderer.cameraColorTexture.textureId))
+          hasSetTextureNames = true
+          Log.d(TAG, "Camera texture names set")
+        }
 
-      // Notify ARCore session that the view size changed so that the perspective matrix and
-      // the video background can be properly adjusted.
-      displayRotationHelper.updateSessionIfNeeded(session)
+        // -- Update per-frame state
 
-      // Obtain the current frame from ARSession. When the configuration is set to
-      // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
-      // camera framerate.
-      val frame =
-        try {
-          session.update()
-        } catch (e: CameraNotAvailableException) {
-          Log.e(TAG, "Camera not available during onDrawFrame", e)
-          showError("Camera not available. Try restarting the app.")
+        // Notify ARCore session that the view size changed so that the perspective matrix and
+        // the video background can be properly adjusted.
+        displayRotationHelper.updateSessionIfNeeded(session)
+
+        // Obtain the current frame from ARSession. When the configuration is set to
+        // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
+        // camera framerate.
+        val frame =
+          try {
+            session.update()
+          } catch (e: CameraNotAvailableException) {
+            Log.e(TAG, "Camera not available during onDrawFrame", e)
+            showError("Camera not available. Try restarting the app.")
+            return
+          }
+
+        val camera = frame.camera
+
+        // BackgroundRenderer.updateDisplayGeometry must be called every frame to update the coordinates
+        // used to draw the background camera image.
+        backgroundRenderer.updateDisplayGeometry(frame)
+
+        // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
+        trackingStateHelper.updateKeepScreenOnFlag(camera.trackingState)
+
+        // -- Draw background
+        if (frame.timestamp != 0L) {
+          // Suppress rendering if the camera did not produce the first frame yet. This is to avoid
+          // drawing possible leftover data from previous sessions if the texture is reused.
+          backgroundRenderer.drawBackground(render)
+        }
+
+        // If not tracking, don't draw 3D objects.
+        if (camera.trackingState == TrackingState.PAUSED) {
+          Log.d(TAG, "Camera tracking state is PAUSED, skipping frame rendering")
           return
         }
 
-      val camera = frame.camera
+        // Get projection matrix.
+        camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
 
-      // BackgroundRenderer.updateDisplayGeometry must be called every frame to update the coordinates
-      // used to draw the background camera image.
-      backgroundRenderer.updateDisplayGeometry(frame)
+        // Get camera matrix and draw.
+        camera.getViewMatrix(viewMatrix, 0)
 
-      // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
-      trackingStateHelper.updateKeepScreenOnFlag(camera.trackingState)
+        render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
+        //</editor-fold> 
 
-      // -- Draw background
-      if (frame.timestamp != 0L) {
-        // Suppress rendering if the camera did not produce the first frame yet. This is to avoid
-        // drawing possible leftover data from previous sessions if the texture is reused.
-        backgroundRenderer.drawBackground(render)
-      }
+        val earth: Earth? = session.earth
+        if (earth == null) {
+          Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
+          // No need to show an error - just wait
+          activity.view.updateStatusText(null, null)
+          
+          // Track time waiting for Earth to initialize
+          if (earthInitializedTime == 0L) {
+            earthInitializedTime = System.currentTimeMillis()
+            Log.d(TAG, "Starting Earth initialization timer")
+          } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
+            // Earth hasn't initialized in the maximum wait time, fall back to map mode
+            Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
+            handlePersistentEarthFailure("Earth initialization timed out")
+          }
+          
+          return
+        }
 
-      // If not tracking, don't draw 3D objects.
-      if (camera.trackingState == TrackingState.PAUSED) {
-        Log.d(TAG, "Camera tracking state is PAUSED, skipping frame rendering")
-        return
-      }
+        // Reset Earth initialization timer once Earth is available
+        if (earthInitializedTime > 0) {
+          Log.d(TAG, "Earth initialized after ${System.currentTimeMillis() - earthInitializedTime}ms")
+          earthInitializedTime = 0
+        }
 
-      // Get projection matrix.
-      camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
+        // Check Earth tracking state
+        if (earth.trackingState != TrackingState.TRACKING) {
+          Log.d(TAG, "Earth tracking state: ${earth.trackingState}, frames without tracking: $framesWithoutEarthTracking")
+          activity.view.updateStatusText(earth, null)
+          
+          // Increment counter for frames without Earth tracking
+          framesWithoutEarthTracking++
+          
+          // Wait at least 10 seconds before showing error to the user
+          if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
+            lastEarthTrackingErrorTime = System.currentTimeMillis()
+            activity.runOnUiThread {
+              Toast.makeText(
+                activity,
+                "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal.",
+                Toast.LENGTH_LONG
+              ).show()
+            }
+          }
+          
+          // Check if we've gone too long without Earth tracking
+          if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING) {
+            Log.e(TAG, "Earth tracking failed persistently after ${framesWithoutEarthTracking} frames")
+            handlePersistentEarthFailure("Earth tracking failed persistently")
+          }
+          
+          return
+        }
 
-      // Get camera matrix and draw.
-      camera.getViewMatrix(viewMatrix, 0)
-
-      render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
-      //</editor-fold> 
-
-      val earth: Earth? = session.earth
-      if (earth == null) {
-        Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
-        // No need to show an error - just wait
-        activity.view.updateStatusText(null, null)
-        
-        // Track time waiting for Earth to initialize
-        if (earthInitializedTime == 0L) {
-          earthInitializedTime = System.currentTimeMillis()
-          Log.d(TAG, "Starting Earth initialization timer")
-        } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
-          // Earth hasn't initialized in the maximum wait time, fall back to map mode
-          Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
-          handlePersistentEarthFailure("Earth initialization timed out")
+        // Reset counter since we have successful tracking
+        if (framesWithoutEarthTracking > 0) {
+          Log.d(TAG, "Earth tracking resumed after ${framesWithoutEarthTracking} frames")
+          framesWithoutEarthTracking = 0
         }
         
-        return
-      }
-
-      // Reset Earth initialization timer once Earth is available
-      if (earthInitializedTime > 0) {
-        Log.d(TAG, "Earth initialized after ${System.currentTimeMillis() - earthInitializedTime}ms")
-        earthInitializedTime = 0
-      }
-
-      // Check Earth tracking state
-      if (earth.trackingState != TrackingState.TRACKING) {
-        Log.d(TAG, "Earth tracking state: ${earth.trackingState}, frames without tracking: $framesWithoutEarthTracking")
-        activity.view.updateStatusText(earth, null)
+        // Earth is tracking properly
+        val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
+        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
         
-        // Increment counter for frames without Earth tracking
-        framesWithoutEarthTracking++
+        activity.view.mapView?.updateMapPosition(
+          latitude = cameraGeospatialPose.latitude,
+          longitude = cameraGeospatialPose.longitude,
+          heading = cameraGeospatialPose.heading
+        )
         
-        // Wait at least 10 seconds before showing error to the user
-        if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
-          lastEarthTrackingErrorTime = System.currentTimeMillis()
-          activity.runOnUiThread {
-            Toast.makeText(
-              activity,
-              "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal.",
-              Toast.LENGTH_LONG
-            ).show()
+        // Update AR navigation visuals if navigating
+        if (isNavigating) {
+          updateNavigationAnchors(earth, cameraGeospatialPose)
+        }
+        
+        activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
+
+        // Draw all anchors
+        for (anchor in anchors) {
+          if (anchor.trackingState == TrackingState.TRACKING) {
+            render.renderObject(anchor, arrowMesh, arrowShader)
           }
         }
-        
-        // Check if we've gone too long without Earth tracking
-        if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING) {
-          Log.e(TAG, "Earth tracking failed persistently after ${framesWithoutEarthTracking} frames")
-          handlePersistentEarthFailure("Earth tracking failed persistently")
+
+        // Draw the destination anchor with a different model
+        destinationAnchor?.let {
+          if (it.trackingState == TrackingState.TRACKING) {
+            render.renderCompassAtAnchor(it)
+          }
         }
-        
-        return
-      }
 
-      // Reset counter since we have successful tracking
-      if (framesWithoutEarthTracking > 0) {
-        Log.d(TAG, "Earth tracking resumed after ${framesWithoutEarthTracking} frames")
-        framesWithoutEarthTracking = 0
+        // Compose the virtual scene with the background.
+        backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+      } catch (e: Exception) {
+        Log.e(TAG, "Error during onDrawFrame inner block", e)
+        showError("Error during onDrawFrame: $e")
       }
-      
-      // Earth is tracking properly
-      val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
-      Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
-      
-      activity.view.mapView?.updateMapPosition(
-        latitude = cameraGeospatialPose.latitude,
-        longitude = cameraGeospatialPose.longitude,
-        heading = cameraGeospatialPose.heading
-      )
-      
-      // Update AR navigation visuals if navigating
-      if (isNavigating) {
-        updateNavigationAnchors(earth, cameraGeospatialPose)
-      }
-      
-      activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
-
-      // Draw all anchors
-      for (anchor in anchors) {
-        if (anchor.trackingState == TrackingState.TRACKING) {
-          render.renderObject(anchor, arrowMesh, arrowShader)
-        }
-      }
-
-      // Draw the destination anchor with a different model
-      destinationAnchor?.let {
-        if (it.trackingState == TrackingState.TRACKING) {
-          render.renderCompassAtAnchor(it)
-        }
-      }
-
-      // Compose the virtual scene with the background.
-      backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
     } catch (e: Exception) {
-      Log.e(TAG, "Error during onDrawFrame", e)
-      showError("Error during onDrawFrame: $e")
+      // Catch any GL thread errors that might crash the app
+      Log.e(TAG, "Critical error in GL thread", e)
+      activity.runOnUiThread {
+        Toast.makeText(activity, "Critical rendering error: ${e.message}", Toast.LENGTH_LONG).show()
+        handlePersistentEarthFailure("Rendering error: ${e.message}")
+      }
     }
   }
   
