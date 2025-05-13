@@ -559,6 +559,7 @@ class HelloGeoView : DefaultLifecycleObserver {
         "user" -> mapView.userLocationMarker?.isVisible = isVisible
         "earth" -> mapView.earthMarker?.isVisible = isVisible
         "search" -> mapView.searchMarker?.isVisible = isVisible
+        else -> Log.d("HelloGeoView", "Unknown marker ID: $markerId")
       }
     }
   }

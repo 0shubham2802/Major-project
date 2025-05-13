@@ -37,6 +37,7 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
   private val CAMERA_MARKER_COLOR: Int = Color.argb(255, 0, 255, 0)
   private val EARTH_MARKER_COLOR: Int = Color.argb(255, 125, 125, 125)
   private val SEARCH_MARKER_COLOR: Int = Color.argb(255, 255, 0, 0)
+  private val USER_MARKER_COLOR: Int = Color.argb(255, 0, 0, 255)
 
   var setInitialCameraPosition = false
   val cameraMarker = createMarker(CAMERA_MARKER_COLOR)
@@ -44,6 +45,7 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
 
   val earthMarker = createMarker(EARTH_MARKER_COLOR)
   var searchMarker: Marker? = null
+  var userLocationMarker: Marker? = null
 
   init {
     googleMap.uiSettings.apply {
@@ -139,6 +141,19 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
           .position(latLng)
           .title("AR Location")
           .draggable(false)
+      )
+    }
+  }
+  
+  fun createUserLocationMarker(latLng: LatLng) {
+    googleMap?.let { map ->
+      userLocationMarker?.remove()
+      userLocationMarker = map.addMarker(
+        MarkerOptions()
+          .position(latLng)
+          .title("Your Location")
+          .icon(BitmapDescriptorFactory.fromBitmap(createColoredMarkerBitmap(USER_MARKER_COLOR)))
+          .anchor(0.5f, 0.5f)
       )
     }
   }

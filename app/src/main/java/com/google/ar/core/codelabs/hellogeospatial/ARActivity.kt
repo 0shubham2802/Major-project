@@ -293,7 +293,7 @@ class ARActivity : AppCompatActivity() {
         try {
             // Note: We're not calling arCoreSessionHelper.onResume() here because 
             // we already called it in onCreate to create the session
-            surfaceView.onResume()
+            view.onResume()
             
             // Start updating tracking quality indicator
             val handler = Handler(Looper.getMainLooper())
@@ -313,7 +313,7 @@ class ARActivity : AppCompatActivity() {
         super.onPause()
         
         try {
-            surfaceView.onPause()
+            view.onPause()
             arCoreSessionHelper.onPause()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onPause", e)
