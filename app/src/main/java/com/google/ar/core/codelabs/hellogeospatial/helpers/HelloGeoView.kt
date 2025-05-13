@@ -254,31 +254,15 @@ class HelloGeoView : DefaultLifecycleObserver {
     val geocoder = Geocoder(context, Locale.getDefault())
     
     try {
-      // For newer Android versions - using getFromLocationName might not work directly
-      // Android 13 (TIRAMISU) is API level 33
-      if (Build.VERSION.SDK_INT >= 33) {
-        // Use the callback version for newer Android
-        geocoder.getFromLocationName(locationName, 1) { addresses ->
-          appCompatActivity?.runOnUiThread {
-            if (addresses.isNotEmpty()) {
-              val address = addresses[0]
-              handleFoundLocation(address, locationName)
-            } else {
-              Toast.makeText(context, "Location not found", Toast.LENGTH_SHORT).show()
-            }
-          }
-        }
+      // For compatibility, use methods safe for API level 30 or lower
+      @Suppress("DEPRECATION")
+      val addressList = geocoder.getFromLocationName(locationName, 1)
+      
+      if (addressList != null && addressList.isNotEmpty()) {
+        val address = addressList[0]
+        handleFoundLocation(address, locationName)
       } else {
-        // Legacy method for older Android versions
-        @Suppress("DEPRECATION")
-        val addressList = geocoder.getFromLocationName(locationName, 1)
-        
-        if (addressList != null && addressList.isNotEmpty()) {
-          val address = addressList[0]
-          handleFoundLocation(address, locationName)
-        } else {
-          Toast.makeText(context, "Location not found", Toast.LENGTH_SHORT).show()
-        }
+        Toast.makeText(context, "Location not found", Toast.LENGTH_SHORT).show()
       }
     } catch (e: IOException) {
       Log.e("HelloGeoView", "Error in geocoding", e)
@@ -534,6 +518,48 @@ class HelloGeoView : DefaultLifecycleObserver {
       surfaceView.onPause()
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error in onPause", e)
+    }
+  }
+
+  private fun updateMapMarker(latLng: LatLng) {
+    try {
+      mapView?.let { mapView ->
+        mapView.googleMap?.let { googleMap ->
+          if (mapView.earthMarker != null) {
+            mapView.earthMarker?.position = latLng
+            mapView.earthMarker?.isVisible = true
+          } else {
+            // Create marker if it doesn't exist
+            mapView.createEarthMarker(latLng)
+          }
+        }
+      }
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error updating map marker", e)
+    }
+  }
+
+  // Helper method to safely update map UI
+  fun updateMapUI(action: (mapView: MapView) -> Unit) {
+    mapView?.let { mapViewInstance ->
+      appCompatActivity?.runOnUiThread {
+        try {
+          action(mapViewInstance)
+        } catch (e: Exception) {
+          Log.e("HelloGeoView", "Error updating map UI", e)
+        }
+      }
+    }
+  }
+  
+  // Method to handle marker visibility
+  fun setMarkerVisibility(markerId: String, isVisible: Boolean) {
+    updateMapUI { mapView ->
+      when (markerId) {
+        "user" -> mapView.userLocationMarker?.isVisible = isVisible
+        "earth" -> mapView.earthMarker?.isVisible = isVisible
+        "search" -> mapView.searchMarker?.isVisible = isVisible
+      }
     }
   }
 }

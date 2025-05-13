@@ -459,24 +459,24 @@ class HelloGeoActivity : AppCompatActivity() {
       Toast.makeText(this, "Searching for: $query", Toast.LENGTH_SHORT).show()
       
       // Use the appropriate geocoding method based on Android version
-      // Android 13 (TIRAMISU) is API level 33
-      if (Build.VERSION.SDK_INT >= 33) {
-        geocoder.getFromLocationName(query, 1) { addresses ->
-          runOnUiThread {
-            if (addresses.isNotEmpty()) {
-              val address = addresses[0]
-              val latLng = LatLng(address.latitude, address.longitude)
-              
-              // Move the map to the found location
-              mapFragment.getMapAsync { googleMap ->
-                googleMap.clear()
-                googleMap.addMarker(MarkerOptions().position(latLng).title(query))
-                googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
-              }
-            } else {
-              Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
-            }
+      // Use API level 30 or lower for compatibility
+      if (Build.VERSION.SDK_INT >= 30) {
+        // For API level 30+, but still avoiding 33-specific methods
+        @Suppress("DEPRECATION")
+        val addressList = geocoder.getFromLocationName(query, 1)
+        
+        if (addressList != null && addressList.isNotEmpty()) {
+          val address = addressList[0]
+          val latLng = LatLng(address.latitude, address.longitude)
+          
+          // Move the map to the found location
+          mapFragment.getMapAsync { googleMap ->
+            googleMap.clear()
+            googleMap.addMarker(MarkerOptions().position(latLng).title(query))
+            googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
           }
+        } else {
+          Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
         }
       } else {
         // Legacy method for older Android versions

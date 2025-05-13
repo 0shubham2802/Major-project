@@ -545,38 +545,57 @@ class HelloGeoRenderer(val context: Context) :
   }
 
   private fun SampleRender.renderCompassAtAnchor(anchor: Anchor) {
-    // Get the current pose of the Anchor in world space. The Anchor pose is updated
-    // during calls to session.update() as ARCore refines its estimate of the world.
-    anchor.pose.toMatrix(modelMatrix, 0)
+    try {
+      // Get the current pose of the Anchor in world space. The Anchor pose is updated
+      // during calls to session.update() as ARCore refines its estimate of the world.
+      anchor.pose.toMatrix(modelMatrix, 0)
 
-    // Calculate model/view/projection matrices
-    Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
-    Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+      // Calculate model/view/projection matrices
+      Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+      Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
 
-    // Update shader properties and draw
-    virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
-    draw(virtualObjectMesh, virtualObjectShader, virtualSceneFramebuffer)
+      // Update shader properties and draw
+      virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+      draw(virtualObjectMesh, virtualObjectShader, virtualSceneFramebuffer)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error rendering compass at anchor", e)
+    }
   }
   
   private fun SampleRender.renderObject(anchor: Anchor, mesh: Mesh, shader: Shader) {
-    // Get the current pose of the Anchor in world space
-    anchor.pose.toMatrix(modelMatrix, 0)
+    try {
+      // Get the current pose of the Anchor in world space
+      anchor.pose.toMatrix(modelMatrix, 0)
 
-    // Calculate model/view/projection matrices
-    Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
-    Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+      // Calculate model/view/projection matrices
+      Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+      Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
 
-    // Update shader properties and draw
-    shader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
-    draw(mesh, shader, virtualSceneFramebuffer)
+      // Update shader properties and draw
+      shader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+      draw(mesh, shader, virtualSceneFramebuffer)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error rendering object at anchor", e)
+    }
   }
 
   private fun showError(errorMessage: String) {
-    if (context is HelloGeoActivity) {
-      context.view.snackbarHelper.showError(context, errorMessage)
-    } else if (context is ARActivity) {
-      context.runOnUiThread {
-        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+    when (context) {
+      is HelloGeoActivity -> {
+        (context as HelloGeoActivity).view.snackbarHelper.showError(context, errorMessage)
+      }
+      is ARActivity -> {
+        (context as ARActivity).runOnUiThread {
+          Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+        }
+      }
+      is Activity -> {
+        (context as Activity).runOnUiThread {
+          Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+        }
+      }
+      else -> {
+        Log.e(TAG, "Error: $errorMessage")
       }
     }
   }
@@ -587,34 +606,44 @@ class HelloGeoRenderer(val context: Context) :
     hasFallenBackToMapMode = true
     Log.e(TAG, "Falling back to map mode: $reason")
     
-    if (context is HelloGeoActivity) {
-      context.runOnUiThread {
-        // Show a toast explaining the issue
-        Toast.makeText(
-          context,
-          "AR features unavailable: $reason. Switching to map-only mode.",
-          Toast.LENGTH_LONG
-        ).show()
-        
-        // Start the fallback activity
-        try {
-          context.startActivity(Intent(context, FallbackActivity::class.java))
-          context.finish()
-        } catch (e: Exception) {
-          Log.e(TAG, "Error launching FallbackActivity", e)
-          // Call the public method
-          context.showFallbackUserInterface()
+    when (context) {
+      is HelloGeoActivity -> {
+        val activity = context as HelloGeoActivity
+        activity.runOnUiThread {
+          // Show a toast explaining the issue
+          Toast.makeText(
+            activity,
+            "AR features unavailable: $reason. Switching to map-only mode.",
+            Toast.LENGTH_LONG
+          ).show()
+          
+          // Start the fallback activity
+          try {
+            activity.startActivity(Intent(activity, FallbackActivity::class.java))
+            activity.finish()
+          } catch (e: Exception) {
+            Log.e(TAG, "Error launching FallbackActivity", e)
+            // Call the public method
+            activity.showFallbackUserInterface()
+          }
         }
       }
-    } else if (context is ARActivity) {
-      context.runOnUiThread {
-        Toast.makeText(context, "AR features unavailable: $reason. Switching to map-only mode.", Toast.LENGTH_LONG).show()
-        context.returnToMapMode()
+      is ARActivity -> {
+        val activity = context as ARActivity
+        activity.runOnUiThread {
+          Toast.makeText(activity, "AR features unavailable: $reason. Switching to map-only mode.", Toast.LENGTH_LONG).show()
+          activity.returnToMapMode()
+        }
       }
-    } else if (context is Activity) {
-      // For other activity types
-      (context as Activity).runOnUiThread {
-        Toast.makeText(context, "AR features unavailable: $reason", Toast.LENGTH_LONG).show()
+      is Activity -> {
+        // For other activity types
+        val activity = context as Activity
+        activity.runOnUiThread {
+          Toast.makeText(activity, "AR features unavailable: $reason", Toast.LENGTH_LONG).show()
+        }
+      }
+      else -> {
+        Log.e(TAG, "AR features unavailable: $reason")
       }
     }
   }

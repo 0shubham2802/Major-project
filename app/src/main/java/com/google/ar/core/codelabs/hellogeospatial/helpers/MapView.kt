@@ -131,4 +131,15 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
     canvas.drawBitmap(navigationIcon,  /* left= */0f,  /* top= */0f, p)
     return navigationIcon
   }
+
+  fun createEarthMarker(latLng: LatLng) {
+    googleMap?.let { map ->
+      earthMarker = map.addMarker(
+        MarkerOptions()
+          .position(latLng)
+          .title("AR Location")
+          .draggable(false)
+      )
+    }
+  }
 }

@@ -95,8 +95,15 @@ class ARActivity : AppCompatActivity() {
             // Initialize renderer
             renderer = HelloGeoRenderer(this)
             
+            // Set the renderer's view reference
+            renderer.setView(view)
+            
             // Create and initialize ARCore session
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+            
+            // Register the renderer as a lifecycle observer
+            lifecycle.addObserver(renderer)
+            
             arCoreSessionHelper.exceptionCallback = { exception ->
                 val message = when (exception) {
                     is UnavailableUserDeclinedInstallationException -> "Please install ARCore"
@@ -137,9 +144,6 @@ class ARActivity : AppCompatActivity() {
             // Set up SampleRender to draw the AR scene
             SampleRender(surfaceView, renderer, assets)
             
-            // Add renderer as a lifecycle observer
-            lifecycle.addObserver(renderer)
-            
             // Set timeout for AR initialization
             startARInitializationTimeout()
             
@@ -178,8 +182,8 @@ class ARActivity : AppCompatActivity() {
     private fun isEarthTrackingStable(): Boolean {
         try {
             val session = arCoreSessionHelper.session ?: return false
-            val earth = session.earth
-            return earth != null && earth.trackingState == TrackingState.TRACKING
+            val earth = session.earth ?: return false
+            return earth.trackingState == TrackingState.TRACKING
         } catch (e: Exception) {
             Log.e(TAG, "Error checking Earth tracking", e)
             return false
