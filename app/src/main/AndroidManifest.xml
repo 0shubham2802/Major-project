@@ -25,7 +25,7 @@
 
   <!-- Limits app visibility in the Google Play Store to ARCore supported devices
        (https://developers.google.com/ar/devices). -->
-  <uses-feature android:name="android.hardware.camera.ar" android:required="true"/>
+  <uses-feature android:name="android.hardware.camera.ar" android:required="false"/>
   <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
   <application
@@ -48,7 +48,10 @@
       </intent-filter>
     </activity>
     <!-- Indicates whether "Google Play Services for AR" (ARCore) is "required" or "optional". -->
-    <meta-data android:name="com.google.ar.core" android:value="required" />
+    <meta-data android:name="com.google.ar.core" android:value="optional" />
+    
+    <!-- For the emulator support -->
+    <meta-data android:name="com.google.android.ar.arcore.emulator" android:value="true"/>
 
     <meta-data
         android:name="com.google.android.ar.API_KEY"

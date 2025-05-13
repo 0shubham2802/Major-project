@@ -47,6 +47,18 @@ import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.EditText
+import android.view.Gravity
+import android.view.ViewGroup
+import android.view.FrameLayout
+import com.google.android.gms.maps.SupportMapFragment
+import android.graphics.Color
+import android.view.inputmethod.InputMethodManager
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.MarkerOptions
 
 class HelloGeoActivity : AppCompatActivity() {
   companion object {
@@ -66,53 +78,60 @@ class HelloGeoActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    // Initialize location services
-    fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+    try {
+      // Initialize location services
+      fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
-    // Check for required permissions
-    checkRequiredPermissions()
+      // Check for required permissions
+      checkRequiredPermissions()
 
-    // Setup ARCore session lifecycle helper and configuration.
-    arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
-    // If Session creation or Session.resume() fails, display a message and log detailed
-    // information.
-    arCoreSessionHelper.exceptionCallback =
-      { exception ->
-        val message =
-          when (exception) {
-            is UnavailableUserDeclinedInstallationException ->
-              "Please install Google Play Services for AR"
-            is UnavailableApkTooOldException -> "Please update ARCore"
-            is UnavailableSdkTooOldException -> "Please update this app"
-            is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
-            is CameraNotAvailableException -> "Camera not available. Try restarting the app."
-            else -> "Failed to create AR session: $exception"
-          }
-        Log.e(TAG, "ARCore threw an exception", exception)
-        view.snackbarHelper.showError(this, message)
-      }
+      // Setup ARCore session lifecycle helper and configuration.
+      arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+      // If Session creation or Session.resume() fails, display a message and log detailed
+      // information.
+      arCoreSessionHelper.exceptionCallback =
+        { exception ->
+          val message =
+            when (exception) {
+              is UnavailableUserDeclinedInstallationException ->
+                "Please install Google Play Services for AR"
+              is UnavailableApkTooOldException -> "Please update ARCore"
+              is UnavailableSdkTooOldException -> "Please update this app"
+              is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
+              is CameraNotAvailableException -> "Camera not available. Try restarting the app."
+              else -> "Failed to create AR session: $exception"
+            }
+          Log.e(TAG, "ARCore threw an exception", exception)
+          showFallbackUserInterface()
+          Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
 
-    // Configure session features.
-    arCoreSessionHelper.beforeSessionResume = ::configureSession
-    lifecycle.addObserver(arCoreSessionHelper)
+      // Configure session features.
+      arCoreSessionHelper.beforeSessionResume = ::configureSession
+      lifecycle.addObserver(arCoreSessionHelper)
 
-    // Set up the Hello AR renderer.
-    renderer = HelloGeoRenderer(this)
-    lifecycle.addObserver(renderer)
+      // Set up the Hello AR renderer.
+      renderer = HelloGeoRenderer(this)
+      lifecycle.addObserver(renderer)
 
-    // Set up Hello AR UI.
-    view = HelloGeoView(this)
-    lifecycle.addObserver(view)
-    setContentView(view.root)
+      // Set up Hello AR UI.
+      view = HelloGeoView(this)
+      lifecycle.addObserver(view)
+      setContentView(view.root)
 
-    // Sets up an example renderer using our HelloGeoRenderer.
-    SampleRender(view.surfaceView, renderer, assets)
-    
-    // Setup navigation buttons after view is created
-    setupNavigationUI()
-    
-    // Request current location
-    requestCurrentLocation()
+      // Sets up an example renderer using our HelloGeoRenderer.
+      SampleRender(view.surfaceView, renderer, assets)
+      
+      // Setup navigation buttons after view is created
+      setupNavigationUI()
+      
+      // Request current location
+      requestCurrentLocation()
+    } catch (e: Exception) {
+      Log.e(TAG, "Error initializing app", e)
+      showFallbackUserInterface()
+      Toast.makeText(this, "Could not initialize AR features. Using map only mode.", Toast.LENGTH_LONG).show()
+    }
   }
   
   private fun setupNavigationUI() {
@@ -307,6 +326,157 @@ class HelloGeoActivity : AppCompatActivity() {
       startActivity(mapIntent)
     } else {
       Toast.makeText(this, "Google Maps app is not installed", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  private fun showFallbackUserInterface() {
+    // Create a simple fallback UI that just shows a map without AR features
+    try {
+      // Create a simple layout with just a map
+      val mapOnlyLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = ViewGroup.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.MATCH_PARENT
+        )
+      }
+      
+      // Add a header text
+      val headerText = TextView(this).apply {
+        text = "Map Navigation (AR Unavailable)"
+        textSize = 18f
+        gravity = Gravity.CENTER
+        setPadding(16, 16, 16, 16)
+        setTextColor(Color.BLACK)
+        layoutParams = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+      }
+      mapOnlyLayout.addView(headerText)
+      
+      // Add a search bar
+      val searchBar = EditText(this).apply {
+        hint = "Search location"
+        layoutParams = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+          setMargins(16, 8, 16, 8)
+        }
+        
+        // Set up search functionality
+        setOnEditorActionListener { _, actionId, event ->
+          if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+              (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER)) {
+            val searchQuery = text.toString()
+            if (searchQuery.isNotBlank()) {
+              performFallbackSearch(searchQuery, mapFragment)
+            }
+            return@setOnEditorActionListener true
+          }
+          return@setOnEditorActionListener false
+        }
+        
+        // Set to search input type
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+      }
+      mapOnlyLayout.addView(searchBar)
+      
+      // Add a map fragment
+      val mapContainerId = View.generateViewId()
+      val mapFrameLayout = FrameLayout(this).apply {
+        id = mapContainerId
+        layoutParams = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          0
+        ).apply {
+          weight = 1f
+          setMargins(16, 8, 16, 16)
+        }
+      }
+      mapOnlyLayout.addView(mapFrameLayout)
+      
+      setContentView(mapOnlyLayout)
+      
+      // After setContentView, add the map fragment to the container
+      val mapFragment = SupportMapFragment()
+      supportFragmentManager.beginTransaction()
+        .add(mapContainerId, mapFragment)
+        .commit()
+      
+      // Initialize map when ready
+      mapFragment.getMapAsync { googleMap ->
+        googleMap.uiSettings.apply {
+          isZoomControlsEnabled = true
+          isCompassEnabled = true
+          isMyLocationButtonEnabled = true
+        }
+        
+        // Enable My Location if we have permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+            == PackageManager.PERMISSION_GRANTED) {
+          googleMap.isMyLocationEnabled = true
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to create fallback UI", e)
+    }
+  }
+
+  private fun performFallbackSearch(query: String, mapFragment: SupportMapFragment) {
+    try {
+      val geocoder = Geocoder(this)
+      
+      // Hide the keyboard
+      val inputMethodManager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+      inputMethodManager.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
+      
+      Toast.makeText(this, "Searching for: $query", Toast.LENGTH_SHORT).show()
+      
+      // Use the appropriate geocoding method based on Android version
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        geocoder.getFromLocationName(query, 1) { addresses ->
+          runOnUiThread {
+            if (addresses.isNotEmpty()) {
+              val address = addresses[0]
+              val latLng = LatLng(address.latitude, address.longitude)
+              
+              // Move the map to the found location
+              mapFragment.getMapAsync { googleMap ->
+                googleMap.clear()
+                googleMap.addMarker(MarkerOptions().position(latLng).title(query))
+                googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+              }
+            } else {
+              Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
+            }
+          }
+        }
+      } else {
+        // Legacy method for older Android versions
+        @Suppress("DEPRECATION")
+        val addressList = geocoder.getFromLocationName(query, 1)
+        
+        if (addressList != null && addressList.isNotEmpty()) {
+          val address = addressList[0]
+          val latLng = LatLng(address.latitude, address.longitude)
+          
+          // Move the map to the found location
+          mapFragment.getMapAsync { googleMap ->
+            googleMap.clear()
+            googleMap.addMarker(MarkerOptions().position(latLng).title(query))
+            googleMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+          }
+        } else {
+          Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in fallback search", e)
+      Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
     }
   }
 }
