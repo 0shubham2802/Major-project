@@ -40,10 +40,10 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
   private val USER_MARKER_COLOR: Int = Color.argb(255, 0, 0, 255)
 
   var setInitialCameraPosition = false
-  val cameraMarker = createMarker(CAMERA_MARKER_COLOR)
+  var cameraMarker: Marker? = createMarker(CAMERA_MARKER_COLOR)
   var cameraIdle = true
 
-  var earthMarker = createMarker(EARTH_MARKER_COLOR)
+  var earthMarker: Marker? = createMarker(EARTH_MARKER_COLOR)
   var searchMarker: Marker? = null
   var userLocationMarker: Marker? = null
 
@@ -70,9 +70,9 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
       if (!cameraIdle) {
         return@runOnUiThread
       }
-      cameraMarker.isVisible = true
-      cameraMarker.position = position
-      cameraMarker.rotation = heading.toFloat()
+      cameraMarker?.isVisible = true
+      cameraMarker?.position = position
+      cameraMarker?.rotation = heading.toFloat()
 
       val cameraPositionBuilder: CameraPosition.Builder = if (!setInitialCameraPosition) {
         // Set the camera position with an initial default zoom level.
@@ -111,7 +111,7 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
   /** Creates and adds a 2D anchor marker on the 2D map view.  */
   private fun createMarker(
     color: Int,
-  ): Marker {
+  ): Marker? {
     val markersOptions = MarkerOptions()
       .position(LatLng(0.0,0.0))
       .draggable(false)
@@ -119,7 +119,7 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
       .flat(true)
       .visible(false)
       .icon(BitmapDescriptorFactory.fromBitmap(createColoredMarkerBitmap(color)))
-    return googleMap.addMarker(markersOptions)!!
+    return googleMap.addMarker(markersOptions)
   }
 
   private fun createColoredMarkerBitmap(@ColorInt color: Int): Bitmap {

@@ -675,9 +675,14 @@ class HelloGeoRenderer(val context: Context) :
 
   private fun updateMapMarker(latLng: LatLng) {
     helloGeoView?.mapView?.let { mapView ->
-      if (mapView.googleMap != null && mapView.earthMarker != null) {
-        mapView.earthMarker.position = latLng
-        mapView.earthMarker.isVisible = true
+      if (mapView.googleMap != null) {
+        if (mapView.earthMarker != null) {
+          mapView.earthMarker?.position = latLng
+          mapView.earthMarker?.isVisible = true
+        } else {
+          // Create marker if it doesn't exist
+          mapView.createEarthMarker(latLng)
+        }
       }
     }
   }
