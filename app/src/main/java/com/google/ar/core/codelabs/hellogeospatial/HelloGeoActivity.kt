@@ -91,6 +91,15 @@ class HelloGeoActivity : AppCompatActivity() {
       }
     }
 
+    // TEMPORARY FIX: Skip AR initialization entirely and go straight to map mode
+    if (true) { // Force fallback mode for now to stop crashes
+      Log.d(TAG, "Bypassing AR mode entirely to prevent crashes")
+      // Launch the fallback activity immediately
+      startActivity(Intent(this, FallbackActivity::class.java))
+      finish()
+      return
+    }
+
     try {
       // Initialize location services
       fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)

@@ -168,40 +168,57 @@ class FallbackActivity : AppCompatActivity() {
     }
     
     private fun setupMap(navigateButton: Button) {
-        googleMap?.apply {
-            uiSettings.apply {
-                isZoomControlsEnabled = true
-                isCompassEnabled = true
-                isMyLocationButtonEnabled = true
-            }
-            
-            // Enable my location layer if we have permission
-            if (hasLocationPermission()) {
-                isMyLocationEnabled = true
-            }
-            
-            // Move camera to a default location (can be replaced with actual user location)
-            moveCamera(CameraUpdateFactory.newLatLngZoom(
-                LatLng(37.7749, -122.4194), // San Francisco as default
-                10f
-            ))
-            
-            // Add click listener to allow selecting a point on the map
-            setOnMapClickListener { latLng ->
-                // Clear previous markers
-                clear()
+        try {
+            googleMap?.apply {
+                uiSettings.apply {
+                    isZoomControlsEnabled = true
+                    isCompassEnabled = true
+                    isMyLocationButtonEnabled = true
+                }
                 
-                // Add new marker
-                addMarker(MarkerOptions()
-                    .position(latLng)
-                    .title("Selected Location"))
+                // Enable my location layer if we have permission
+                if (hasLocationPermission()) {
+                    try {
+                        isMyLocationEnabled = true
+                    } catch (e: Exception) {
+                        Log.e("FallbackActivity", "Could not enable my location", e)
+                    }
+                }
                 
-                // Store as destination
-                destinationLatLng = latLng
+                try {
+                    // Move camera to a default location (can be replaced with actual user location)
+                    moveCamera(CameraUpdateFactory.newLatLngZoom(
+                        LatLng(37.7749, -122.4194), // San Francisco as default
+                        10f
+                    ))
+                } catch (e: Exception) {
+                    Log.e("FallbackActivity", "Could not move camera", e)
+                }
                 
-                // Show navigation button
-                navigateButton.visibility = View.VISIBLE
+                // Add click listener to allow selecting a point on the map
+                try {
+                    setOnMapClickListener { latLng ->
+                        // Clear previous markers
+                        clear()
+                        
+                        // Add new marker
+                        addMarker(MarkerOptions()
+                            .position(latLng)
+                            .title("Selected Location"))
+                        
+                        // Store as destination
+                        destinationLatLng = latLng
+                        
+                        // Show navigation button
+                        navigateButton.visibility = View.VISIBLE
+                    }
+                } catch (e: Exception) {
+                    Log.e("FallbackActivity", "Could not set map click listener", e)
+                }
             }
+        } catch (e: Exception) {
+            Log.e("FallbackActivity", "Error setting up map", e)
+            Toast.makeText(this, "Error with map controls: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
     
@@ -210,30 +227,52 @@ class FallbackActivity : AppCompatActivity() {
             val geocoder = Geocoder(this, Locale.getDefault())
             
             // Use the geocoder to find the location
-            @Suppress("DEPRECATION")
-            val addresses = geocoder.getFromLocationName(query, 1)
-            
-            if (addresses != null && addresses.isNotEmpty()) {
-                val address = addresses[0]
-                val latLng = LatLng(address.latitude, address.longitude)
+            try {
+                @Suppress("DEPRECATION")
+                val addresses = geocoder.getFromLocationName(query, 1)
                 
-                googleMap?.apply {
-                    clear()
-                    addMarker(MarkerOptions().position(latLng).title(query))
-                    animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+                if (addresses != null && addresses.isNotEmpty()) {
+                    val address = addresses[0]
+                    val latLng = LatLng(address.latitude, address.longitude)
+                    
+                    try {
+                        googleMap?.apply {
+                            clear()
+                            addMarker(MarkerOptions().position(latLng).title(query))
+                            animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+                        }
+                        
+                        // Store as destination
+                        destinationLatLng = latLng
+                        
+                        // Find and show the navigation button
+                        try {
+                            findViewById<LinearLayout>(0)
+                                .getChildAt(3)?.visibility = View.VISIBLE
+                        } catch (e: Exception) {
+                            Log.e("FallbackActivity", "Error showing navigation button", e)
+                            // Fallback method to find the button
+                            for (i in 0 until (findViewById<LinearLayout>(0)?.childCount ?: 0)) {
+                                val view = findViewById<LinearLayout>(0)?.getChildAt(i)
+                                if (view is Button) {
+                                    view.visibility = View.VISIBLE
+                                    break
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("FallbackActivity", "Error updating map with search result", e)
+                        Toast.makeText(this, "Found location but couldn't display on map", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
                 }
-                
-                // Store as destination
-                destinationLatLng = latLng
-                
-                // Show navigation button
-                findViewById<Button>(android.R.id.content)
-                    .findViewById<LinearLayout>(0)
-                    .getChildAt(3)?.visibility = View.VISIBLE
-            } else {
-                Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e("FallbackActivity", "Error with geocoder", e)
+                Toast.makeText(this, "Error looking up location: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
+            Log.e("FallbackActivity", "Error in searchLocation", e)
             Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
         }
     }
