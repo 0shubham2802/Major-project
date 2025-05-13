@@ -36,6 +36,7 @@ class FallbackActivity : AppCompatActivity() {
     private var destinationLatLng: LatLng? = null
     
     companion object {
+        private const val TAG = "FallbackActivity"
         private const val LOCATION_PERMISSION_CODE = 100
     }
     
@@ -44,96 +45,40 @@ class FallbackActivity : AppCompatActivity() {
         
         // Set a default uncaught exception handler
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-            Log.e("FallbackActivity", "Uncaught exception", throwable)
+            Log.e(TAG, "Uncaught exception", throwable)
             Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
         }
         
         try {
-            // Create a linear layout for our UI
-            val layout = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.MATCH_PARENT
-                )
-            }
+            // Set content view from layout XML
+            setContentView(R.layout.activity_fallback)
             
-            // Add a title
-            val titleText = TextView(this).apply {
-                text = "AR Navigation (Map Mode)"
-                textSize = 20f
-                setTextColor(Color.BLACK)
-                gravity = Gravity.CENTER
-                setPadding(16, 16, 16, 16)
-            }
-            layout.addView(titleText)
-            
-            // Add a subtitle explaining why we're in fallback mode
-            val subtitleText = TextView(this).apply {
-                text = "Your device doesn't fully support AR features. Using map-only mode."
-                textSize = 14f
-                setTextColor(Color.GRAY)
-                gravity = Gravity.CENTER
-                setPadding(16, 0, 16, 16)
-            }
-            layout.addView(subtitleText)
-            
-            // Add a search bar
-            val searchBar = EditText(this).apply {
-                hint = "Search location"
-                setPadding(16, 16, 16, 16)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    setMargins(16, 0, 16, 16)
-                }
-                
-                imeOptions = EditorInfo.IME_ACTION_SEARCH
-                inputType = android.text.InputType.TYPE_CLASS_TEXT
-                
-                setOnEditorActionListener { textView, actionId, _ ->
-                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                        val query = textView.text.toString()
-                        if (query.isNotBlank()) {
-                            searchLocation(query)
-                            return@setOnEditorActionListener true
-                        }
-                    }
-                    return@setOnEditorActionListener false
-                }
-            }
-            layout.addView(searchBar)
-            
-            // Add navigation button (initially hidden)
-            val navigateButton = Button(this).apply {
-                text = "Navigate with Google Maps"
-                visibility = View.GONE
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    setMargins(16, 0, 16, 16)
-                }
-                setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_dark))
-                setTextColor(Color.WHITE)
-                
-                setOnClickListener {
-                    destinationLatLng?.let { destination ->
-                        openGoogleMapsNavigation(destination)
+            // Setup search bar functionality
+            val searchBar = findViewById<EditText>(R.id.searchBar)
+            searchBar.setOnEditorActionListener { textView, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    val query = textView.text.toString()
+                    if (query.isNotBlank()) {
+                        searchLocation(query)
+                        return@setOnEditorActionListener true
                     }
                 }
+                return@setOnEditorActionListener false
             }
-            layout.addView(navigateButton)
             
-            // Set the content view to our layout
-            setContentView(layout)
+            // Setup navigation button
+            val navigateButton = findViewById<Button>(R.id.navigateButton)
+            navigateButton.setOnClickListener {
+                destinationLatLng?.let { destination ->
+                    openGoogleMapsNavigation(destination)
+                }
+            }
             
             // Add the map fragment
             try {
                 mapFragment = SupportMapFragment()
                 supportFragmentManager.beginTransaction()
-                    .add(View.generateViewId(), mapFragment)
+                    .replace(R.id.map_container, mapFragment)
                     .commit()
                 
                 mapFragment.getMapAsync { map ->
@@ -141,14 +86,14 @@ class FallbackActivity : AppCompatActivity() {
                     setupMap(navigateButton)
                 }
             } catch (e: Exception) {
-                Log.e("FallbackActivity", "Error setting up map", e)
+                Log.e(TAG, "Error setting up map", e)
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
             }
             
             // Check for location permissions
             checkLocationPermission()
         } catch (e: Exception) {
-            Log.e("FallbackActivity", "Error in onCreate", e)
+            Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing map view: ${e.message}", Toast.LENGTH_LONG).show()
             
             // Create a simple fallback for the fallback
@@ -162,7 +107,7 @@ class FallbackActivity : AppCompatActivity() {
                 setContentView(simpleText)
             } catch (t: Throwable) {
                 // At this point, there's not much else we can do
-                Log.e("FallbackActivity", "Fatal error creating UI", t)
+                Log.e(TAG, "Fatal error creating UI", t)
             }
         }
     }
@@ -181,7 +126,7 @@ class FallbackActivity : AppCompatActivity() {
                     try {
                         isMyLocationEnabled = true
                     } catch (e: Exception) {
-                        Log.e("FallbackActivity", "Could not enable my location", e)
+                        Log.e(TAG, "Could not enable my location", e)
                     }
                 }
                 
@@ -192,7 +137,7 @@ class FallbackActivity : AppCompatActivity() {
                         10f
                     ))
                 } catch (e: Exception) {
-                    Log.e("FallbackActivity", "Could not move camera", e)
+                    Log.e(TAG, "Could not move camera", e)
                 }
                 
                 // Add click listener to allow selecting a point on the map
@@ -213,11 +158,11 @@ class FallbackActivity : AppCompatActivity() {
                         navigateButton.visibility = View.VISIBLE
                     }
                 } catch (e: Exception) {
-                    Log.e("FallbackActivity", "Could not set map click listener", e)
+                    Log.e(TAG, "Could not set map click listener", e)
                 }
             }
         } catch (e: Exception) {
-            Log.e("FallbackActivity", "Error setting up map", e)
+            Log.e(TAG, "Error setting up map", e)
             Toast.makeText(this, "Error with map controls: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
@@ -245,34 +190,21 @@ class FallbackActivity : AppCompatActivity() {
                         // Store as destination
                         destinationLatLng = latLng
                         
-                        // Find and show the navigation button
-                        try {
-                            findViewById<LinearLayout>(0)
-                                .getChildAt(3)?.visibility = View.VISIBLE
-                        } catch (e: Exception) {
-                            Log.e("FallbackActivity", "Error showing navigation button", e)
-                            // Fallback method to find the button
-                            for (i in 0 until (findViewById<LinearLayout>(0)?.childCount ?: 0)) {
-                                val view = findViewById<LinearLayout>(0)?.getChildAt(i)
-                                if (view is Button) {
-                                    view.visibility = View.VISIBLE
-                                    break
-                                }
-                            }
-                        }
+                        // Show the navigation button
+                        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
                     } catch (e: Exception) {
-                        Log.e("FallbackActivity", "Error updating map with search result", e)
+                        Log.e(TAG, "Error updating map with search result", e)
                         Toast.makeText(this, "Found location but couldn't display on map", Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Log.e("FallbackActivity", "Error with geocoder", e)
+                Log.e(TAG, "Error with geocoder", e)
                 Toast.makeText(this, "Error looking up location: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Log.e("FallbackActivity", "Error in searchLocation", e)
+            Log.e(TAG, "Error in searchLocation", e)
             Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
         }
     }

@@ -24,6 +24,8 @@ import android.location.Location
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -91,13 +93,42 @@ class HelloGeoActivity : AppCompatActivity() {
       }
     }
 
-    // TEMPORARY FIX: Skip AR initialization entirely and go straight to map mode
-    if (true) { // Force fallback mode for now to stop crashes
+    try {
+      // TEMPORARY FIX: Skip AR initialization entirely and go straight to map mode
       Log.d(TAG, "Bypassing AR mode entirely to prevent crashes")
-      // Launch the fallback activity immediately
-      startActivity(Intent(this, FallbackActivity::class.java))
-      finish()
+      
+      // Show a loading message
+      val loadingLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setBackgroundColor(Color.WHITE)
+      }
+      
+      val loadingText = TextView(this).apply {
+        text = "Loading navigation..."
+        textSize = 18f
+        gravity = Gravity.CENTER
+        setTextColor(Color.BLACK)
+      }
+      
+      loadingLayout.addView(loadingText)
+      setContentView(loadingLayout)
+      
+      // Launch the fallback activity with a slight delay to ensure clean state
+      Handler(Looper.getMainLooper()).postDelayed({
+        try {
+          startActivity(Intent(this, FallbackActivity::class.java))
+          finish()
+        } catch (e: Exception) {
+          Log.e(TAG, "Error launching FallbackActivity", e)
+          showFallbackUserInterface()
+        }
+      }, 500) // 500ms delay
+      
       return
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in bypass", e)
+      // Continue with normal flow if the bypass fails
     }
 
     try {
