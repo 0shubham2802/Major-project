@@ -54,6 +54,11 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   lateinit var virtualObjectMesh: Mesh
   lateinit var virtualObjectShader: Shader
   lateinit var virtualObjectTexture: Texture
+  
+  // Directional arrow for navigation
+  lateinit var arrowMesh: Mesh
+  lateinit var arrowShader: Shader
+  lateinit var arrowTexture: Texture
 
   // Temporary matrix allocated here to reduce number of allocations for each frame.
   val modelMatrix = FloatArray(16)
@@ -65,6 +70,11 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
   val session
     get() = activity.arCoreSessionHelper.session
+    
+  // Store multiple anchors for navigation path
+  private val anchors = mutableListOf<Anchor>()
+  private var destinationAnchor: Anchor? = null
+  private var isNavigating = false
 
   val displayRotationHelper = DisplayRotationHelper(activity)
   val trackingStateHelper = TrackingStateHelper(activity)
@@ -94,7 +104,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           Texture.ColorFormat.SRGB
         )
 
-      virtualObjectMesh = Mesh.createFromAsset(render, "models/geospatial_marker.obj");
+      virtualObjectMesh = Mesh.createFromAsset(render, "models/geospatial_marker.obj")
       virtualObjectShader =
         Shader.createFromAssets(
           render,
@@ -102,9 +112,34 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           "shaders/ar_unlit_object.frag",
           /*defines=*/ null)
           .setTexture("u_Texture", virtualObjectTexture)
+          
+      // Load navigation arrow assets
+      try {
+        arrowTexture =
+          Texture.createFromAsset(
+            render,
+            "models/arrow_texture.png",
+            Texture.WrapMode.CLAMP_TO_EDGE,
+            Texture.ColorFormat.SRGB
+          )
+        arrowMesh = Mesh.createFromAsset(render, "models/arrow.obj")
+        arrowShader =
+          Shader.createFromAssets(
+            render,
+            "shaders/ar_unlit_object.vert",
+            "shaders/ar_unlit_object.frag",
+            /*defines=*/ null)
+            .setTexture("u_Texture", arrowTexture)
+      } catch (e: IOException) {
+        Log.e(TAG, "Failed to read navigation assets", e)
+        // Fallback to using the same assets as the marker
+        arrowTexture = virtualObjectTexture
+        arrowMesh = virtualObjectMesh
+        arrowShader = virtualObjectShader
+      }
 
       backgroundRenderer.setUseDepthVisualization(render, false)
-      backgroundRenderer.setUseOcclusion(render, false)
+      backgroundRenderer.setUseOcclusion(render, true) // Enable occlusion for better realism
     } catch (e: IOException) {
       Log.e(TAG, "Failed to read a required asset file", e)
       showError("Failed to read a required asset file: $e")
@@ -177,7 +212,6 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
     //</editor-fold> 
 
-    // TODO: Obtain Geospatial information and display it on the map.
     val earth: Earth = session.earth!!
     if (earth?.trackingState == TrackingState.TRACKING) {
       val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
@@ -186,22 +220,159 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
         longitude = cameraGeospatialPose.longitude,
         heading = cameraGeospatialPose.heading
       )
+      
+      // Update AR navigation visuals if navigating
+      if (isNavigating) {
+        updateNavigationAnchors(earth, cameraGeospatialPose)
+      }
     }
     activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
 
-    // Draw the placed anchor, if it exists.
-    earthAnchor?.let {
-      render.renderCompassAtAnchor(it)
+    // Draw all anchors
+    for (anchor in anchors) {
+      if (anchor.trackingState == TrackingState.TRACKING) {
+        render.renderObject(anchor, arrowMesh, arrowShader)
+      }
+    }
+
+    // Draw the destination anchor with a different model
+    destinationAnchor?.let {
+      if (it.trackingState == TrackingState.TRACKING) {
+        render.renderCompassAtAnchor(it)
+      }
     }
 
     // Compose the virtual scene with the background.
     backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
   }
+  
+  private fun updateNavigationAnchors(earth: Earth, cameraGeospatialPose: GeospatialPose) {
+    // Update existing anchors or create new ones based on the current path
+    // This would be called during navigation to update directional arrows
+    
+    // For simplicity, we're just going to keep the existing anchors
+    // A full implementation would update the path based on current position
+  }
+  
+  fun createAnchorAtLocation(latitude: Double, longitude: Double): Anchor? {
+    val earth = session?.earth ?: return null
+    if (earth.trackingState != TrackingState.TRACKING) {
+      return null
+    }
+    
+    val altitude = earth.cameraGeospatialPose.altitude - 1.0
+    
+    val anchor = earth.createAnchor(
+      latitude,
+      longitude,
+      altitude,
+      0f,
+      0f,
+      0f,
+      1f
+    )
+    
+    // Store as destination anchor
+    destinationAnchor = anchor
+    
+    // Update map marker
+    activity.view.mapView?.earthMarker?.apply {
+      position = LatLng(latitude, longitude)
+      isVisible = true
+    }
+    
+    return anchor
+  }
+  
+  fun createDirectionalAnchor(startLat: Double, startLng: Double, endLat: Double, endLng: Double): Anchor? {
+    val earth = session?.earth ?: return null
+    if (earth.trackingState != TrackingState.TRACKING) {
+      return null
+    }
+    
+    // Calculate bearing between points
+    val bearing = calculateBearing(startLat, startLng, endLat, endLng)
+    
+    // Create anchor at midpoint with proper orientation
+    val midLat = (startLat + endLat) / 2
+    val midLng = (startLng + endLng) / 2
+    val altitude = earth.cameraGeospatialPose.altitude - 1.0
+    
+    // Convert bearing to quaternion (rotate arrow to point in right direction)
+    val radians = Math.toRadians(bearing)
+    val qx = 0f
+    val qy = Math.sin(radians / 2).toFloat()
+    val qz = 0f
+    val qw = Math.cos(radians / 2).toFloat()
+    
+    val anchor = earth.createAnchor(
+      midLat, 
+      midLng,
+      altitude,
+      qx, qy, qz, qw
+    )
+    
+    anchors.add(anchor)
+    return anchor
+  }
+  
+  private fun calculateBearing(startLat: Double, startLng: Double, endLat: Double, endLng: Double): Double {
+    val startLatRad = Math.toRadians(startLat)
+    val startLngRad = Math.toRadians(startLng)
+    val endLatRad = Math.toRadians(endLat)
+    val endLngRad = Math.toRadians(endLng)
+    
+    val dLng = endLngRad - startLngRad
+    
+    val y = Math.sin(dLng) * Math.cos(endLatRad)
+    val x = Math.cos(startLatRad) * Math.sin(endLatRad) -
+            Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(dLng)
+    
+    var bearing = Math.toDegrees(Math.atan2(y, x))
+    if (bearing < 0) {
+      bearing += 360.0
+    }
+    
+    return bearing
+  }
+  
+  fun createPathAnchors(path: List<LatLng>) {
+    clearAnchors() // Remove existing anchors
+    
+    // Create destination anchor at the end of the path
+    if (path.isNotEmpty()) {
+      val destination = path.last()
+      createAnchorAtLocation(destination.latitude, destination.longitude)
+      
+      // Create directional anchors along the path
+      if (path.size > 1) {
+        for (i in 0 until path.size - 1) {
+          val start = path[i]
+          val end = path[i + 1]
+          createDirectionalAnchor(start.latitude, start.longitude, end.latitude, end.longitude)
+        }
+      }
+      
+      isNavigating = true
+    }
+  }
+  
+  fun clearAnchors() {
+    // Detach all anchors
+    for (anchor in anchors) {
+      anchor.detach()
+    }
+    anchors.clear()
+    
+    destinationAnchor?.detach()
+    destinationAnchor = null
+    
+    isNavigating = false
+  }
 
   var earthAnchor: Anchor? = null
 
   fun onMapClick(latLng: LatLng) {
-    // TODO: place an anchor at the given position.
     val earth = session?.earth ?: return
     if(earth.trackingState != TrackingState.TRACKING){
       return
@@ -220,8 +391,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     activity.view.mapView?.earthMarker?.apply {
       position = latLng
       isVisible = true
-
-  }
+    }
   }
 
   private fun SampleRender.renderCompassAtAnchor(anchor: Anchor) {
@@ -236,6 +406,19 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     // Update shader properties and draw
     virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
     draw(virtualObjectMesh, virtualObjectShader, virtualSceneFramebuffer)
+  }
+  
+  private fun SampleRender.renderObject(anchor: Anchor, mesh: Mesh, shader: Shader) {
+    // Get the current pose of the Anchor in world space
+    anchor.pose.toMatrix(modelMatrix, 0)
+
+    // Calculate model/view/projection matrices
+    Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+    Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+
+    // Update shader properties and draw
+    shader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+    draw(mesh, shader, virtualSceneFramebuffer)
   }
 
   private fun showError(errorMessage: String) =

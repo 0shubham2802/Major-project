@@ -15,10 +15,12 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial.helpers
 
+import android.graphics.Color
 import android.location.Address
 import android.location.Geocoder
 import android.opengl.GLSurfaceView
 import android.view.View
+import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.widget.SearchView
@@ -66,18 +68,52 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   }
   
   private fun setupSearchView() {
-    searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-      override fun onQueryTextSubmit(query: String?): Boolean {
-        query?.let {
-          searchLocation(it)
+    // Style the search view to look like Google Maps
+    searchView.apply {
+      queryHint = "Search for a destination"
+      
+      // Set text color to black
+      val searchText = this.findViewById<EditText>(androidx.appcompat.R.id.search_src_text)
+      searchText?.setTextColor(Color.BLACK)
+      searchText?.setHintTextColor(Color.GRAY)
+      
+      // Focus handling for better UX
+      setOnQueryTextFocusChangeListener { _, hasFocus ->
+        if (hasFocus) {
+          // When search gets focus - clear any previous query
+          if (query.isNotBlank()) {
+            setQuery("", false)
+          }
+          
+          // Move the map down slightly to provide focus on search
+          mapTouchWrapper.animate()
+            .translationY(50f)
+            .setDuration(200)
+            .start()
+        } else {
+          // When search loses focus - restore map position
+          mapTouchWrapper.animate()
+            .translationY(0f)
+            .setDuration(200)
+            .start()
         }
-        return true
       }
+      
+      // Handle search submission
+      setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+        override fun onQueryTextSubmit(query: String?): Boolean {
+          query?.let {
+            searchLocation(it)
+            clearFocus() // Hide keyboard after search
+          }
+          return true
+        }
 
-      override fun onQueryTextChange(newText: String?): Boolean {
-        return false
-      }
-    })
+        override fun onQueryTextChange(newText: String?): Boolean {
+          return false
+        }
+      })
+    }
   }
   
   private fun searchLocation(locationName: String) {
