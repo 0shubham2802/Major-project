@@ -15,6 +15,7 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial.helpers
 
+import android.content.Context
 import android.graphics.Color
 import android.location.Address
 import android.location.Geocoder
@@ -29,8 +30,10 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -40,6 +43,8 @@ import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
+import com.google.ar.core.Session
+import com.google.ar.core.codelabs.hellogeospatial.ARActivity
 import com.google.ar.core.codelabs.hellogeospatial.HelloGeoActivity
 import com.google.ar.core.codelabs.hellogeospatial.R
 import com.google.ar.core.examples.java.common.helpers.SnackbarHelper
@@ -47,17 +52,19 @@ import java.io.IOException
 import java.util.Locale
 
 /** Contains UI elements for Hello Geo. */
-class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
-  val root = View.inflate(activity, R.layout.activity_main, null)
-  val surfaceView = root.findViewById<GLSurfaceView>(R.id.surfaceview)
-  val searchView = root.findViewById<SearchView>(R.id.searchView)
+class HelloGeoView : DefaultLifecycleObserver {
+  private val context: Context
+  private val appCompatActivity: AppCompatActivity?
+  private val helloGeoActivity: HelloGeoActivity?
+  private val arActivity: ARActivity?
+  
+  // Root view containing all UI elements
+  val root: View
+  val surfaceView: GLSurfaceView
+  val searchView: SearchView?
   
   // Add button container for navigation controls
-  private val buttonContainer = LinearLayout(activity).apply {
-    orientation = LinearLayout.VERTICAL
-    gravity = Gravity.BOTTOM or Gravity.END
-    setPadding(0, 0, 32, 32)
-  }
+  private val buttonContainer: LinearLayout
   
   // Map of action buttons by ID
   private val actionButtons = mutableMapOf<String, Button>()
@@ -70,42 +77,92 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   private var routePolyline: com.google.android.gms.maps.model.Polyline? = null
   private var isNavigationMode = false
 
-  val session
-    get() = activity.arCoreSessionHelper.session
-
   val snackbarHelper = SnackbarHelper()
 
   var mapView: MapView? = null
-  val mapTouchWrapper = root.findViewById<MapTouchWrapper>(R.id.map_wrapper).apply {
-    setup { screenLocation ->
-      val latLng: LatLng =
-        mapView?.googleMap?.projection?.fromScreenLocation(screenLocation) ?: return@setup
-      activity.renderer.onMapClick(latLng)
+  val mapTouchWrapper: MapTouchWrapper?
+  val mapFragment: SupportMapFragment?
+  val statusText: TextView?
+  
+  // Constructor for HelloGeoActivity
+  constructor(activity: HelloGeoActivity) {
+    this.context = activity
+    this.appCompatActivity = activity
+    this.helloGeoActivity = activity
+    this.arActivity = null
+    
+    // Initialize UI from activity_main layout
+    root = View.inflate(activity, R.layout.activity_main, null)
+    surfaceView = root.findViewById(R.id.surfaceview)
+    searchView = root.findViewById(R.id.searchView)
+    statusText = root.findViewById(R.id.statusText)
+    
+    // Initialize button container
+    buttonContainer = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.BOTTOM or Gravity.END
+      setPadding(0, 0, 32, 32)
     }
-  }
-  val mapFragment =
-    (activity.supportFragmentManager.findFragmentById(R.id.map)!! as SupportMapFragment).also {
+    
+    // Set up map touch interaction
+    mapTouchWrapper = root.findViewById<MapTouchWrapper>(R.id.map_wrapper).apply {
+      setup { screenLocation ->
+        val latLng: LatLng =
+          mapView?.googleMap?.projection?.fromScreenLocation(screenLocation) ?: return@setup
+        helloGeoActivity.renderer.onMapClick(latLng)
+      }
+    }
+    
+    // Set up map fragment
+    mapFragment = (activity.supportFragmentManager.findFragmentById(R.id.map)!! as SupportMapFragment).also {
       it.getMapAsync { googleMap -> mapView = MapView(activity, googleMap) }
     }
-
-  val statusText = root.findViewById<TextView>(R.id.statusText)
-  
-  init {
+    
+    // Initialize UI elements
     setupSearchView()
     setupButtonContainer()
   }
   
-  private fun setupButtonContainer() {
-    val rootFrame = root as FrameLayout
-    val layoutParams = FrameLayout.LayoutParams(
-      FrameLayout.LayoutParams.WRAP_CONTENT,
-      FrameLayout.LayoutParams.WRAP_CONTENT
-    ).apply {
+  // Constructor for ARActivity (simplified view with just AR elements)
+  constructor(activity: ARActivity) {
+    this.context = activity
+    this.appCompatActivity = activity
+    this.helloGeoActivity = null
+    this.arActivity = activity
+    
+    // For AR activity, we don't inflate a layout - we just need a reference to hold the surfaceView
+    // The surfaceView itself is created and managed by the ARActivity
+    root = LinearLayout(activity) // Dummy root view - not actually used
+    surfaceView = GLSurfaceView(activity) // This will be replaced by ARActivity
+    
+    // These elements don't exist in AR mode
+    searchView = null
+    statusText = null
+    mapTouchWrapper = null
+    mapFragment = null
+    
+    // Initialize button container for possible AR controls
+    buttonContainer = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
       gravity = Gravity.BOTTOM or Gravity.END
-      bottomMargin = 320 // Position above the map
-      rightMargin = 16
+      setPadding(0, 0, 32, 32)
     }
-    rootFrame.addView(buttonContainer, layoutParams)
+    
+    // No need for search view or map initialization in AR mode
+  }
+  
+  private fun setupButtonContainer() {
+    if (root is FrameLayout) {
+      val layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.WRAP_CONTENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.BOTTOM or Gravity.END
+        bottomMargin = 320 // Position above the map
+        rightMargin = 16
+      }
+      (root as FrameLayout).addView(buttonContainer, layoutParams)
+    }
   }
   
   fun addActionButton(button: Button, id: String) {
@@ -120,7 +177,7 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
       setPadding(16, 8, 16, 8)
       
       // Apply styling
-      setBackgroundColor(ContextCompat.getColor(activity, android.R.color.holo_blue_dark))
+      setBackgroundColor(ContextCompat.getColor(context, android.R.color.holo_blue_dark))
       setTextColor(Color.WHITE)
     }
     
@@ -137,8 +194,8 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   }
   
   private fun setupSearchView() {
-    // Style the search view to look like Google Maps
-    searchView.apply {
+    // Only set up search view if it exists (in HelloGeoActivity mode)
+    searchView?.apply {
       queryHint = "Search for a destination"
       
       // Set text color to black
@@ -155,16 +212,16 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
           }
           
           // Move the map down slightly to provide focus on search
-          mapTouchWrapper.animate()
-            .translationY(50f)
-            .setDuration(200)
-            .start()
+          mapTouchWrapper?.animate()
+            ?.translationY(50f)
+            ?.setDuration(200)
+            ?.start()
         } else {
           // When search loses focus - restore map position
-          mapTouchWrapper.animate()
-            .translationY(0f)
-            .setDuration(200)
-            .start()
+          mapTouchWrapper?.animate()
+            ?.translationY(0f)
+            ?.setDuration(200)
+            ?.start()
         }
       }
       
@@ -185,8 +242,16 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     }
   }
   
+  // Add method to set up the AR session
+  fun setupSession(session: Session) {
+    // Set the session for the GLSurfaceView
+    surfaceView.preserveEGLContextOnPause = true
+    surfaceView.setEGLContextClientVersion(2)
+    surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+  }
+
   private fun searchLocation(locationName: String) {
-    val geocoder = Geocoder(activity, Locale.getDefault())
+    val geocoder = Geocoder(context, Locale.getDefault())
     
     try {
       // For newer Android versions - using getFromLocationName might not work directly
@@ -194,12 +259,12 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
       if (Build.VERSION.SDK_INT >= 33) {
         // Use the callback version for newer Android
         geocoder.getFromLocationName(locationName, 1) { addresses ->
-          activity.runOnUiThread {
+          appCompatActivity?.runOnUiThread {
             if (addresses.isNotEmpty()) {
               val address = addresses[0]
               handleFoundLocation(address, locationName)
             } else {
-              Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+              Toast.makeText(context, "Location not found", Toast.LENGTH_SHORT).show()
             }
           }
         }
@@ -212,12 +277,12 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
           val address = addressList[0]
           handleFoundLocation(address, locationName)
         } else {
-          Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+          Toast.makeText(context, "Location not found", Toast.LENGTH_SHORT).show()
         }
       }
     } catch (e: IOException) {
       Log.e("HelloGeoView", "Error in geocoding", e)
-      Toast.makeText(activity, "Error searching for location", Toast.LENGTH_SHORT).show()
+      Toast.makeText(context, "Error searching for location", Toast.LENGTH_SHORT).show()
     }
   }
   
@@ -234,44 +299,51 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   fun startNavigationMode(destination: LatLng) {
     isNavigationMode = true
     
-    // Show distance to destination
-    val distanceText = TextView(activity).apply {
-      text = "Preparing navigation..."
-      setBackgroundColor(Color.argb(180, 0, 0, 0))
-      setTextColor(Color.WHITE)
-      setPadding(16, 8, 16, 8)
-      gravity = Gravity.CENTER
-    }
-    
-    val layoutParams = FrameLayout.LayoutParams(
-      FrameLayout.LayoutParams.MATCH_PARENT,
-      FrameLayout.LayoutParams.WRAP_CONTENT
-    ).apply {
-      gravity = Gravity.TOP
-      topMargin = 80 // Below the search bar
-    }
-    
-    (root as FrameLayout).addView(distanceText, layoutParams)
-    textViews["distance_text"] = distanceText
-    
-    // Add Google Maps option button
-    val gmapsButton = Button(activity).apply {
-      text = "Open in Google Maps"
-      setOnClickListener {
-        activity.openGoogleMapsNavigation(destination)
+    // Only create UI elements if we're in HelloGeoActivity mode with a FrameLayout root
+    if (root is FrameLayout) {
+      // Show distance to destination
+      val distanceText = TextView(context).apply {
+        text = "Preparing navigation..."
+        setBackgroundColor(Color.argb(180, 0, 0, 0))
+        setTextColor(Color.WHITE)
+        setPadding(16, 8, 16, 8)
+        gravity = Gravity.CENTER
       }
+      
+      val layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.TOP
+        topMargin = 80 // Below the search bar
+      }
+      
+      (root as FrameLayout).addView(distanceText, layoutParams)
+      textViews["distance_text"] = distanceText
     }
-    addActionButton(gmapsButton, "gmaps_button")
+    
+    // Add Google Maps option button - works in both modes
+    helloGeoActivity?.let { activity ->
+      val gmapsButton = Button(context).apply {
+        text = "Open in Google Maps"
+        setOnClickListener {
+          activity.openGoogleMapsNavigation(destination)
+        }
+      }
+      addActionButton(gmapsButton, "gmaps_button")
+    }
   }
   
   fun stopNavigationMode() {
     isNavigationMode = false
     
     try {
-      // Remove navigation UI elements
-      textViews["distance_text"]?.let {
-        (root as FrameLayout).removeView(it)
-        textViews.remove("distance_text")
+      // Remove navigation UI elements if they exist
+      if (root is FrameLayout) {
+        textViews["distance_text"]?.let {
+          (root as FrameLayout).removeView(it)
+          textViews.remove("distance_text")
+        }
       }
       
       // Remove Google Maps button
@@ -292,49 +364,56 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     // Remove any existing route
     routePolyline?.remove()
     
-    // In a full implementation, we would use the Directions API to get a route
-    // For this example, we'll just draw a straight line
-    val polylineOptions = PolylineOptions()
-      .add(origin, destination)
-      .width(8f)
-      .color(Color.BLUE)
-      .geodesic(true)
-    
-    // Add the polyline to the map
+    // Only draw on map if we have a map in this mode
     mapView?.googleMap?.let {
+      // In a full implementation, we would use the Directions API to get a route
+      // For this example, we'll just draw a straight line
+      val polylineOptions = PolylineOptions()
+        .add(origin, destination)
+        .width(8f)
+        .color(Color.BLUE)
+        .geodesic(true)
+      
+      // Add the polyline to the map
       routePolyline = it.addPolyline(polylineOptions)
     }
   }
 
   fun updateStatusText(earth: Earth?, cameraGeospatialPose: GeospatialPose?) {
-    activity.runOnUiThread {
-      val poseText = if (cameraGeospatialPose == null) "" else
-        activity.getString(R.string.geospatial_pose,
-                           cameraGeospatialPose.latitude,
-                           cameraGeospatialPose.longitude,
-                           cameraGeospatialPose.horizontalAccuracy,
-                           cameraGeospatialPose.altitude,
-                           cameraGeospatialPose.verticalAccuracy,
-                           cameraGeospatialPose.heading,
-                           cameraGeospatialPose.headingAccuracy)
-                           
-      if (earth == null) {
-        statusText.text = "Waiting for Earth to initialize..."
-      } else {
-        statusText.text = activity.resources.getString(R.string.earth_state,
-                                                       earth.earthState.toString(),
-                                                       earth.trackingState.toString(),
-                                                       poseText)
-      }
-      
-      // If in navigation mode, update distance to destination
-      if (isNavigationMode && cameraGeospatialPose != null) {
-        updateNavigationInfo(cameraGeospatialPose)
+    // Only update status if we have the statusText view (in HelloGeoActivity mode)
+    statusText?.let { statusTextView ->
+      appCompatActivity?.runOnUiThread {
+        val poseText = if (cameraGeospatialPose == null) "" else
+          context.getString(R.string.geospatial_pose,
+                         cameraGeospatialPose.latitude,
+                         cameraGeospatialPose.longitude,
+                         cameraGeospatialPose.horizontalAccuracy,
+                         cameraGeospatialPose.altitude,
+                         cameraGeospatialPose.verticalAccuracy,
+                         cameraGeospatialPose.heading,
+                         cameraGeospatialPose.headingAccuracy)
+                         
+        if (earth == null) {
+          statusTextView.text = "Waiting for Earth to initialize..."
+        } else {
+          statusTextView.text = context.resources.getString(R.string.earth_state,
+                                                     earth.earthState.toString(),
+                                                     earth.trackingState.toString(),
+                                                     poseText)
+        }
+        
+        // If in navigation mode, update distance to destination
+        if (isNavigationMode && cameraGeospatialPose != null) {
+          updateNavigationInfo(cameraGeospatialPose)
+        }
       }
     }
   }
   
   private fun updateNavigationInfo(currentPose: GeospatialPose) {
+    // Only update navigation info in HelloGeoActivity mode
+    if (helloGeoActivity == null) return
+    
     // Calculate distance to destination
     mapView?.searchMarker?.position?.let { destination ->
       val currentLatLng = LatLng(currentPose.latitude, currentPose.longitude)
@@ -372,51 +451,54 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
 
   // Add a method to update tracking quality indicators
   fun updateTrackingQuality(quality: String, confidence: Double) {
-    activity.runOnUiThread {
-      // Create or update the quality indicator
-      var qualityText = textViews["quality_indicator"]
-      
-      if (qualityText == null) {
-        // Create quality indicator if it doesn't exist
-        qualityText = TextView(activity).apply {
-          setPadding(16, 8, 16, 8)
-          gravity = Gravity.CENTER
-          textSize = 14f
-          setTextColor(Color.WHITE)
-          
-          // Add shadow for better visibility
-          setShadowLayer(2f, 1f, 1f, Color.BLACK)
-          
-          // Set rounded background
-          background = ContextCompat.getDrawable(activity, android.R.drawable.dialog_holo_light_frame)
-          
-          // Position at top-right
-          val layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-          ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            topMargin = 80
-            rightMargin = 16
+    appCompatActivity?.runOnUiThread {
+      // Only create indicators if we have a proper root view
+      if (root is FrameLayout) {
+        // Create or update the quality indicator
+        var qualityText = textViews["quality_indicator"]
+        
+        if (qualityText == null) {
+          // Create quality indicator if it doesn't exist
+          qualityText = TextView(context).apply {
+            setPadding(16, 8, 16, 8)
+            gravity = Gravity.CENTER
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            
+            // Add shadow for better visibility
+            setShadowLayer(2f, 1f, 1f, Color.BLACK)
+            
+            // Set rounded background
+            background = ContextCompat.getDrawable(context, android.R.drawable.dialog_holo_light_frame)
+            
+            // Position at top-right
+            val layoutParams = FrameLayout.LayoutParams(
+              FrameLayout.LayoutParams.WRAP_CONTENT,
+              FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+              gravity = Gravity.TOP or Gravity.END
+              topMargin = 80
+              rightMargin = 16
+            }
+            
+            (root as FrameLayout).addView(this, layoutParams)
+            textViews["quality_indicator"] = this
           }
-          
-          (root as FrameLayout).addView(this, layoutParams)
-          textViews["quality_indicator"] = this
         }
-      }
-      
-      // Set appropriate background color based on quality
-      val backgroundColor = when (quality) {
-        "Excellent" -> Color.parseColor("#4CAF50") // Green
-        "Good" -> Color.parseColor("#8BC34A") // Light Green
-        "Fair" -> Color.parseColor("#FFC107") // Amber
-        else -> Color.parseColor("#F44336") // Red
-      }
-      
-      // Set text and background
-      qualityText.apply {
-        text = "Tracking: $quality"
-        setBackgroundColor(backgroundColor)
+        
+        // Set appropriate background color based on quality
+        val backgroundColor = when (quality) {
+          "Excellent" -> Color.parseColor("#4CAF50") // Green
+          "Good" -> Color.parseColor("#8BC34A") // Light Green
+          "Fair" -> Color.parseColor("#FFC107") // Amber
+          else -> Color.parseColor("#F44336") // Red
+        }
+        
+        // Set text and background
+        qualityText.apply {
+          text = "Tracking: $quality"
+          setBackgroundColor(backgroundColor)
+        }
       }
     }
   }

@@ -1,5 +1,6 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
+import android.opengl.GLSurfaceView
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -11,6 +12,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.LifecycleRegistry
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
@@ -41,6 +43,8 @@ class ARActivity : AppCompatActivity() {
     private var trackingQualityIndicator: TextView? = null
     private var isNavigating = false
     private var arStatusMessage: String? = null
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private lateinit var surfaceView: GLSurfaceView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +69,32 @@ class ARActivity : AppCompatActivity() {
                 }
             }
 
+            // Set the content view
+            setContentView(R.layout.activity_ar)
+            
+            // Add tracking quality indicator
+            trackingQualityIndicator = findViewById(R.id.tracking_quality)
+            
+            // Add button to return to map view
+            findViewById<Button>(R.id.return_to_map_button).setOnClickListener {
+                returnToMapMode()
+            }
+            
+            // Get the surface view
+            surfaceView = findViewById(R.id.ar_surface_view)
+            
+            // Initialize our AR view - create a new instance with this activity
+            view = HelloGeoView(this)
+            
+            // Set the surfaceView in our custom view
+            // Need to access the view's surfaceView property to set it
+            val field = HelloGeoView::class.java.getDeclaredField("surfaceView")
+            field.isAccessible = true
+            field.set(view, surfaceView)
+            
+            // Initialize renderer
+            renderer = HelloGeoRenderer(this)
+            
             // Create and initialize ARCore session
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
             arCoreSessionHelper.exceptionCallback = { exception ->
@@ -82,32 +112,23 @@ class ARActivity : AppCompatActivity() {
                 // Return to map mode with error
                 returnToMapMode()
             }
-
-            // Set up the AR view
-            setContentView(R.layout.activity_ar)
             
-            // Add tracking quality indicator
-            trackingQualityIndicator = findViewById(R.id.tracking_quality)
-            
-            // Add button to return to map view
-            findViewById<Button>(R.id.return_to_map_button).setOnClickListener {
-                returnToMapMode()
-            }
-            
-            // Initialize AR rendering
-            view = findViewById(R.id.ar_view)
-            renderer = HelloGeoRenderer(this)
-            
-            // Set AR session lifecycle
+            // Set up the session
             arCoreSessionHelper.beforeSessionResume = ::configureSession
-            arCoreSessionHelper.onSessionCreated = { session: Session ->
-                // Set up the renderer with the session
-                renderer.setSession(session)
+            
+            // Get the session and pass it to our view and renderer
+            val session = arCoreSessionHelper.session
+            if (session != null) {
+                // We have a session, set it up in the view and renderer
                 view.setupSession(session)
+                renderer.setSession(session)
             }
             
-            // Setup renderer with SampleRender
-            SampleRender(view.surfaceView, renderer, assets)
+            // Set up SampleRender to draw the AR scene
+            SampleRender(surfaceView, renderer, assets)
+            
+            // Add renderer as a lifecycle observer
+            lifecycle.addObserver(renderer)
             
             // Set timeout for AR initialization
             startARInitializationTimeout()
@@ -156,18 +177,23 @@ class ARActivity : AppCompatActivity() {
     }
     
     private fun configureSession(session: Session) {
-        session.configure(
-            session.config.apply {
-                // Enable geospatial mode
-                geospatialMode = Config.GeospatialMode.ENABLED
-                
-                // Basic features for navigation
-                planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                focusMode = Config.FocusMode.AUTO
-            }
-        )
+        try {
+            session.configure(
+                session.config.apply {
+                    // Enable geospatial mode
+                    geospatialMode = Config.GeospatialMode.ENABLED
+                    
+                    // Basic features for navigation
+                    planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                    lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
+                    updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                    focusMode = Config.FocusMode.AUTO
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configuring session", e)
+            Toast.makeText(this, "Error configuring AR: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     
     private fun updateTrackingQualityIndicator() {
@@ -252,7 +278,7 @@ class ARActivity : AppCompatActivity() {
         
         try {
             arCoreSessionHelper.onResume()
-            view.onResume()
+            surfaceView.onResume()
             
             // Start updating tracking quality indicator
             val handler = Handler(Looper.getMainLooper())
@@ -272,7 +298,7 @@ class ARActivity : AppCompatActivity() {
         super.onPause()
         
         try {
-            view.onPause()
+            surfaceView.onPause()
             arCoreSessionHelper.onPause()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onPause", e)

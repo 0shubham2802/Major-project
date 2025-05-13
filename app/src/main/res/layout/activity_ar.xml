@@ -5,9 +5,9 @@
     android:layout_height="match_parent"
     tools:context=".ARActivity">
 
-    <!-- AR View takes up the whole screen -->
-    <com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
-        android:id="@+id/ar_view"
+    <!-- AR View takes up the whole screen - using GLSurfaceView instead of HelloGeoView -->
+    <android.opengl.GLSurfaceView
+        android:id="@+id/ar_surface_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
