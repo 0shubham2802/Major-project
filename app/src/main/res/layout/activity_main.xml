@@ -19,10 +19,23 @@
     android:layout_height="match_parent"
     tools:context=".HelloGeoActivity">
 
+  <androidx.appcompat.widget.SearchView
+      android:id="@+id/searchView"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:layout_marginStart="8dp"
+      android:layout_marginEnd="8dp"
+      android:background="@android:color/white"
+      android:elevation="4dp"
+      android:iconifiedByDefault="false"
+      android:queryHint="Search for a location" />
+
   <android.opengl.GLSurfaceView
       android:id="@+id/surfaceview"
       android:layout_width="fill_parent"
       android:layout_height="fill_parent"
+      android:layout_below="@id/searchView"
       android:layout_gravity="top" />
 
   <com.google.ar.core.codelabs.hellogeospatial.helpers.MapTouchWrapper

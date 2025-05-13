@@ -15,23 +15,31 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial.helpers
 
+import android.location.Address
+import android.location.Geocoder
 import android.opengl.GLSurfaceView
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.widget.SearchView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MarkerOptions
 import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
 import com.google.ar.core.codelabs.hellogeospatial.HelloGeoActivity
 import com.google.ar.core.codelabs.hellogeospatial.R
 import com.google.ar.core.examples.java.common.helpers.SnackbarHelper
+import java.io.IOException
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   val root = View.inflate(activity, R.layout.activity_main, null)
   val surfaceView = root.findViewById<GLSurfaceView>(R.id.surfaceview)
+  val searchView = root.findViewById<SearchView>(R.id.searchView)
 
   val session
     get() = activity.arCoreSessionHelper.session
@@ -52,6 +60,50 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     }
 
   val statusText = root.findViewById<TextView>(R.id.statusText)
+  
+  init {
+    setupSearchView()
+  }
+  
+  private fun setupSearchView() {
+    searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+      override fun onQueryTextSubmit(query: String?): Boolean {
+        query?.let {
+          searchLocation(it)
+        }
+        return true
+      }
+
+      override fun onQueryTextChange(newText: String?): Boolean {
+        return false
+      }
+    })
+  }
+  
+  private fun searchLocation(locationName: String) {
+    val geocoder = Geocoder(activity)
+    
+    try {
+      val addressList = geocoder.getFromLocationName(locationName, 1)
+      
+      if (addressList != null && addressList.isNotEmpty()) {
+        val address = addressList[0]
+        val latLng = LatLng(address.latitude, address.longitude)
+        
+        // Use the MapView's navigation method to handle the search location
+        mapView?.navigateToSearchLocation(latLng, locationName)
+        
+        // Create an anchor at the searched location
+        activity.renderer.onMapClick(latLng)
+        
+      } else {
+        Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+      }
+    } catch (e: IOException) {
+      Toast.makeText(activity, "Error searching for location", Toast.LENGTH_SHORT).show()
+    }
+  }
+
   fun updateStatusText(earth: Earth, cameraGeospatialPose: GeospatialPose?) {
     activity.runOnUiThread {
       val poseText = if (cameraGeospatialPose == null) "" else

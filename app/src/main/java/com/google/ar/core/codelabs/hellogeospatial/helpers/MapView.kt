@@ -36,12 +36,14 @@ import com.google.ar.core.codelabs.hellogeospatial.R
 class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
   private val CAMERA_MARKER_COLOR: Int = Color.argb(255, 0, 255, 0)
   private val EARTH_MARKER_COLOR: Int = Color.argb(255, 125, 125, 125)
+  private val SEARCH_MARKER_COLOR: Int = Color.argb(255, 255, 0, 0)
 
   var setInitialCameraPosition = false
   val cameraMarker = createMarker(CAMERA_MARKER_COLOR)
   var cameraIdle = true
 
   val earthMarker = createMarker(EARTH_MARKER_COLOR)
+  var searchMarker: Marker? = null
 
   init {
     googleMap.uiSettings.apply {
@@ -82,6 +84,25 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
       }
       googleMap.moveCamera(
         CameraUpdateFactory.newCameraPosition(cameraPositionBuilder.build()))
+    }
+  }
+  
+  fun navigateToSearchLocation(latLng: LatLng, locationName: String) {
+    activity.runOnUiThread {
+      // Remove existing search marker if it exists
+      searchMarker?.remove()
+      
+      // Create a new marker for the search location
+      val markerOptions = MarkerOptions()
+        .position(latLng)
+        .title(locationName)
+        .icon(BitmapDescriptorFactory.fromBitmap(createColoredMarkerBitmap(SEARCH_MARKER_COLOR)))
+      
+      searchMarker = googleMap.addMarker(markerOptions)
+      
+      // Move camera to the search location with animation
+      val cameraUpdate = CameraUpdateFactory.newLatLngZoom(latLng, 18f)
+      googleMap.animateCamera(cameraUpdate)
     }
   }
 

@@ -15,10 +15,14 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial
 
+import android.Manifest
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 import com.google.ar.core.Config
 import com.google.ar.core.Session
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
@@ -35,6 +39,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 class HelloGeoActivity : AppCompatActivity() {
   companion object {
     private const val TAG = "HelloGeoActivity"
+    private const val INTERNET_PERMISSION_CODE = 101
   }
 
   lateinit var arCoreSessionHelper: ARCoreSessionLifecycleHelper
@@ -43,6 +48,9 @@ class HelloGeoActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    // Check for internet permission
+    checkInternetPermission()
 
     // Setup ARCore session lifecycle helper and configuration.
     arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
@@ -92,13 +100,24 @@ class HelloGeoActivity : AppCompatActivity() {
     )
   }
 
+  private fun checkInternetPermission() {
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.INTERNET) != PackageManager.PERMISSION_GRANTED) {
+      ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.INTERNET), INTERNET_PERMISSION_CODE)
+    }
+  }
+
   override fun onRequestPermissionsResult(
     requestCode: Int,
     permissions: Array<String>,
     results: IntArray
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, results)
-    if (!GeoPermissionsHelper.hasGeoPermissions(this)) {
+    
+    if (requestCode == INTERNET_PERMISSION_CODE) {
+      if (results.isNotEmpty() && results[0] != PackageManager.PERMISSION_GRANTED) {
+        Toast.makeText(this, "Internet permission is required for location search", Toast.LENGTH_LONG).show()
+      }
+    } else if (!GeoPermissionsHelper.hasGeoPermissions(this)) {
       // Use toast instead of snackbar here since the activity will exit.
       Toast.makeText(this, "Camera and location permissions are needed to run this application", Toast.LENGTH_LONG)
         .show()
