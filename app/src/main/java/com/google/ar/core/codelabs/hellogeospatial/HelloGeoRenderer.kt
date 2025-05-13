@@ -15,11 +15,13 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.opengl.Matrix
 import android.util.Log
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.gms.maps.model.LatLng
@@ -28,6 +30,7 @@ import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
+import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
 import com.google.ar.core.examples.java.common.helpers.DisplayRotationHelper
 import com.google.ar.core.examples.java.common.helpers.TrackingStateHelper
 import com.google.ar.core.examples.java.common.samplerender.Framebuffer
@@ -86,8 +89,14 @@ class HelloGeoRenderer(val context: Context) :
   private var destinationAnchor: Anchor? = null
   private var isNavigating = false
 
+  // Initialize display rotation helper with context - it accepts Context instead of Activity now
   val displayRotationHelper = DisplayRotationHelper(context)
-  val trackingStateHelper = TrackingStateHelper(context)
+  
+  // Initialize tracking state helper with AppCompatActivity if available, or null
+  val trackingStateHelper = when (context) {
+    is AppCompatActivity -> TrackingStateHelper(context)
+    else -> null // For non-Activity contexts, we'll handle tracking state differently
+  }
   
   private var lastEarthTrackingErrorTime = 0L
   private var earthInitializedTime = 0L
@@ -206,7 +215,7 @@ class HelloGeoRenderer(val context: Context) :
         backgroundRenderer.updateDisplayGeometry(frame)
 
         // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
-        trackingStateHelper.updateKeepScreenOnFlag(camera.trackingState)
+        updateTrackingState(camera.trackingState)
 
         // -- Draw background
         if (frame.timestamp != 0L) {
@@ -230,7 +239,7 @@ class HelloGeoRenderer(val context: Context) :
         render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
         //</editor-fold> 
 
-        val earth: Earth? = session.earth
+        val earth = session.earth
         if (earth == null) {
           Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
           // No need to show an error - just wait
@@ -297,7 +306,7 @@ class HelloGeoRenderer(val context: Context) :
         }
         
         // Earth is tracking - evaluate quality
-        val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
+        val cameraGeospatialPose = earth.cameraGeospatialPose
         val horizontalAccuracy = cameraGeospatialPose.horizontalAccuracy
         val headingAccuracy = cameraGeospatialPose.headingAccuracy
         
@@ -408,10 +417,7 @@ class HelloGeoRenderer(val context: Context) :
       destinationAnchor = anchor
       
       // Update map marker
-      helloGeoView?.mapView?.earthMarker?.apply {
-        position = LatLng(latitude, longitude)
-        isVisible = true
-      }
+      updateMapMarker(LatLng(latitude, longitude))
       
       Log.d(TAG, "Anchor created successfully: $anchor")
       return anchor
@@ -535,10 +541,7 @@ class HelloGeoRenderer(val context: Context) :
       1f
     )
 
-    helloGeoView?.mapView?.earthMarker?.apply {
-      position = latLng
-      isVisible = true
-    }
+    updateMapMarker(latLng)
   }
 
   private fun SampleRender.renderCompassAtAnchor(anchor: Anchor) {
@@ -608,6 +611,11 @@ class HelloGeoRenderer(val context: Context) :
         Toast.makeText(context, "AR features unavailable: $reason. Switching to map-only mode.", Toast.LENGTH_LONG).show()
         context.returnToMapMode()
       }
+    } else if (context is Activity) {
+      // For other activity types
+      (context as Activity).runOnUiThread {
+        Toast.makeText(context, "AR features unavailable: $reason", Toast.LENGTH_LONG).show()
+      }
     }
   }
 
@@ -625,10 +633,23 @@ class HelloGeoRenderer(val context: Context) :
     // In ARActivity we don't have a mapView to update
   }
 
-  private fun updateStatusText(earth: Earth, geospatialPose: GeospatialPose) {
+  private fun updateStatusText(earth: Earth?, geospatialPose: GeospatialPose?) {
     if (context is HelloGeoActivity) {
       context.view.updateStatusText(earth, geospatialPose)
     }
     // ARActivity has its own status indicator
+  }
+
+  private fun updateTrackingState(trackingState: TrackingState) {
+    trackingStateHelper?.updateKeepScreenOnFlag(trackingState)
+  }
+
+  private fun updateMapMarker(latLng: LatLng) {
+    helloGeoView?.mapView?.let { mapView ->
+      if (mapView.googleMap != null && mapView.earthMarker != null) {
+        mapView.earthMarker.position = latLng
+        mapView.earthMarker.isVisible = true
+      }
+    }
   }
 }

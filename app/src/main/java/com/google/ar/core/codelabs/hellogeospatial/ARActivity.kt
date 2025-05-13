@@ -116,12 +116,22 @@ class ARActivity : AppCompatActivity() {
             // Set up the session
             arCoreSessionHelper.beforeSessionResume = ::configureSession
             
-            // Get the session and pass it to our view and renderer
+            // Need to call onResume to potentially create the session
+            arCoreSessionHelper.onResume()
+            
+            // Now try to get the session - it might be available after onResume
             val session = arCoreSessionHelper.session
+            
             if (session != null) {
+                Log.d(TAG, "Session created successfully")
                 // We have a session, set it up in the view and renderer
                 view.setupSession(session)
                 renderer.setSession(session)
+            } else {
+                Log.e(TAG, "Failed to create ARCore session")
+                Toast.makeText(this, "Could not initialize AR - please try again", Toast.LENGTH_SHORT).show()
+                returnToMapMode()
+                return
             }
             
             // Set up SampleRender to draw the AR scene
@@ -277,7 +287,8 @@ class ARActivity : AppCompatActivity() {
         super.onResume()
         
         try {
-            arCoreSessionHelper.onResume()
+            // Note: We're not calling arCoreSessionHelper.onResume() here because 
+            // we already called it in onCreate to create the session
             surfaceView.onResume()
             
             // Start updating tracking quality indicator

@@ -503,11 +503,37 @@ class HelloGeoView : DefaultLifecycleObserver {
     }
   }
 
+  // Add alternate onResume and onPause methods without the owner parameter
+  fun onResume() {
+    try {
+      surfaceView.onResume()
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error in onResume", e)
+    }
+  }
+
+  fun onPause() {
+    try {
+      surfaceView.onPause()
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error in onPause", e)
+    }
+  }
+  
+  // Original lifecycle methods still needed for lifecycle observer pattern
   override fun onResume(owner: LifecycleOwner) {
-    surfaceView.onResume()
+    try {
+      surfaceView.onResume()
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error in onResume", e)
+    }
   }
 
   override fun onPause(owner: LifecycleOwner) {
-    surfaceView.onPause()
+    try {
+      surfaceView.onPause()
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error in onPause", e)
+    }
   }
 }
