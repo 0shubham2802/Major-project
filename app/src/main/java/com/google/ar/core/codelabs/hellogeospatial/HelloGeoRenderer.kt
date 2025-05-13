@@ -35,6 +35,7 @@ import com.google.ar.core.examples.java.common.samplerender.Shader
 import com.google.ar.core.examples.java.common.samplerender.Texture
 import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRenderer
 import com.google.ar.core.exceptions.CameraNotAvailableException
+import java.io.IOException
 
 
 class HelloGeoRenderer(val activity: HelloGeoActivity) :
@@ -522,6 +523,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
         activity.finish()
       } catch (e: Exception) {
         Log.e(TAG, "Error launching FallbackActivity", e)
+        // Call the public method
         activity.showFallbackUserInterface()
       }
     }

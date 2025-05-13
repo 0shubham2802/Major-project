@@ -342,7 +342,7 @@ class HelloGeoActivity : AppCompatActivity() {
     }
   }
 
-  private fun showFallbackUserInterface() {
+  fun showFallbackUserInterface() {
     // Create a simpler fallback UI to avoid potential import issues
     try {
       // Create a layout with text and button
