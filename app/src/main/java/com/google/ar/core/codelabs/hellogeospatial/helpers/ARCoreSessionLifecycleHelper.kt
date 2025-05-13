@@ -66,7 +66,8 @@ class ARCoreSessionLifecycleHelper(
     }
   }
 
-  override fun onResume(owner: LifecycleOwner) {
+  // Non-lifecycle version of onResume
+  fun onResume() {
     val session = this.session ?: tryCreateSession() ?: return
     try {
       beforeSessionResume?.invoke(session)
@@ -77,16 +78,26 @@ class ARCoreSessionLifecycleHelper(
     }
   }
 
-  override fun onPause(owner: LifecycleOwner) {
+  // Non-lifecycle version of onPause
+  fun onPause() {
     session?.pause()
   }
 
-  override fun onDestroy(owner: LifecycleOwner) {
-    // Explicitly close the ARCore session to release native resources.
-    // Review the API reference for important considerations before calling close() in apps with
-    // more complicated lifecycle requirements:
-    // https://developers.google.com/ar/reference/java/arcore/reference/com/google/ar/core/Session#close()
+  // Non-lifecycle version of onDestroy
+  fun onDestroy() {
     session?.close()
     session = null
+  }
+
+  override fun onResume(owner: LifecycleOwner) {
+    onResume()
+  }
+
+  override fun onPause(owner: LifecycleOwner) {
+    onPause()
+  }
+
+  override fun onDestroy(owner: LifecycleOwner) {
+    onDestroy()
   }
 }

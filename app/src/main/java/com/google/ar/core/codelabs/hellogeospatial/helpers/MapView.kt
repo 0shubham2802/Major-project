@@ -43,7 +43,7 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
   val cameraMarker = createMarker(CAMERA_MARKER_COLOR)
   var cameraIdle = true
 
-  val earthMarker = createMarker(EARTH_MARKER_COLOR)
+  var earthMarker = createMarker(EARTH_MARKER_COLOR)
   var searchMarker: Marker? = null
   var userLocationMarker: Marker? = null
 
@@ -136,6 +136,10 @@ class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
 
   fun createEarthMarker(latLng: LatLng) {
     googleMap?.let { map ->
+      // Remove existing marker if any
+      earthMarker?.remove()
+      
+      // Create new marker
       earthMarker = map.addMarker(
         MarkerOptions()
           .position(latLng)
