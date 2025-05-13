@@ -15,8 +15,10 @@
  */
 package com.google.ar.core.codelabs.hellogeospatial
 
+import android.content.Intent
 import android.opengl.Matrix
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.gms.maps.model.LatLng
@@ -33,7 +35,6 @@ import com.google.ar.core.examples.java.common.samplerender.Shader
 import com.google.ar.core.examples.java.common.samplerender.Texture
 import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRenderer
 import com.google.ar.core.exceptions.CameraNotAvailableException
-import java.io.IOException
 
 
 class HelloGeoRenderer(val activity: HelloGeoActivity) :
@@ -44,6 +45,10 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
     private val Z_NEAR = 0.1f
     private val Z_FAR = 1000f
+    
+    // Constants for fallback detection
+    private const val MAX_EARTH_INIT_WAIT_TIME_MS = 30000L // 30 seconds
+    private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 300 // ~10 seconds at 30fps
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -78,6 +83,11 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
   val displayRotationHelper = DisplayRotationHelper(activity)
   val trackingStateHelper = TrackingStateHelper(activity)
+  
+  private var lastEarthTrackingErrorTime = 0L
+  private var earthInitializedTime = 0L
+  private var framesWithoutEarthTracking = 0
+  private var hasFallenBackToMapMode = false
 
   override fun onResume(owner: LifecycleOwner) {
     displayRotationHelper.onResume()
@@ -207,27 +217,67 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
       val earth: Earth? = session.earth
       if (earth == null) {
-        Log.d(TAG, "Earth is null")
+        Log.d(TAG, "Earth is null, waiting for Earth to initialize...")
+        // No need to show an error - just wait
+        activity.view.updateStatusText(null, null)
+        
+        // Track time waiting for Earth to initialize
+        if (earthInitializedTime == 0L) {
+          earthInitializedTime = System.currentTimeMillis()
+        } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
+          // Earth hasn't initialized in the maximum wait time, fall back to map mode
+          handlePersistentEarthFailure("Earth initialization timed out")
+        }
+        
         return
       }
 
-      if (earth.trackingState == TrackingState.TRACKING) {
-        val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
-        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
+      // Check Earth tracking state
+      if (earth.trackingState != TrackingState.TRACKING) {
+        Log.d(TAG, "Earth tracking state: ${earth.trackingState}, waiting for tracking")
+        activity.view.updateStatusText(earth, null)
         
-        activity.view.mapView?.updateMapPosition(
-          latitude = cameraGeospatialPose.latitude,
-          longitude = cameraGeospatialPose.longitude,
-          heading = cameraGeospatialPose.heading
-        )
+        // Increment counter for frames without Earth tracking
+        framesWithoutEarthTracking++
         
-        // Update AR navigation visuals if navigating
-        if (isNavigating) {
-          updateNavigationAnchors(earth, cameraGeospatialPose)
+        // Wait at least 10 seconds before showing error to the user
+        if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
+          lastEarthTrackingErrorTime = System.currentTimeMillis()
+          activity.runOnUiThread {
+            Toast.makeText(
+              activity,
+              "Waiting for Earth tracking. Make sure you're outdoors with good GPS signal.",
+              Toast.LENGTH_LONG
+            ).show()
+          }
         }
-      } else {
-        Log.d(TAG, "Earth tracking state: ${earth.trackingState}")
+        
+        // Check if we've gone too long without Earth tracking
+        if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING) {
+          handlePersistentEarthFailure("Earth tracking failed persistently")
+        }
+        
+        return
       }
+
+      // Reset counter since we have successful tracking
+      framesWithoutEarthTracking = 0
+      
+      // Earth is tracking properly
+      val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
+      Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
+      
+      activity.view.mapView?.updateMapPosition(
+        latitude = cameraGeospatialPose.latitude,
+        longitude = cameraGeospatialPose.longitude,
+        heading = cameraGeospatialPose.heading
+      )
+      
+      // Update AR navigation visuals if navigating
+      if (isNavigating) {
+        updateNavigationAnchors(earth, cameraGeospatialPose)
+      }
+      
       activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
 
       // Draw all anchors
@@ -451,4 +501,29 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
   private fun showError(errorMessage: String) =
     activity.view.snackbarHelper.showError(activity, errorMessage)
+
+  private fun handlePersistentEarthFailure(reason: String) {
+    if (hasFallenBackToMapMode) return // Prevent multiple fallbacks
+    
+    hasFallenBackToMapMode = true
+    Log.e(TAG, "Falling back to map mode: $reason")
+    
+    activity.runOnUiThread {
+      // Show a toast explaining the issue
+      Toast.makeText(
+        activity,
+        "AR features unavailable: $reason. Switching to map-only mode.",
+        Toast.LENGTH_LONG
+      ).show()
+      
+      // Start the fallback activity
+      try {
+        activity.startActivity(Intent(activity, FallbackActivity::class.java))
+        activity.finish()
+      } catch (e: Exception) {
+        Log.e(TAG, "Error launching FallbackActivity", e)
+        activity.showFallbackUserInterface()
+      }
+    }
+  }
 }

@@ -21,10 +21,11 @@
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
 
-  <!-- Limits app visibility in the Google Play Store to ARCore supported devices
-       (https://developers.google.com/ar/devices). -->
+  <!-- Explicitly make camera and AR optional so app works without them -->
+  <uses-feature android:name="android.hardware.camera" android:required="false"/>
   <uses-feature android:name="android.hardware.camera.ar" android:required="false"/>
   <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
@@ -50,9 +51,16 @@
     
     <activity
         android:name=".FallbackActivity"
-        android:exported="false"
+        android:exported="true"
+        android:configChanges="orientation|screenSize" 
         android:theme="@style/Theme.AppCompat.Light">
+        <!-- Allow direct launch for debugging -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+        </intent-filter>
     </activity>
+    
     <!-- Indicates whether "Google Play Services for AR" (ARCore) is "required" or "optional". -->
     <meta-data android:name="com.google.ar.core" android:value="optional" />
     

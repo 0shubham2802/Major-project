@@ -306,7 +306,7 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     }
   }
 
-  fun updateStatusText(earth: Earth, cameraGeospatialPose: GeospatialPose?) {
+  fun updateStatusText(earth: Earth?, cameraGeospatialPose: GeospatialPose?) {
     activity.runOnUiThread {
       val poseText = if (cameraGeospatialPose == null) "" else
         activity.getString(R.string.geospatial_pose,
@@ -317,10 +317,15 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
                            cameraGeospatialPose.verticalAccuracy,
                            cameraGeospatialPose.heading,
                            cameraGeospatialPose.headingAccuracy)
-      statusText.text = activity.resources.getString(R.string.earth_state,
-                                                     earth.earthState.toString(),
-                                                     earth.trackingState.toString(),
-                                                     poseText)
+                           
+      if (earth == null) {
+        statusText.text = "Waiting for Earth to initialize..."
+      } else {
+        statusText.text = activity.resources.getString(R.string.earth_state,
+                                                       earth.earthState.toString(),
+                                                       earth.trackingState.toString(),
+                                                       poseText)
+      }
       
       // If in navigation mode, update distance to destination
       if (isNavigationMode && cameraGeospatialPose != null) {

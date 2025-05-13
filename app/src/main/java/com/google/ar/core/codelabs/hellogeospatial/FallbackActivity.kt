@@ -1,13 +1,16 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.location.Geocoder
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -20,6 +23,7 @@ import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.PolylineOptions
 import java.util.Locale
 
 /**
@@ -28,6 +32,7 @@ import java.util.Locale
 class FallbackActivity : AppCompatActivity() {
     private lateinit var mapFragment: SupportMapFragment
     private var googleMap: GoogleMap? = null
+    private var destinationLatLng: LatLng? = null
     
     companion object {
         private const val LOCATION_PERMISSION_CODE = 100
@@ -54,6 +59,16 @@ class FallbackActivity : AppCompatActivity() {
             setPadding(16, 16, 16, 16)
         }
         layout.addView(titleText)
+        
+        // Add a subtitle explaining why we're in fallback mode
+        val subtitleText = TextView(this).apply {
+            text = "Your device doesn't fully support AR features. Using map-only mode."
+            textSize = 14f
+            setTextColor(Color.GRAY)
+            gravity = Gravity.CENTER
+            setPadding(16, 0, 16, 16)
+        }
+        layout.addView(subtitleText)
         
         // Add a search bar
         val searchBar = EditText(this).apply {
@@ -82,6 +97,27 @@ class FallbackActivity : AppCompatActivity() {
         }
         layout.addView(searchBar)
         
+        // Add navigation button (initially hidden)
+        val navigateButton = Button(this).apply {
+            text = "Navigate with Google Maps"
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(16, 0, 16, 16)
+            }
+            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_dark))
+            setTextColor(Color.WHITE)
+            
+            setOnClickListener {
+                destinationLatLng?.let { destination ->
+                    openGoogleMapsNavigation(destination)
+                }
+            }
+        }
+        layout.addView(navigateButton)
+        
         // Set the content view to our layout
         setContentView(layout)
         
@@ -93,14 +129,14 @@ class FallbackActivity : AppCompatActivity() {
         
         mapFragment.getMapAsync { map ->
             googleMap = map
-            setupMap()
+            setupMap(navigateButton)
         }
         
         // Check for location permissions
         checkLocationPermission()
     }
     
-    private fun setupMap() {
+    private fun setupMap(navigateButton: Button) {
         googleMap?.apply {
             uiSettings.apply {
                 isZoomControlsEnabled = true
@@ -118,6 +154,23 @@ class FallbackActivity : AppCompatActivity() {
                 LatLng(37.7749, -122.4194), // San Francisco as default
                 10f
             ))
+            
+            // Add click listener to allow selecting a point on the map
+            setOnMapClickListener { latLng ->
+                // Clear previous markers
+                clear()
+                
+                // Add new marker
+                addMarker(MarkerOptions()
+                    .position(latLng)
+                    .title("Selected Location"))
+                
+                // Store as destination
+                destinationLatLng = latLng
+                
+                // Show navigation button
+                navigateButton.visibility = View.VISIBLE
+            }
         }
     }
     
@@ -138,11 +191,31 @@ class FallbackActivity : AppCompatActivity() {
                     addMarker(MarkerOptions().position(latLng).title(query))
                     animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
                 }
+                
+                // Store as destination
+                destinationLatLng = latLng
+                
+                // Show navigation button
+                findViewById<Button>(android.R.id.content)
+                    .findViewById<LinearLayout>(0)
+                    .getChildAt(3)?.visibility = View.VISIBLE
             } else {
                 Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
             Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun openGoogleMapsNavigation(destination: LatLng) {
+        val uri = Uri.parse("google.navigation:q=${destination.latitude},${destination.longitude}&mode=w")
+        val mapIntent = Intent(Intent.ACTION_VIEW, uri)
+        mapIntent.setPackage("com.google.android.apps.maps")
+        
+        if (mapIntent.resolveActivity(packageManager) != null) {
+            startActivity(mapIntent)
+        } else {
+            Toast.makeText(this, "Google Maps app is not installed", Toast.LENGTH_SHORT).show()
         }
     }
     

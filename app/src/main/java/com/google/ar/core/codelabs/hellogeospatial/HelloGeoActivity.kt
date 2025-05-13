@@ -345,16 +345,44 @@ class HelloGeoActivity : AppCompatActivity() {
   private fun showFallbackUserInterface() {
     // Create a simpler fallback UI to avoid potential import issues
     try {
-      // Create a simple layout with just a text view
+      // Create a layout with text and button
+      val layout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setPadding(32, 32, 32, 32)
+        setBackgroundColor(Color.WHITE)
+      }
+      
+      // Add a title text view
       val textView = TextView(this).apply {
         text = "AR Navigation\n\nThis device does not fully support AR features."
         textSize = 18f
         gravity = Gravity.CENTER
-        setPadding(16, 16, 16, 16)
+        setPadding(16, 16, 16, 48) // Extra padding at bottom
         setTextColor(Color.BLACK)
       }
+      layout.addView(textView)
       
-      setContentView(textView)
+      // Add a button to launch the full fallback activity
+      val fallbackButton = Button(this).apply {
+        text = "Continue with Map Navigation"
+        background = ContextCompat.getDrawable(context, android.R.color.holo_blue_dark)
+        setTextColor(Color.WHITE)
+        setPadding(32, 16, 32, 16)
+        
+        setOnClickListener {
+          try {
+            startActivity(Intent(this@HelloGeoActivity, FallbackActivity::class.java))
+            finish()
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to start FallbackActivity", e)
+            Toast.makeText(this@HelloGeoActivity, "Error launching map mode", Toast.LENGTH_LONG).show()
+          }
+        }
+      }
+      layout.addView(fallbackButton)
+      
+      setContentView(layout)
     } catch (e: Exception) {
       Log.e(TAG, "Failed to create even simple fallback UI", e)
       // Last resort - try to start the fallback activity
