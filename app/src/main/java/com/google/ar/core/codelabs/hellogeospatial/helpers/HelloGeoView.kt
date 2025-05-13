@@ -19,6 +19,7 @@ import android.graphics.Color
 import android.location.Address
 import android.location.Geocoder
 import android.opengl.GLSurfaceView
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -58,6 +59,9 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   
   // Map of action buttons by ID
   private val actionButtons = mutableMapOf<String, Button>()
+  
+  // Store text views separately to avoid casting issues
+  private val textViews = mutableMapOf<String, TextView>()
   
   // Navigation related variables
   private var destinationSelectedListener: ((LatLng, String) -> Unit)? = null
@@ -183,24 +187,45 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     val geocoder = Geocoder(activity)
     
     try {
-      val addressList = geocoder.getFromLocationName(locationName, 1)
-      
-      if (addressList != null && addressList.isNotEmpty()) {
-        val address = addressList[0]
-        val latLng = LatLng(address.latitude, address.longitude)
-        
-        // Use the MapView's navigation method to handle the search location
-        mapView?.navigateToSearchLocation(latLng, locationName)
-        
-        // Notify destination selected listener
-        destinationSelectedListener?.invoke(latLng, locationName)
-        
+      // For newer Android versions - using getFromLocationName might not work directly
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        // Use the callback version for newer Android
+        geocoder.getFromLocationName(locationName, 1) { addresses ->
+          activity.runOnUiThread {
+            if (addresses.isNotEmpty()) {
+              val address = addresses[0]
+              handleFoundLocation(address, locationName)
+            } else {
+              Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+            }
+          }
+        }
       } else {
-        Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+        // Legacy method for older Android versions
+        @Suppress("DEPRECATION")
+        val addressList = geocoder.getFromLocationName(locationName, 1)
+        
+        if (addressList != null && addressList.isNotEmpty()) {
+          val address = addressList[0]
+          handleFoundLocation(address, locationName)
+        } else {
+          Toast.makeText(activity, "Location not found", Toast.LENGTH_SHORT).show()
+        }
       }
     } catch (e: IOException) {
+      Log.e("HelloGeoView", "Error in geocoding", e)
       Toast.makeText(activity, "Error searching for location", Toast.LENGTH_SHORT).show()
     }
+  }
+  
+  private fun handleFoundLocation(address: Address, locationName: String) {
+    val latLng = LatLng(address.latitude, address.longitude)
+    
+    // Use the MapView's navigation method to handle the search location
+    mapView?.navigateToSearchLocation(latLng, locationName)
+    
+    // Notify destination selected listener
+    destinationSelectedListener?.invoke(latLng, locationName)
   }
   
   fun startNavigationMode(destination: LatLng) {
@@ -224,7 +249,7 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
     }
     
     (root as FrameLayout).addView(distanceText, layoutParams)
-    actionButtons["distance_text"] = distanceText as Button
+    textViews["distance_text"] = distanceText
     
     // Add Google Maps option button
     val gmapsButton = Button(activity).apply {
@@ -239,21 +264,25 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   fun stopNavigationMode() {
     isNavigationMode = false
     
-    // Remove navigation UI elements
-    actionButtons["distance_text"]?.let {
-      (root as FrameLayout).removeView(it)
-      actionButtons.remove("distance_text")
+    try {
+      // Remove navigation UI elements
+      textViews["distance_text"]?.let {
+        (root as FrameLayout).removeView(it)
+        textViews.remove("distance_text")
+      }
+      
+      // Remove Google Maps button
+      actionButtons["gmaps_button"]?.let {
+        buttonContainer.removeView(it)
+        actionButtons.remove("gmaps_button")
+      }
+      
+      // Clear route from map
+      routePolyline?.remove()
+      routePolyline = null
+    } catch (e: Exception) {
+      Log.e("HelloGeoView", "Error stopping navigation mode", e)
     }
-    
-    // Remove Google Maps button
-    actionButtons["gmaps_button"]?.let {
-      buttonContainer.removeView(it)
-      actionButtons.remove("gmaps_button")
-    }
-    
-    // Clear route from map
-    routePolyline?.remove()
-    routePolyline = null
   }
   
   fun showRouteOnMap(origin: LatLng, destination: LatLng) {
@@ -307,15 +336,13 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
       )
       
       // Update distance text
-      actionButtons["distance_text"]?.let {
-        if (it is TextView) {
-          val formattedDistance = if (distance < 1000) {
-            "${distance.toInt()} meters"
-          } else {
-            String.format("%.1f km", distance / 1000)
-          }
-          it.text = "Distance to destination: $formattedDistance"
+      textViews["distance_text"]?.let {
+        val formattedDistance = if (distance < 1000) {
+          "${distance.toInt()} meters"
+        } else {
+          String.format("%.1f km", distance / 1000)
         }
+        it.text = "Distance to destination: $formattedDistance"
       }
     }
   }

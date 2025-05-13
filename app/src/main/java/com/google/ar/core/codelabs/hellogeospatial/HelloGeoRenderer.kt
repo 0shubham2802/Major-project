@@ -115,21 +115,11 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
           
       // Load navigation arrow assets
       try {
-        arrowTexture =
-          Texture.createFromAsset(
-            render,
-            "models/arrow_texture.png",
-            Texture.WrapMode.CLAMP_TO_EDGE,
-            Texture.ColorFormat.SRGB
-          )
-        arrowMesh = Mesh.createFromAsset(render, "models/arrow.obj")
-        arrowShader =
-          Shader.createFromAssets(
-            render,
-            "shaders/ar_unlit_object.vert",
-            "shaders/ar_unlit_object.frag",
-            /*defines=*/ null)
-            .setTexture("u_Texture", arrowTexture)
+        // Use existing marker as arrow since the arrow models don't exist
+        arrowTexture = virtualObjectTexture
+        arrowMesh = virtualObjectMesh
+        arrowShader = virtualObjectShader
+        Log.d(TAG, "Using existing marker as arrow due to missing arrow assets")
       } catch (e: IOException) {
         Log.e(TAG, "Failed to read navigation assets", e)
         // Fallback to using the same assets as the marker
@@ -339,35 +329,45 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   fun createPathAnchors(path: List<LatLng>) {
     clearAnchors() // Remove existing anchors
     
-    // Create destination anchor at the end of the path
-    if (path.isNotEmpty()) {
-      val destination = path.last()
-      createAnchorAtLocation(destination.latitude, destination.longitude)
-      
-      // Create directional anchors along the path
-      if (path.size > 1) {
-        for (i in 0 until path.size - 1) {
-          val start = path[i]
-          val end = path[i + 1]
-          createDirectionalAnchor(start.latitude, start.longitude, end.latitude, end.longitude)
+    try {
+      // Create destination anchor at the end of the path
+      if (path.isNotEmpty()) {
+        val destination = path.last()
+        createAnchorAtLocation(destination.latitude, destination.longitude)
+        
+        // Create directional anchors along the path
+        if (path.size > 1) {
+          for (i in 0 until path.size - 1) {
+            val start = path[i]
+            val end = path[i + 1]
+            createDirectionalAnchor(start.latitude, start.longitude, end.latitude, end.longitude)
+          }
         }
+        
+        isNavigating = true
+        Log.d(TAG, "Created ${anchors.size} path anchors and 1 destination anchor")
       }
-      
-      isNavigating = true
+    } catch (e: Exception) {
+      Log.e(TAG, "Error creating path anchors", e)
     }
   }
   
   fun clearAnchors() {
-    // Detach all anchors
-    for (anchor in anchors) {
-      anchor.detach()
+    try {
+      // Detach all anchors
+      for (anchor in anchors) {
+        anchor.detach()
+      }
+      anchors.clear()
+      
+      destinationAnchor?.detach()
+      destinationAnchor = null
+      
+      isNavigating = false
+      Log.d(TAG, "Cleared all anchors")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error clearing anchors", e)
     }
-    anchors.clear()
-    
-    destinationAnchor?.detach()
-    destinationAnchor = null
-    
-    isNavigating = false
   }
 
   var earthAnchor: Anchor? = null

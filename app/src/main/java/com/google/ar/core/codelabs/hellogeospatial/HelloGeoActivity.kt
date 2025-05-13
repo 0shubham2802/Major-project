@@ -160,16 +160,20 @@ class HelloGeoActivity : AppCompatActivity() {
       if (earth?.trackingState == TrackingState.TRACKING) {
         val cameraGeospatialPose = earth.cameraGeospatialPose
         
-        // Create the anchor at the destination
-        renderer.createAnchorAtLocation(destination.latitude, destination.longitude)
+        // Create current location point
+        val currentLatLng = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
+        
+        // For now, just create a simple path from current to destination
+        val simplePath = listOf(currentLatLng, destination)
+        
+        // Create anchors for the path
+        renderer.createPathAnchors(simplePath)
         
         // Notify view that navigation has started
         view.startNavigationMode(destination)
         
-        // Optionally show a route on the map
-        currentLocation?.let { current ->
-          view.showRouteOnMap(LatLng(current.latitude, current.longitude), destination)
-        }
+        // Show route on the map
+        view.showRouteOnMap(currentLatLng, destination)
         
         Toast.makeText(this, "Navigation started", Toast.LENGTH_SHORT).show()
       } else {
