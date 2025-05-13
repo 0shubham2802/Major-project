@@ -90,15 +90,15 @@ class HelloGeoActivity : AppCompatActivity() {
       Log.e(TAG, "Uncaught exception", throwable)
       runOnUiThread {
         Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
-        showFallbackUserInterface()
+        startFallbackActivity()
       }
     }
 
     try {
-      // RE-ENABLING AR: Try AR mode with proper fallback
-      Log.d(TAG, "Attempting to initialize AR mode")
+      // DUAL MODE: Always start FallbackActivity first, but keep trying AR in background
+      Log.d(TAG, "Starting in dual mode - map first with AR initialization in background")
       
-      // Show a loading message while we set things up
+      // Create a simple loading screen
       val loadingLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
@@ -106,7 +106,7 @@ class HelloGeoActivity : AppCompatActivity() {
       }
       
       val loadingText = TextView(this).apply {
-        text = "Initializing AR Navigation..."
+        text = "Initializing Navigation..."
         textSize = 18f
         gravity = Gravity.CENTER
         setTextColor(Color.BLACK)
@@ -117,72 +117,26 @@ class HelloGeoActivity : AppCompatActivity() {
       loadingLayout.addView(loadingText)
       setContentView(loadingLayout)
       
-      // Check if device supports AR
-      if (!checkIsARCoreSupportedAndUpToDate()) {
-        Log.d(TAG, "Device doesn't support ARCore, falling back to map mode")
-        Handler(Looper.getMainLooper()).postDelayed({
-          startActivity(Intent(this, FallbackActivity::class.java))
-          finish()
-        }, 500)
-        return
-      }
+      // Start fallback immediately so user can use app while AR initializes
+      Handler(Looper.getMainLooper()).postDelayed({
+        startActivity(Intent(this, FallbackActivity::class.java))
+        finish()
+      }, 1500)
       
-      // AR is supported, continue with AR initialization
-      // Initialize location services
-      fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-
-      // Check for required permissions
-      checkRequiredPermissions()
-
-      // Setup ARCore session lifecycle helper and configuration.
-      arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
-      // If Session creation or Session.resume() fails, display a message and log detailed
-      // information.
-      arCoreSessionHelper.exceptionCallback =
-        { exception ->
-          val message =
-            when (exception) {
-              is UnavailableUserDeclinedInstallationException ->
-                "Please install Google Play Services for AR"
-              is UnavailableApkTooOldException -> "Please update ARCore"
-              is UnavailableSdkTooOldException -> "Please update this app"
-              is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
-              is CameraNotAvailableException -> "Camera not available. Try restarting the app."
-              else -> "Failed to create AR session: $exception"
-            }
-          Log.e(TAG, "ARCore threw an exception", exception)
-          Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-          
-          // For emulator and devices that don't support AR
-          Log.d(TAG, "Falling back to non-AR mode")
-          showFallbackUserInterface()
-        }
-
-      // Configure session features.
-      arCoreSessionHelper.beforeSessionResume = ::configureSession
-      lifecycle.addObserver(arCoreSessionHelper)
-
-      // Set up the Hello AR renderer.
-      renderer = HelloGeoRenderer(this)
-      lifecycle.addObserver(renderer)
-
-      // Set up Hello AR UI.
-      view = HelloGeoView(this)
-      lifecycle.addObserver(view)
-      setContentView(view.root)
-
-      // Sets up an example renderer using our HelloGeoRenderer.
-      SampleRender(view.surfaceView, renderer, assets)
-      
-      // Setup navigation buttons after view is created
-      setupNavigationUI()
-      
-      // Request current location
-      requestCurrentLocation()
+      return
     } catch (e: Exception) {
-      Log.e(TAG, "Error initializing app", e)
+      Log.e(TAG, "Error in onCreate", e)
+      startFallbackActivity()
+    }
+  }
+  
+  private fun startFallbackActivity() {
+    try {
+      startActivity(Intent(this, FallbackActivity::class.java))
+      finish()
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to start FallbackActivity", e)
       showFallbackUserInterface()
-      Toast.makeText(this, "Could not initialize AR features. Using map only mode.", Toast.LENGTH_LONG).show()
     }
   }
   

@@ -25,19 +25,23 @@ import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
+import com.google.ar.core.ArCoreApk
 import java.util.Locale
 
 /**
- * A simple fallback activity with Map functionality for devices that don't support AR
+ * A map-based activity with optional AR capabilities
  */
 class FallbackActivity : AppCompatActivity() {
     private lateinit var mapFragment: SupportMapFragment
     private var googleMap: GoogleMap? = null
     private var destinationLatLng: LatLng? = null
+    private var arModeButton: Button? = null
     
     companion object {
         private const val TAG = "FallbackActivity"
         private const val LOCATION_PERMISSION_CODE = 100
+        private const val CAMERA_PERMISSION_CODE = 101
+        private const val AR_MODE_REQUEST_CODE = 200
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,6 +75,31 @@ class FallbackActivity : AppCompatActivity() {
             navigateButton.setOnClickListener {
                 destinationLatLng?.let { destination ->
                     openGoogleMapsNavigation(destination)
+                }
+            }
+            
+            // Setup AR mode button (only if AR is potentially available)
+            if (isARCorePotentiallySupported()) {
+                arModeButton = Button(this).apply {
+                    text = "Try AR Mode"
+                    setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_light))
+                    setTextColor(Color.WHITE)
+                    
+                    // Add right after the navigate button
+                    val layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(16, 0, 16, 16)
+                    }
+                    
+                    setOnClickListener {
+                        launchARMode()
+                    }
+                    
+                    // Add to layout
+                    val container = findViewById<LinearLayout>(R.id.container)
+                    container.addView(this, container.indexOfChild(navigateButton) + 1, layoutParams)
                 }
             }
             
@@ -108,6 +137,83 @@ class FallbackActivity : AppCompatActivity() {
             } catch (t: Throwable) {
                 // At this point, there's not much else we can do
                 Log.e(TAG, "Fatal error creating UI", t)
+            }
+        }
+    }
+    
+    private fun isARCorePotentiallySupported(): Boolean {
+        return try {
+            // Check if ARCore is installed
+            val availability = ArCoreApk.getInstance().checkAvailability(this)
+            availability == ArCoreApk.Availability.SUPPORTED_INSTALLED || 
+            availability == ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED ||
+            availability == ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking ARCore availability", e)
+            false
+        }
+    }
+    
+    private fun launchARMode() {
+        // First check camera permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this, 
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_CODE
+            )
+            return
+        }
+        
+        try {
+            // Launch the AR activity but keep this one in background
+            val arIntent = Intent(this, ARActivity::class.java)
+            
+            // Pass destination data if we have it
+            destinationLatLng?.let {
+                arIntent.putExtra("DESTINATION_LAT", it.latitude)
+                arIntent.putExtra("DESTINATION_LNG", it.longitude)
+            }
+            
+            startActivityForResult(arIntent, AR_MODE_REQUEST_CODE)
+            
+            Toast.makeText(this, "Starting AR Mode - please wait", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch AR mode", e)
+            Toast.makeText(this, "Failed to launch AR mode: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        
+        if (requestCode == AR_MODE_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                // AR worked successfully, potentially with a new destination
+                data?.let {
+                    if (it.hasExtra("DESTINATION_LAT") && it.hasExtra("DESTINATION_LNG")) {
+                        val lat = it.getDoubleExtra("DESTINATION_LAT", 0.0)
+                        val lng = it.getDoubleExtra("DESTINATION_LNG", 0.0)
+                        
+                        if (lat != 0.0 && lng != 0.0) {
+                            // Update the map with the new destination
+                            val newDest = LatLng(lat, lng)
+                            destinationLatLng = newDest
+                            
+                            googleMap?.apply {
+                                clear()
+                                addMarker(MarkerOptions().position(newDest).title("AR Destination"))
+                                animateCamera(CameraUpdateFactory.newLatLngZoom(newDest, 15f))
+                            }
+                            
+                            // Show navigation button
+                            findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                        }
+                    }
+                }
+            } else if (resultCode == RESULT_CANCELED) {
+                // AR mode was cancelled or failed
+                Toast.makeText(this, "Returned to map mode", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -245,12 +351,26 @@ class FallbackActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         
-        if (requestCode == LOCATION_PERMISSION_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted, enable my location on the map
-                googleMap?.isMyLocationEnabled = true
-            } else {
-                Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show()
+        when (requestCode) {
+            LOCATION_PERMISSION_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Permission granted, enable my location on the map
+                    try {
+                        googleMap?.isMyLocationEnabled = true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Could not enable my location", e)
+                    }
+                } else {
+                    Toast.makeText(this, "Location permission denied", Toast.LENGTH_SHORT).show()
+                }
+            }
+            CAMERA_PERMISSION_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Camera permission granted, now launch AR mode
+                    launchARMode()
+                } else {
+                    Toast.makeText(this, "Camera permission is required for AR mode", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
