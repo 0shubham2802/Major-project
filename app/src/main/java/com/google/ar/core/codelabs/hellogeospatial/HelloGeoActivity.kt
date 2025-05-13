@@ -19,8 +19,10 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.location.Geocoder
 import android.location.Location
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -357,7 +359,7 @@ class HelloGeoActivity : AppCompatActivity() {
 
   private fun performFallbackSearch(query: String, mapFragment: SupportMapFragment) {
     try {
-      val geocoder = Geocoder(this)
+      val geocoder = Geocoder(this, Locale.getDefault())
       
       // Hide the keyboard
       val inputMethodManager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
@@ -366,7 +368,8 @@ class HelloGeoActivity : AppCompatActivity() {
       Toast.makeText(this, "Searching for: $query", Toast.LENGTH_SHORT).show()
       
       // Use the appropriate geocoding method based on Android version
-      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+      // Android 13 (TIRAMISU) is API level 33
+      if (Build.VERSION.SDK_INT >= 33) {
         geocoder.getFromLocationName(query, 1) { addresses ->
           runOnUiThread {
             if (addresses.isNotEmpty()) {

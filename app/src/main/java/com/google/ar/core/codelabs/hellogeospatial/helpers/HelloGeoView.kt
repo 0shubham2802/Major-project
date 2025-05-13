@@ -19,6 +19,7 @@ import android.graphics.Color
 import android.location.Address
 import android.location.Geocoder
 import android.opengl.GLSurfaceView
+import android.os.Build
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -43,6 +44,7 @@ import com.google.ar.core.codelabs.hellogeospatial.HelloGeoActivity
 import com.google.ar.core.codelabs.hellogeospatial.R
 import com.google.ar.core.examples.java.common.helpers.SnackbarHelper
 import java.io.IOException
+import java.util.Locale
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
@@ -184,11 +186,12 @@ class HelloGeoView(val activity: HelloGeoActivity) : DefaultLifecycleObserver {
   }
   
   private fun searchLocation(locationName: String) {
-    val geocoder = Geocoder(activity)
+    val geocoder = Geocoder(activity, Locale.getDefault())
     
     try {
       // For newer Android versions - using getFromLocationName might not work directly
-      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+      // Android 13 (TIRAMISU) is API level 33
+      if (Build.VERSION.SDK_INT >= 33) {
         // Use the callback version for newer Android
         geocoder.getFromLocationName(locationName, 1) { addresses ->
           activity.runOnUiThread {
