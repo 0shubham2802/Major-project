@@ -105,8 +105,11 @@ class HelloGeoActivity : AppCompatActivity() {
               else -> "Failed to create AR session: $exception"
             }
           Log.e(TAG, "ARCore threw an exception", exception)
-          showFallbackUserInterface()
           Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+          
+          // For emulator and devices that don't support AR
+          Log.d(TAG, "Falling back to non-AR mode")
+          showFallbackUserInterface()
         }
 
       // Configure session features.
@@ -236,15 +239,22 @@ class HelloGeoActivity : AppCompatActivity() {
 
   // Configure the session, setting the desired options according to your usecase.
   fun configureSession(session: Session) {
-    session.configure(
-      session.config.apply {
-        geospatialMode = Config.GeospatialMode.ENABLED
-        // Enable better accuracy
-        planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-        // Enable depth for better occlusion
-        depthMode = Config.DepthMode.AUTOMATIC
-      }
-    )
+    try {
+      Log.d(TAG, "Configuring ARCore session with geospatial mode")
+      session.configure(
+        session.config.apply {
+          geospatialMode = Config.GeospatialMode.ENABLED
+          // Enable better accuracy
+          planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+          // Enable depth for better occlusion
+          depthMode = Config.DepthMode.AUTOMATIC
+        }
+      )
+      Log.d(TAG, "ARCore session configured successfully")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error configuring ARCore session", e)
+      Toast.makeText(this, "Error configuring AR: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
   }
 
   private fun checkRequiredPermissions() {

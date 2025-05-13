@@ -145,95 +145,111 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   override fun onDrawFrame(render: SampleRender) {
     val session = session ?: return
 
-    //<editor-fold desc="ARCore frame boilerplate" defaultstate="collapsed">
-    // Texture names should only be set once on a GL thread unless they change. This is done during
-    // onDrawFrame rather than onSurfaceCreated since the session is not guaranteed to have been
-    // initialized during the execution of onSurfaceCreated.
-    if (!hasSetTextureNames) {
-      session.setCameraTextureNames(intArrayOf(backgroundRenderer.cameraColorTexture.textureId))
-      hasSetTextureNames = true
-    }
+    try {
+      //<editor-fold desc="ARCore frame boilerplate" defaultstate="collapsed">
+      // Texture names should only be set once on a GL thread unless they change. This is done during
+      // onDrawFrame rather than onSurfaceCreated since the session is not guaranteed to have been
+      // initialized during the execution of onSurfaceCreated.
+      if (!hasSetTextureNames) {
+        session.setCameraTextureNames(intArrayOf(backgroundRenderer.cameraColorTexture.textureId))
+        hasSetTextureNames = true
+        Log.d(TAG, "Camera texture names set")
+      }
 
-    // -- Update per-frame state
+      // -- Update per-frame state
 
-    // Notify ARCore session that the view size changed so that the perspective matrix and
-    // the video background can be properly adjusted.
-    displayRotationHelper.updateSessionIfNeeded(session)
+      // Notify ARCore session that the view size changed so that the perspective matrix and
+      // the video background can be properly adjusted.
+      displayRotationHelper.updateSessionIfNeeded(session)
 
-    // Obtain the current frame from ARSession. When the configuration is set to
-    // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
-    // camera framerate.
-    val frame =
-      try {
-        session.update()
-      } catch (e: CameraNotAvailableException) {
-        Log.e(TAG, "Camera not available during onDrawFrame", e)
-        showError("Camera not available. Try restarting the app.")
+      // Obtain the current frame from ARSession. When the configuration is set to
+      // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
+      // camera framerate.
+      val frame =
+        try {
+          session.update()
+        } catch (e: CameraNotAvailableException) {
+          Log.e(TAG, "Camera not available during onDrawFrame", e)
+          showError("Camera not available. Try restarting the app.")
+          return
+        }
+
+      val camera = frame.camera
+
+      // BackgroundRenderer.updateDisplayGeometry must be called every frame to update the coordinates
+      // used to draw the background camera image.
+      backgroundRenderer.updateDisplayGeometry(frame)
+
+      // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
+      trackingStateHelper.updateKeepScreenOnFlag(camera.trackingState)
+
+      // -- Draw background
+      if (frame.timestamp != 0L) {
+        // Suppress rendering if the camera did not produce the first frame yet. This is to avoid
+        // drawing possible leftover data from previous sessions if the texture is reused.
+        backgroundRenderer.drawBackground(render)
+      }
+
+      // If not tracking, don't draw 3D objects.
+      if (camera.trackingState == TrackingState.PAUSED) {
+        Log.d(TAG, "Camera tracking state is PAUSED, skipping frame rendering")
         return
       }
 
-    val camera = frame.camera
+      // Get projection matrix.
+      camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
 
-    // BackgroundRenderer.updateDisplayGeometry must be called every frame to update the coordinates
-    // used to draw the background camera image.
-    backgroundRenderer.updateDisplayGeometry(frame)
+      // Get camera matrix and draw.
+      camera.getViewMatrix(viewMatrix, 0)
 
-    // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
-    trackingStateHelper.updateKeepScreenOnFlag(camera.trackingState)
+      render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
+      //</editor-fold> 
 
-    // -- Draw background
-    if (frame.timestamp != 0L) {
-      // Suppress rendering if the camera did not produce the first frame yet. This is to avoid
-      // drawing possible leftover data from previous sessions if the texture is reused.
-      backgroundRenderer.drawBackground(render)
-    }
-
-    // If not tracking, don't draw 3D objects.
-    if (camera.trackingState == TrackingState.PAUSED) {
-      return
-    }
-
-    // Get projection matrix.
-    camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
-
-    // Get camera matrix and draw.
-    camera.getViewMatrix(viewMatrix, 0)
-
-    render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
-    //</editor-fold> 
-
-    val earth: Earth = session.earth!!
-    if (earth?.trackingState == TrackingState.TRACKING) {
-      val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
-      activity.view.mapView?.updateMapPosition(
-        latitude = cameraGeospatialPose.latitude,
-        longitude = cameraGeospatialPose.longitude,
-        heading = cameraGeospatialPose.heading
-      )
-      
-      // Update AR navigation visuals if navigating
-      if (isNavigating) {
-        updateNavigationAnchors(earth, cameraGeospatialPose)
+      val earth: Earth? = session.earth
+      if (earth == null) {
+        Log.d(TAG, "Earth is null")
+        return
       }
-    }
-    activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
 
-    // Draw all anchors
-    for (anchor in anchors) {
-      if (anchor.trackingState == TrackingState.TRACKING) {
-        render.renderObject(anchor, arrowMesh, arrowShader)
+      if (earth.trackingState == TrackingState.TRACKING) {
+        val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose
+        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: lat=${cameraGeospatialPose.latitude}, lng=${cameraGeospatialPose.longitude}")
+        
+        activity.view.mapView?.updateMapPosition(
+          latitude = cameraGeospatialPose.latitude,
+          longitude = cameraGeospatialPose.longitude,
+          heading = cameraGeospatialPose.heading
+        )
+        
+        // Update AR navigation visuals if navigating
+        if (isNavigating) {
+          updateNavigationAnchors(earth, cameraGeospatialPose)
+        }
+      } else {
+        Log.d(TAG, "Earth tracking state: ${earth.trackingState}")
       }
-    }
+      activity.view.updateStatusText(earth, earth.cameraGeospatialPose)
 
-    // Draw the destination anchor with a different model
-    destinationAnchor?.let {
-      if (it.trackingState == TrackingState.TRACKING) {
-        render.renderCompassAtAnchor(it)
+      // Draw all anchors
+      for (anchor in anchors) {
+        if (anchor.trackingState == TrackingState.TRACKING) {
+          render.renderObject(anchor, arrowMesh, arrowShader)
+        }
       }
-    }
 
-    // Compose the virtual scene with the background.
-    backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+      // Draw the destination anchor with a different model
+      destinationAnchor?.let {
+        if (it.trackingState == TrackingState.TRACKING) {
+          render.renderCompassAtAnchor(it)
+        }
+      }
+
+      // Compose the virtual scene with the background.
+      backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error during onDrawFrame", e)
+      showError("Error during onDrawFrame: $e")
+    }
   }
   
   private fun updateNavigationAnchors(earth: Earth, cameraGeospatialPose: GeospatialPose) {
@@ -245,33 +261,45 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
   }
   
   fun createAnchorAtLocation(latitude: Double, longitude: Double): Anchor? {
-    val earth = session?.earth ?: return null
+    val earth = session?.earth ?: run {
+      Log.e(TAG, "Cannot create anchor: Earth is null")
+      return null
+    }
+    
     if (earth.trackingState != TrackingState.TRACKING) {
+      Log.e(TAG, "Cannot create anchor: Earth is not tracking. Current state: ${earth.trackingState}")
       return null
     }
     
     val altitude = earth.cameraGeospatialPose.altitude - 1.0
+    Log.d(TAG, "Creating anchor at: lat=$latitude, lng=$longitude, altitude=$altitude")
     
-    val anchor = earth.createAnchor(
-      latitude,
-      longitude,
-      altitude,
-      0f,
-      0f,
-      0f,
-      1f
-    )
-    
-    // Store as destination anchor
-    destinationAnchor = anchor
-    
-    // Update map marker
-    activity.view.mapView?.earthMarker?.apply {
-      position = LatLng(latitude, longitude)
-      isVisible = true
+    try {
+      val anchor = earth.createAnchor(
+        latitude,
+        longitude,
+        altitude,
+        0f,
+        0f,
+        0f,
+        1f
+      )
+      
+      // Store as destination anchor
+      destinationAnchor = anchor
+      
+      // Update map marker
+      activity.view.mapView?.earthMarker?.apply {
+        position = LatLng(latitude, longitude)
+        isVisible = true
+      }
+      
+      Log.d(TAG, "Anchor created successfully: $anchor")
+      return anchor
+    } catch (e: Exception) {
+      Log.e(TAG, "Error creating anchor", e)
+      return null
     }
-    
-    return anchor
   }
   
   fun createDirectionalAnchor(startLat: Double, startLng: Double, endLat: Double, endLng: Double): Anchor? {
