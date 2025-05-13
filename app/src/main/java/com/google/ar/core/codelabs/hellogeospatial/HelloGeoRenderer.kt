@@ -47,9 +47,9 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
     private val Z_NEAR = 0.1f
     private val Z_FAR = 1000f
     
-    // Constants for fallback detection
-    private const val MAX_EARTH_INIT_WAIT_TIME_MS = 30000L // 30 seconds
-    private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 300 // ~10 seconds at 30fps
+    // Constants for fallback detection - increasing values to give more time
+    private const val MAX_EARTH_INIT_WAIT_TIME_MS = 60000L // 60 seconds (was 30)
+    private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 600 // ~20 seconds at 30fps (was 300)
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -218,24 +218,32 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
 
       val earth: Earth? = session.earth
       if (earth == null) {
-        Log.d(TAG, "Earth is null, waiting for Earth to initialize...")
+        Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
         // No need to show an error - just wait
         activity.view.updateStatusText(null, null)
         
         // Track time waiting for Earth to initialize
         if (earthInitializedTime == 0L) {
           earthInitializedTime = System.currentTimeMillis()
+          Log.d(TAG, "Starting Earth initialization timer")
         } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
           // Earth hasn't initialized in the maximum wait time, fall back to map mode
+          Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
           handlePersistentEarthFailure("Earth initialization timed out")
         }
         
         return
       }
 
+      // Reset Earth initialization timer once Earth is available
+      if (earthInitializedTime > 0) {
+        Log.d(TAG, "Earth initialized after ${System.currentTimeMillis() - earthInitializedTime}ms")
+        earthInitializedTime = 0
+      }
+
       // Check Earth tracking state
       if (earth.trackingState != TrackingState.TRACKING) {
-        Log.d(TAG, "Earth tracking state: ${earth.trackingState}, waiting for tracking")
+        Log.d(TAG, "Earth tracking state: ${earth.trackingState}, frames without tracking: $framesWithoutEarthTracking")
         activity.view.updateStatusText(earth, null)
         
         // Increment counter for frames without Earth tracking
@@ -255,6 +263,7 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
         
         // Check if we've gone too long without Earth tracking
         if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING) {
+          Log.e(TAG, "Earth tracking failed persistently after ${framesWithoutEarthTracking} frames")
           handlePersistentEarthFailure("Earth tracking failed persistently")
         }
         
@@ -262,7 +271,10 @@ class HelloGeoRenderer(val activity: HelloGeoActivity) :
       }
 
       // Reset counter since we have successful tracking
-      framesWithoutEarthTracking = 0
+      if (framesWithoutEarthTracking > 0) {
+        Log.d(TAG, "Earth tracking resumed after ${framesWithoutEarthTracking} frames")
+        framesWithoutEarthTracking = 0
+      }
       
       // Earth is tracking properly
       val cameraGeospatialPose: GeospatialPose = earth.cameraGeospatialPose

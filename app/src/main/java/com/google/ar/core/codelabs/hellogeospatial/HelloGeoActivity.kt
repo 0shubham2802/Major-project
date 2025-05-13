@@ -244,10 +244,21 @@ class HelloGeoActivity : AppCompatActivity() {
       session.configure(
         session.config.apply {
           geospatialMode = Config.GeospatialMode.ENABLED
-          // Enable better accuracy
-          planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-          // Enable depth for better occlusion
-          depthMode = Config.DepthMode.AUTOMATIC
+          
+          // Use more basic settings for better compatibility
+          planeFindingMode = Config.PlaneFindingMode.DISABLED
+          
+          // Disable depth for better compatibility
+          depthMode = Config.DepthMode.DISABLED
+          
+          // Disable lighting estimation for performance
+          lightEstimationMode = Config.LightEstimationMode.DISABLED
+          
+          // Set to FAST mode for better performance
+          updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+          
+          // Focus mode for better tracking stability
+          focusMode = Config.FocusMode.AUTO
         }
       )
       Log.d(TAG, "ARCore session configured successfully")
