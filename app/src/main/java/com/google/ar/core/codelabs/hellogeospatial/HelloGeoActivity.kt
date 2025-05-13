@@ -17,21 +17,33 @@ package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Color
 import android.location.Location
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import android.content.pm.PackageManager
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MarkerOptions
 import com.google.ar.core.Config
 import com.google.ar.core.Earth
 import com.google.ar.core.GeospatialPose
@@ -47,18 +59,7 @@ import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.EditText
-import android.view.Gravity
-import android.view.ViewGroup
-import android.view.FrameLayout
-import com.google.android.gms.maps.SupportMapFragment
-import android.graphics.Color
-import android.view.inputmethod.InputMethodManager
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.MarkerOptions
+import java.util.Locale
 
 class HelloGeoActivity : AppCompatActivity() {
   companion object {
@@ -330,99 +331,27 @@ class HelloGeoActivity : AppCompatActivity() {
   }
 
   private fun showFallbackUserInterface() {
-    // Create a simple fallback UI that just shows a map without AR features
+    // Create a simpler fallback UI to avoid potential import issues
     try {
-      // Create a simple layout with just a map
-      val mapOnlyLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = ViewGroup.LayoutParams(
-          ViewGroup.LayoutParams.MATCH_PARENT,
-          ViewGroup.LayoutParams.MATCH_PARENT
-        )
-      }
-      
-      // Add a header text
-      val headerText = TextView(this).apply {
-        text = "Map Navigation (AR Unavailable)"
+      // Create a simple layout with just a text view
+      val textView = TextView(this).apply {
+        text = "AR Navigation\n\nThis device does not fully support AR features."
         textSize = 18f
         gravity = Gravity.CENTER
         setPadding(16, 16, 16, 16)
         setTextColor(Color.BLACK)
-        layoutParams = LinearLayout.LayoutParams(
-          LinearLayout.LayoutParams.MATCH_PARENT,
-          LinearLayout.LayoutParams.WRAP_CONTENT
-        )
       }
-      mapOnlyLayout.addView(headerText)
       
-      // Add a search bar
-      val searchBar = EditText(this).apply {
-        hint = "Search location"
-        layoutParams = LinearLayout.LayoutParams(
-          LinearLayout.LayoutParams.MATCH_PARENT,
-          LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-          setMargins(16, 8, 16, 8)
-        }
-        
-        // Set up search functionality
-        setOnEditorActionListener { _, actionId, event ->
-          if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
-              (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER)) {
-            val searchQuery = text.toString()
-            if (searchQuery.isNotBlank()) {
-              performFallbackSearch(searchQuery, mapFragment)
-            }
-            return@setOnEditorActionListener true
-          }
-          return@setOnEditorActionListener false
-        }
-        
-        // Set to search input type
-        inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-      }
-      mapOnlyLayout.addView(searchBar)
-      
-      // Add a map fragment
-      val mapContainerId = View.generateViewId()
-      val mapFrameLayout = FrameLayout(this).apply {
-        id = mapContainerId
-        layoutParams = LinearLayout.LayoutParams(
-          LinearLayout.LayoutParams.MATCH_PARENT,
-          0
-        ).apply {
-          weight = 1f
-          setMargins(16, 8, 16, 16)
-        }
-      }
-      mapOnlyLayout.addView(mapFrameLayout)
-      
-      setContentView(mapOnlyLayout)
-      
-      // After setContentView, add the map fragment to the container
-      val mapFragment = SupportMapFragment()
-      supportFragmentManager.beginTransaction()
-        .add(mapContainerId, mapFragment)
-        .commit()
-      
-      // Initialize map when ready
-      mapFragment.getMapAsync { googleMap ->
-        googleMap.uiSettings.apply {
-          isZoomControlsEnabled = true
-          isCompassEnabled = true
-          isMyLocationButtonEnabled = true
-        }
-        
-        // Enable My Location if we have permission
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
-            == PackageManager.PERMISSION_GRANTED) {
-          googleMap.isMyLocationEnabled = true
-        }
-      }
+      setContentView(textView)
     } catch (e: Exception) {
-      Log.e(TAG, "Failed to create fallback UI", e)
+      Log.e(TAG, "Failed to create even simple fallback UI", e)
+      // Last resort - try to start the fallback activity
+      try {
+        startActivity(Intent(this, FallbackActivity::class.java))
+        finish()
+      } catch (e2: Exception) {
+        Log.e(TAG, "Everything failed, app will likely crash", e2)
+      }
     }
   }
 
