@@ -536,7 +536,8 @@ class HelloGeoRenderer(val context: Context) :
               
               // Calculate dot product
               val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
-              val angleXZ = acos(dotProductXZ.coerceIn(-1.0, 1.0)).toFloat()
+              val angleRadians = acos(dotProductXZ.toDouble().coerceIn(-1.0, 1.0))
+              val angleXZ = toDegrees(angleRadians).toFloat()
               
               // Determine if the anchor is to the left or right of the camera
               val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
@@ -645,7 +646,7 @@ class HelloGeoRenderer(val context: Context) :
     var closestDistance = Double.MAX_VALUE
     
     // Get current camera pose in world space
-    val camera = session?.update()
+    val camera = session?.update()?.camera
     val cameraPose = camera?.pose
     
     for (anchor in anchors) {
@@ -711,7 +712,7 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
-      val camera = session?.update()
+      val camera = session?.update()?.camera
       val cameraPose = camera?.pose
       
       if (cameraPose != null) {
@@ -731,7 +732,9 @@ class HelloGeoRenderer(val context: Context) :
         val latDiff = dy.toDouble() / metersPerDegreeLatitude
         val lngDiff = dx.toDouble() / metersPerDegreeLongitude
         
-        return LatLng(cameraGeo.latitude + latDiff, cameraGeo.longitude + lngDiff)
+        val newLat = cameraGeo.latitude + latDiff
+        val newLng = cameraGeo.longitude + lngDiff
+        return LatLng(newLat, newLng)
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error approximating anchor position", e)
@@ -879,8 +882,8 @@ class HelloGeoRenderer(val context: Context) :
     val bearing = calculateBearing(startLat, startLng, endLat, endLng)
     
     // Create anchor at midpoint with proper orientation
-    val midLat = (startLat + endLat) / 2
-    val midLng = (startLng + endLng) / 2
+    val midLat = startLat + (endLat - startLat) / 2.0
+    val midLng = startLng + (endLng - startLng) / 2.0
     val altitude = earth.cameraGeospatialPose.altitude - 1.0
     
     // Convert bearing to quaternion (rotate arrow to point in right direction)
@@ -923,7 +926,7 @@ class HelloGeoRenderer(val context: Context) :
     
     var bearing = atan2(y, x)
     if (bearing < 0) {
-      bearing = bearing + (2.0 * Math.PI)
+      bearing = bearing + (2.0 * PI)
     }
     
     return toDegrees(bearing)
