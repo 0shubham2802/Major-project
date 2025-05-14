@@ -47,6 +47,7 @@ import com.google.ar.core.Session
 import com.google.ar.core.codelabs.hellogeospatial.ARActivity
 import com.google.ar.core.codelabs.hellogeospatial.HelloGeoActivity
 import com.google.ar.core.codelabs.hellogeospatial.R
+import com.google.ar.core.codelabs.hellogeospatial.SplitScreenActivity
 import com.google.ar.core.examples.java.common.helpers.SnackbarHelper
 import java.io.IOException
 import java.util.Locale
@@ -57,6 +58,7 @@ class HelloGeoView : DefaultLifecycleObserver {
   private val appCompatActivity: AppCompatActivity?
   private val helloGeoActivity: HelloGeoActivity?
   private val arActivity: ARActivity?
+  private val splitScreenActivity: SplitScreenActivity?
   
   // Root view containing all UI elements
   val root: View
@@ -90,6 +92,7 @@ class HelloGeoView : DefaultLifecycleObserver {
     this.appCompatActivity = activity
     this.helloGeoActivity = activity
     this.arActivity = null
+    this.splitScreenActivity = null
     
     // Initialize UI from activity_main layout
     root = View.inflate(activity, R.layout.activity_main, null)
@@ -142,6 +145,7 @@ class HelloGeoView : DefaultLifecycleObserver {
     this.appCompatActivity = activity
     this.helloGeoActivity = null
     this.arActivity = activity
+    this.splitScreenActivity = null
     
     // For AR activity, we don't inflate a layout - we just need a reference to hold the surfaceView
     // The surfaceView itself is created and managed by the ARActivity
@@ -162,6 +166,33 @@ class HelloGeoView : DefaultLifecycleObserver {
     }
     
     // No need for search view or map initialization in AR mode
+  }
+  
+  // Constructor for SplitScreenActivity (similar to ARActivity constructor)
+  constructor(activity: SplitScreenActivity) {
+    this.context = activity
+    this.appCompatActivity = activity
+    this.helloGeoActivity = null
+    this.arActivity = null
+    this.splitScreenActivity = activity
+    
+    // For split screen mode, we also just need a reference to the surfaceView
+    // The actual surfaceView is managed by the SplitScreenActivity
+    root = LinearLayout(activity) // Dummy root view - not actually used
+    surfaceView = GLSurfaceView(activity) // This will be replaced by SplitScreenActivity
+    
+    // These elements don't exist in split screen mode as they're handled by the activity
+    searchView = null
+    statusText = null
+    mapTouchWrapper = null
+    mapFragment = null
+    
+    // Initialize button container for AR controls
+    buttonContainer = LinearLayout(activity).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.BOTTOM or Gravity.END
+      setPadding(0, 0, 32, 32)
+    }
   }
   
   private fun setupButtonContainer() {

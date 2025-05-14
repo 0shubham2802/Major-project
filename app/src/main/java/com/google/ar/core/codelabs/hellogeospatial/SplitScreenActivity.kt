@@ -163,7 +163,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Get the AR surface view
             surfaceView = findViewById(R.id.ar_surface_view)
             
-            // Create and initialize HelloGeoView
+            // Create and initialize HelloGeoView with SplitScreenActivity
             view = HelloGeoView(this)
             
             // Need to set the surface view
