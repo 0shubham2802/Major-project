@@ -21,87 +21,121 @@
         android:textStyle="bold" />
 
     <!-- Split container - vertically divided -->
-    <LinearLayout
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:layout_weight="1">
 
-        <!-- Top half - AR Camera View -->
-        <FrameLayout
-            android:id="@+id/camera_container"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_height="match_parent"
+            android:orientation="vertical">
 
-            <!-- AR Camera View -->
-            <android.opengl.GLSurfaceView
-                android:id="@+id/ar_surface_view"
+            <!-- Top half - AR Camera View -->
+            <FrameLayout
+                android:id="@+id/camera_container"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_height="0dp"
+                android:layout_weight="1">
 
-            <!-- AR Status overlay -->
-            <TextView
-                android:id="@+id/tracking_quality"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="#88000000"
-                android:gravity="center"
-                android:padding="8dp"
-                android:text="Initializing AR..."
-                android:textColor="#FFFFFF"
-                android:textSize="14sp" />
+                <!-- AR Camera View -->
+                <android.opengl.GLSurfaceView
+                    android:id="@+id/ar_surface_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
 
-        </FrameLayout>
-
-        <!-- Divider -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="2dp"
-            android:background="#2196F3" />
-
-        <!-- Bottom half - Map View -->
-        <FrameLayout
-            android:id="@+id/map_container"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
-
-            <!-- Map Fragment -->
-            <fragment
-                android:id="@+id/map"
-                android:name="com.google.android.gms.maps.SupportMapFragment"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <!-- Map loading indicator -->
-            <LinearLayout
-                android:id="@+id/map_loading_container"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@android:color/white"
-                android:gravity="center"
-                android:orientation="vertical">
-
-                <ProgressBar
-                    android:id="@+id/map_loading_progress"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp" />
-
+                <!-- AR Status overlay -->
                 <TextView
-                    android:id="@+id/map_loading_text"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/tracking_quality"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Loading map..."
-                    android:textColor="@android:color/black"
+                    android:background="#88000000"
+                    android:gravity="center"
+                    android:padding="8dp"
+                    android:text="Initializing AR..."
+                    android:textColor="#FFFFFF"
                     android:textSize="14sp" />
 
-            </LinearLayout>
+            </FrameLayout>
 
-        </FrameLayout>
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:background="#2196F3" />
 
-    </LinearLayout>
+            <!-- Bottom half - Map View -->
+            <FrameLayout
+                android:id="@+id/map_container"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <!-- Map Fragment -->
+                <fragment
+                    android:id="@+id/map"
+                    android:name="com.google.android.gms.maps.SupportMapFragment"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <!-- Map loading indicator -->
+                <LinearLayout
+                    android:id="@+id/map_loading_container"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@android:color/white"
+                    android:gravity="center"
+                    android:orientation="vertical">
+
+                    <ProgressBar
+                        android:id="@+id/map_loading_progress"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp" />
+
+                    <TextView
+                        android:id="@+id/map_loading_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Loading map..."
+                        android:textColor="@android:color/black"
+                        android:textSize="14sp" />
+
+                </LinearLayout>
+
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <!-- Mode control buttons positioned on the right side of the screen -->
+        <LinearLayout
+            android:id="@+id/mode_controls"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:layout_marginEnd="16dp">
+
+            <!-- AR-only mode button -->
+            <Button
+                android:id="@+id/ar_mode_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginBottom="16dp"
+                android:background="@android:drawable/ic_menu_camera"
+                android:backgroundTint="#2196F3" />
+
+            <!-- Map-only mode button -->
+            <Button
+                android:id="@+id/map_mode_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@android:drawable/ic_dialog_map"
+                android:backgroundTint="#2196F3" />
+
+        </LinearLayout>
+    </FrameLayout>
 
     <!-- Bottom control bar -->
     <LinearLayout
@@ -109,7 +143,7 @@
         android:layout_height="wrap_content"
         android:background="#EEEEEE"
         android:orientation="horizontal"
-        android:padding="8dp">
+        android:padding="12dp">
 
         <!-- Search bar -->
         <EditText
@@ -122,47 +156,20 @@
             android:hint="Search location"
             android:imeOptions="actionSearch"
             android:inputType="text"
-            android:padding="8dp" />
+            android:padding="12dp" />
 
         <!-- Navigation button -->
         <Button
             android:id="@+id/navigateButton"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:backgroundTint="#4CAF50"
-            android:text="Navigate"
+            android:text="NAVIGATE"
             android:textColor="@android:color/white"
-            android:visibility="gone" />
-
-    </LinearLayout>
-
-    <!-- Full screen controls overlay -->
-    <LinearLayout
-        android:id="@+id/mode_controls"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:orientation="vertical"
-        android:padding="8dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginTop="-48dp">
-
-        <!-- AR-only mode button -->
-        <Button
-            android:id="@+id/ar_mode_button"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginBottom="8dp"
-            android:background="@android:drawable/ic_menu_camera"
-            android:backgroundTint="#2196F3" />
-
-        <!-- Map-only mode button -->
-        <Button
-            android:id="@+id/map_mode_button"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="@android:drawable/ic_dialog_map"
-            android:backgroundTint="#2196F3" />
+            android:textStyle="bold"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:visibility="visible" />
 
     </LinearLayout>
 
