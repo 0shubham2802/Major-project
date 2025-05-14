@@ -75,6 +75,14 @@
         android:theme="@style/Theme.AppCompat.NoActionBar">
     </activity>
     
+    <activity
+        android:name=".SplitScreenActivity"
+        android:exported="false"
+        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" 
+        android:screenOrientation="portrait"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
+    </activity>
+    
     <!-- Indicates whether "Google Play Services for AR" (ARCore) is "required" or "optional". -->
     <meta-data android:name="com.google.ar.core" android:value="optional" />
     

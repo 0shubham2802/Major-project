@@ -125,6 +125,7 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     if (container != null) {
                         val navButton = findViewById<Button>(R.id.navigateButton)
                         
+                        // Add AR Mode button
                         arModeButton = Button(this).apply {
                             text = "Try AR Mode"
                             setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_light))
@@ -150,6 +151,25 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                             } else {
                                 container.addView(this, layoutParams)
                             }
+                        }
+                        
+                        // Add Split Screen Mode button
+                        val splitModeButton = Button(this).apply {
+                            text = "Split Screen Mode"
+                            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_purple))
+                            setTextColor(Color.WHITE)
+                            
+                            val layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                setMargins(16, 0, 16, 16)
+                            }
+                            
+                            setOnClickListener { launchSplitScreenMode() }
+                            
+                            // Add to container
+                            container.addView(this, layoutParams)
                         }
                     }
                 }
@@ -585,6 +605,34 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 // At this point, there's not much else we can do
                 Log.e(TAG, "Fatal error creating UI", t)
             }
+        }
+    }
+    
+    private fun launchSplitScreenMode() {
+        // First check camera permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this, 
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_CODE
+            )
+            return
+        }
+        
+        try {
+            val splitScreenIntent = Intent(this, SplitScreenActivity::class.java)
+            
+            // Pass destination data if we have it
+            destinationLatLng?.let {
+                splitScreenIntent.putExtra("DESTINATION_LAT", it.latitude)
+                splitScreenIntent.putExtra("DESTINATION_LNG", it.longitude)
+            }
+            
+            startActivity(splitScreenIntent)
+            Toast.makeText(this, "Loading split screen mode - please wait", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch split screen mode", e)
+            Toast.makeText(this, "Failed to launch split screen mode: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 } 
