@@ -51,6 +51,11 @@ import com.google.ar.core.codelabs.hellogeospatial.SplitScreenActivity
 import com.google.ar.core.examples.java.common.helpers.SnackbarHelper
 import java.io.IOException
 import java.util.Locale
+import kotlin.math.sin
+import kotlin.math.cos
+import kotlin.math.sqrt
+import kotlin.math.atan2
+import kotlin.math.PI
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView : DefaultLifecycleObserver {
@@ -583,16 +588,21 @@ class HelloGeoView : DefaultLifecycleObserver {
   private fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val R = 6371000.0 // Earth radius in meters
     
-    val latDistance = Math.toRadians(lat2 - lat1)
-    val lonDistance = Math.toRadians(lon2 - lon1)
+    val latDistance = toRadians(lat2 - lat1)
+    val lonDistance = toRadians(lon2 - lon1)
     
-    val a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2) +
-            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-            Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2)
+    val a = sin(latDistance / 2) * sin(latDistance / 2) +
+            cos(toRadians(lat1)) * cos(toRadians(lat2)) *
+            sin(lonDistance / 2) * sin(lonDistance / 2)
     
-    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
     
     return R * c // Distance in meters
+  }
+  
+  // Utility function for angle conversion
+  private fun toRadians(degrees: Double): Double {
+    return degrees * PI / 180.0
   }
 
   // Add a method to update tracking quality indicators

@@ -46,6 +46,7 @@ import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -346,7 +347,7 @@ class HelloGeoRenderer(val context: Context) :
           if (anchor.trackingState == TrackingState.STOPPED) continue
           
           // Calculate the model matrix for this anchor
-          anchor.pose.toMatrix(modelMatrix, 0)
+          anchor.getPose().toMatrix(modelMatrix, 0)
           
           // Calculate distance to this anchor point (for color-coding)
           val anchorData = anchorData[anchor] ?: AnchorType.WAYPOINT
@@ -370,7 +371,7 @@ class HelloGeoRenderer(val context: Context) :
                   // Pulsate the destination for better visibility
                   val pulsateFrequency = 0.003f
                   val currentTimeMillis = System.currentTimeMillis().toFloat()
-                  val sinResult = Math.sin(pulsateFrequency.toDouble() * currentTimeMillis.toDouble())
+                  val sinResult = sin((pulsateFrequency * currentTimeMillis).toDouble())
                   val sinValue = sinResult.toFloat()
                   val pulsateValue = 0.7f + 0.3f * sinValue
                   drawAnchorWithColor(render, modelMatrix, 1f, 0f, 0f, pulsateValue)
@@ -422,7 +423,7 @@ class HelloGeoRenderer(val context: Context) :
       if (cameraPose != null) {
         // Extract translations
         val cameraTranslation = cameraPose.getTranslation()
-        val anchorTranslation = anchor.pose.getTranslation()
+        val anchorTranslation = anchor.getPose().getTranslation()
         
         // Calculate approximate 3D distance
         val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
@@ -459,7 +460,7 @@ class HelloGeoRenderer(val context: Context) :
         if (cameraPose == null) return
         
         // Get anchor pose
-        val anchorPose = nextAnchor.pose
+        val anchorPose = nextAnchor.getPose()
         
         // First we need to determine if the anchor is in front of the user
         // Get camera forward vector (negative z-axis in OpenGL convention)
@@ -535,9 +536,7 @@ class HelloGeoRenderer(val context: Context) :
               
               // Calculate dot product
               val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
-              val angleXZ = Math.toDegrees(
-                Math.acos(dotProductXZ.toDouble().coerceIn(-1.0, 1.0))
-              ).toFloat()
+              val angleXZ = acos(dotProductXZ.coerceIn(-1.0, 1.0)).toFloat()
               
               // Determine if the anchor is to the left or right of the camera
               val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
@@ -556,7 +555,7 @@ class HelloGeoRenderer(val context: Context) :
             val currentTimeMillis = System.currentTimeMillis().toFloat()
             val freq = 0.005f
             val thetaRadians = currentTimeMillis * freq
-            val sinResult = Math.sin(thetaRadians.toDouble())
+            val sinResult = sin(thetaRadians.toDouble())
             val sinValue = sinResult.toFloat()
             val alpha = 0.8f + 0.2f * sinValue
             
@@ -660,7 +659,7 @@ class HelloGeoRenderer(val context: Context) :
       // Calculate distance - use a simpler approach
       try {
         // Get the anchor's pose in world space
-        val anchorPose = anchor.pose
+        val anchorPose = anchor.getPose()
         
         // Check if we have the camera pose
         if (cameraPose != null) {
@@ -718,7 +717,7 @@ class HelloGeoRenderer(val context: Context) :
       if (cameraPose != null) {
         // Extract translations
         val cameraTranslation = cameraPose.getTranslation()
-        val anchorTranslation = anchor.pose.getTranslation()
+        val anchorTranslation = anchor.getPose().getTranslation()
         
         // Calculate relative position (very rough approximation)
         val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
@@ -727,7 +726,7 @@ class HelloGeoRenderer(val context: Context) :
         // Convert to approximate lat/lng difference (very simplistic approach)
         // This assumes a flat Earth which is not accurate for long distances
         val metersPerDegreeLatitude = 111320.0 // approximate
-        val metersPerDegreeLongitude = 111320.0 * Math.cos(Math.toRadians(cameraGeo.latitude))
+        val metersPerDegreeLongitude = 111320.0 * cos(toRadians(cameraGeo.latitude))
         
         val latDiff = dy.toDouble() / metersPerDegreeLatitude
         val lngDiff = dx.toDouble() / metersPerDegreeLongitude
@@ -782,7 +781,7 @@ class HelloGeoRenderer(val context: Context) :
         if (anchor.trackingState != TrackingState.TRACKING) continue
         
         // Get the anchor's pose
-        anchor.pose.toMatrix(modelMatrix, 0)
+        anchor.getPose().toMatrix(modelMatrix, 0)
         
         // Standard scale
         Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 0.5f)
@@ -885,12 +884,12 @@ class HelloGeoRenderer(val context: Context) :
     val altitude = earth.cameraGeospatialPose.altitude - 1.0
     
     // Convert bearing to quaternion (rotate arrow to point in right direction)
-    val radians = Math.toRadians(bearing)
+    val radians = toRadians(bearing)
     val halfRadians = radians / 2.0
     val qx = 0f
-    val qy = Math.sin(halfRadians).toFloat()
+    val qy = sin(halfRadians).toFloat()
     val qz = 0f
-    val qw = Math.cos(halfRadians).toFloat()
+    val qw = cos(halfRadians).toFloat()
     
     val anchor = earth.createAnchor(
       midLat, 
@@ -904,30 +903,30 @@ class HelloGeoRenderer(val context: Context) :
   }
   
   private fun calculateBearing(startLat: Double, startLng: Double, endLat: Double, endLng: Double): Double {
-    val startLatRad = Math.toRadians(startLat)
-    val startLngRad = Math.toRadians(startLng)
-    val endLatRad = Math.toRadians(endLat)
-    val endLngRad = Math.toRadians(endLng)
+    val startLatRad = toRadians(startLat)
+    val startLngRad = toRadians(startLng)
+    val endLatRad = toRadians(endLat)
+    val endLngRad = toRadians(endLng)
     
     val dLng = endLngRad - startLngRad
     
-    val sinDLng = Math.sin(dLng)
-    val cosEndLatRad = Math.cos(endLatRad)
-    val cosStartLatRad = Math.cos(startLatRad)
-    val sinEndLatRad = Math.sin(endLatRad)
-    val sinStartLatRad = Math.sin(startLatRad)
-    val cosDLng = Math.cos(dLng)
+    val sinDLng = sin(dLng)
+    val cosEndLatRad = cos(endLatRad)
+    val cosStartLatRad = cos(startLatRad)
+    val sinEndLatRad = sin(endLatRad)
+    val sinStartLatRad = sin(startLatRad)
+    val cosDLng = cos(dLng)
     
     val y = sinDLng * cosEndLatRad
     val x = cosStartLatRad * sinEndLatRad -
             sinStartLatRad * cosEndLatRad * cosDLng
     
-    var bearing = Math.atan2(y, x)
+    var bearing = atan2(y, x)
     if (bearing < 0) {
       bearing = bearing + (2.0 * Math.PI)
     }
     
-    return Math.toDegrees(bearing)
+    return toDegrees(bearing)
   }
   
   fun createPathAnchors(path: List<LatLng>) {
@@ -1026,21 +1025,21 @@ class HelloGeoRenderer(val context: Context) :
   private fun calculateDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
     val earthRadius = 6371000.0 // meters
     
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLng = Math.toRadians(lng2 - lng1)
+    val dLat = toRadians(lat2 - lat1)
+    val dLng = toRadians(lng2 - lng1)
     
-    val sinHalfDLat = Math.sin(dLat / 2)
-    val sinHalfDLng = Math.sin(dLng / 2)
+    val sinHalfDLat = sin(dLat / 2)
+    val sinHalfDLng = sin(dLng / 2)
     
-    val lat1Rad = Math.toRadians(lat1)
-    val lat2Rad = Math.toRadians(lat2)
-    val cosLat1 = Math.cos(lat1Rad)
-    val cosLat2 = Math.cos(lat2Rad)
+    val lat1Rad = toRadians(lat1)
+    val lat2Rad = toRadians(lat2)
+    val cosLat1 = cos(lat1Rad)
+    val cosLat2 = cos(lat2Rad)
     
     val a = sinHalfDLat * sinHalfDLat + 
             cosLat1 * cosLat2 * sinHalfDLng * sinHalfDLng
     
-    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
     
     return earthRadius * c // Distance in meters
   }
@@ -1088,7 +1087,7 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Get the current pose of the Anchor in world space. The Anchor pose is updated
       // during calls to session.update() as ARCore refines its estimate of the world.
-      anchor.pose.toMatrix(modelMatrix, 0)
+      anchor.getPose().toMatrix(modelMatrix, 0)
 
       // Calculate model/view/projection matrices
       Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
@@ -1105,7 +1104,7 @@ class HelloGeoRenderer(val context: Context) :
   private fun SampleRender.renderObject(anchor: Anchor, mesh: Mesh, shader: Shader) {
     try {
       // Get the current pose of the Anchor in world space
-      anchor.pose.toMatrix(modelMatrix, 0)
+      anchor.getPose().toMatrix(modelMatrix, 0)
 
       // Calculate model/view/projection matrices
       Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
@@ -1403,5 +1402,14 @@ class HelloGeoRenderer(val context: Context) :
 
   private fun fallbackToMapOnlyMode() {
     // Implementation of fallbackToMapOnlyMode method
+  }
+
+  // Utility functions for angle conversion
+  private fun toRadians(degrees: Double): Double {
+    return degrees * PI / 180.0
+  }
+  
+  private fun toDegrees(radians: Double): Double {
+    return radians * 180.0 / PI
   }
 }
