@@ -84,6 +84,7 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             // Set up toolbar
             val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
             setSupportActionBar(toolbar)
+            supportActionBar?.setDisplayShowTitleEnabled(true)
             
             // Perform Google Play Services check first
             val googleApiAvailability = GoogleApiAvailability.getInstance()

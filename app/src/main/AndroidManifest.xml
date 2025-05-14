@@ -55,7 +55,7 @@
         android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" 
         android:screenOrientation="portrait"
         android:windowSoftInputMode="adjustResize"
-        android:theme="@style/Theme.AppCompat.Light">
+        android:theme="@style/AppTheme">
         <intent-filter>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>

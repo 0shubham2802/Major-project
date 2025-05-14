@@ -48,6 +48,9 @@ class ARActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Ensure we're using NoActionBar theme
+        setTheme(R.style.Theme_AppCompat_NoActionBar)
 
         // Set a default uncaught exception handler to prevent crashes
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
