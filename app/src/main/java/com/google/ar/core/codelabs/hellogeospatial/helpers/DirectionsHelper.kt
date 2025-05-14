@@ -113,6 +113,8 @@ class DirectionsHelper(private val context: Context) {
                         "&mode=walking" +
                         "&key=$apiKey"
                 
+                Log.d(TAG, "Making directions request to: ${urlString.replace(apiKey, "API_KEY_REDACTED")}")
+                
                 val url = URL(urlString)
                 connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 15000 // 15 second timeout
@@ -140,16 +142,32 @@ class DirectionsHelper(private val context: Context) {
                     
                     result = stringBuilder.toString()
                     
-                    // Check if the response contains an error
-                    if (result.contains("\"status\" : \"REQUEST_DENIED\"") || 
-                        result.contains("\"status\":\"REQUEST_DENIED\"")) {
-                        val errorMsg = parseErrorMessage(result)
-                        errorMessage = "API access error: $errorMsg (Check your API key configuration)"
-                        result = ""
+                    // Log response status only (not the full response for privacy/security)
+                    try {
+                        val jsonResponse = JSONObject(result)
+                        val status = jsonResponse.optString("status", "UNKNOWN")
+                        Log.d(TAG, "Directions API response status: $status")
+                        
+                        // Check for common error statuses
+                        if (status == "REQUEST_DENIED") {
+                            val errorMsg = jsonResponse.optString("error_message", "API request denied")
+                            errorMessage = "API access error: $errorMsg (Check your API key configuration)"
+                            Log.e(TAG, "Directions API error: $errorMsg")
+                            result = ""
+                        } else if (status == "ZERO_RESULTS") {
+                            errorMessage = "No route found between these locations"
+                            result = ""
+                        } else if (status != "OK") {
+                            errorMessage = "Directions API error: $status"
+                            result = ""
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing response JSON status", e)
                     }
                 } else if (connection.responseCode == HttpURLConnection.HTTP_FORBIDDEN || 
                            connection.responseCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
                     errorMessage = "API Key error: Your Google Maps API key may be invalid or missing required permissions"
+                    Log.e(TAG, "API key error: HTTP ${connection.responseCode}")
                 } else {
                     errorMessage = "Error connecting to Directions API: HTTP ${connection.responseCode} - ${connection.responseMessage}"
                     Log.e(TAG, errorMessage!!)

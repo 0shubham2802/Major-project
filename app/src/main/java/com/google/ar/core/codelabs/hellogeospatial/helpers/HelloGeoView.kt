@@ -33,6 +33,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
@@ -517,30 +518,55 @@ class HelloGeoView : DefaultLifecycleObserver {
           Log.e("HelloGeoView", "Error getting directions: $errorMessage")
           
           appCompatActivity?.runOnUiThread {
-            // Fallback to a simple straight line
-            val polylineOptions = PolylineOptions()
-              .add(origin, destination)
-              .width(8f)
-              .color(Color.RED) // Use red to indicate fallback route
-              .geodesic(true)
+            // Show a dialog with the error message and options
+            val context = appCompatActivity ?: this@HelloGeoView.context
+            val alertDialog = AlertDialog.Builder(context)
+              .setTitle("Error fetching directions")
+              .setMessage("$errorMessage\n\nWould you like to retry or use a direct line?")
+              .setPositiveButton("Retry") { _, _ ->
+                // Retry getting directions
+                directionsHelper.getDirections(origin, destination, this)
+              }
+              .setNegativeButton("Use Direct Line") { _, _ ->
+                // Fallback to a simple straight line
+                createFallbackRoute(origin, destination)
+              }
+              .setCancelable(false)
             
-            // Add the polyline to the map
-            routePolyline = googleMap.addPolyline(polylineOptions)
-            
-            // Zoom to show the whole route
-            val boundsBuilder = com.google.android.gms.maps.model.LatLngBounds.Builder()
-            boundsBuilder.include(origin)
-            boundsBuilder.include(destination)
-            val bounds = boundsBuilder.build()
-            
-            // Add padding to the bounds
-            val padding = 100 // pixels
-            val cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, padding)
-            googleMap.animateCamera(cameraUpdate)
-            
-            // Show error toast
-            Toast.makeText(context, "Using direct route: $errorMessage", Toast.LENGTH_SHORT).show()
+            try {
+              alertDialog.show()
+            } catch (e: Exception) {
+              // If showing dialog fails, fallback silently to direct line
+              Log.e("HelloGeoView", "Could not show error dialog, using fallback route", e)
+              createFallbackRoute(origin, destination)
+            }
           }
+        }
+        
+        // Helper method to create a fallback direct route
+        private fun createFallbackRoute(origin: LatLng, destination: LatLng) {
+          val polylineOptions = PolylineOptions()
+            .add(origin, destination)
+            .width(8f)
+            .color(Color.RED) // Use red to indicate fallback route
+            .geodesic(true)
+          
+          // Add the polyline to the map
+          routePolyline = googleMap.addPolyline(polylineOptions)
+          
+          // Zoom to show the whole route
+          val boundsBuilder = com.google.android.gms.maps.model.LatLngBounds.Builder()
+          boundsBuilder.include(origin)
+          boundsBuilder.include(destination)
+          val bounds = boundsBuilder.build()
+          
+          // Add padding to the bounds
+          val padding = 100 // pixels
+          val cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, padding)
+          googleMap.animateCamera(cameraUpdate)
+          
+          // Show toast for direct route
+          Toast.makeText(context, "Using direct route (as the crow flies)", Toast.LENGTH_SHORT).show()
         }
       })
     }

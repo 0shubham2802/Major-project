@@ -10,6 +10,6 @@
     https://console.cloud.google.com/apis/credentials
     -->
     <string name="google_maps_key" translatable="false" templateMergeStrategy="preserve">
-        YOUR_API_KEY_HERE
+        AIzaSyDocaPAY_UaBvT5bdxupj_VEf9NHs7EcpE
     </string>
 </resources> 
