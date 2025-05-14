@@ -412,19 +412,15 @@ class HelloGeoRenderer(val context: Context) :
   // Check if an anchor is within visible range of the user
   private fun isAnchorInVisibleRange(anchor: Anchor, cameraGeospatialPose: GeospatialPose): Boolean {
     try {
-      // Get anchor position and camera position in world coordinates
-      val anchorPose = anchor.pose
-      val anchorTranslation = FloatArray(3)
-      anchorPose.getTranslation(anchorTranslation, 0)
-      
       // Get current frame's camera
       val frame = session?.update()
       val camera = frame?.camera
-      val cameraPose = camera?.pose
+      val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
-        val cameraTranslation = FloatArray(3)
-        cameraPose.getTranslation(cameraTranslation, 0)
+        // Extract translations
+        val cameraTranslation = cameraPose.getTranslation()
+        val anchorTranslation = anchor.pose.getTranslation()
         
         // Calculate approximate 3D distance
         val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
@@ -456,7 +452,7 @@ class HelloGeoRenderer(val context: Context) :
         // Get camera and anchor poses
         val frame = session?.update()
         val camera = frame?.camera
-        val cameraPose = camera?.pose
+        val cameraPose = camera?.displayOrientedPose
         
         if (cameraPose == null) return
         
@@ -465,8 +461,7 @@ class HelloGeoRenderer(val context: Context) :
         
         // First we need to determine if the anchor is in front of the user
         // Get camera forward vector (negative z-axis in OpenGL convention)
-        val zAxis = FloatArray(3)
-        cameraPose.getZAxis(zAxis, 0)
+        val zAxis = cameraPose.getZAxis()
         val cameraForward = floatArrayOf(
           -zAxis[0],
           -zAxis[1],
@@ -474,10 +469,8 @@ class HelloGeoRenderer(val context: Context) :
         )
         
         // Vector from camera to anchor
-        val cameraTranslation = FloatArray(3)
-        val anchorTranslation = FloatArray(3)
-        cameraPose.getTranslation(cameraTranslation, 0)
-        anchorPose.getTranslation(anchorTranslation, 0)
+        val cameraTranslation = cameraPose.getTranslation()
+        val anchorTranslation = anchorPose.getTranslation()
         
         val directionToAnchor = floatArrayOf(
           anchorTranslation[0] - cameraTranslation[0],
@@ -651,7 +644,7 @@ class HelloGeoRenderer(val context: Context) :
     
     // Get current camera pose in world space
     val camera = session?.update()
-    val cameraPose = camera?.pose
+    val cameraPose = camera?.displayOrientedPose
     
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
@@ -669,10 +662,8 @@ class HelloGeoRenderer(val context: Context) :
         // Check if we have the camera pose
         if (cameraPose != null) {
           // Extract translations
-          val cameraTranslation = FloatArray(3)
-          val anchorTranslation = FloatArray(3)
-          cameraPose.getTranslation(cameraTranslation, 0)
-          anchorPose.getTranslation(anchorTranslation, 0)
+          val cameraTranslation = cameraPose.getTranslation()
+          val anchorTranslation = anchorPose.getTranslation()
           
           // Calculate distance in 3D space
           val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
@@ -719,14 +710,12 @@ class HelloGeoRenderer(val context: Context) :
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
       val camera = session?.update()
-      val cameraPose = camera?.pose
+      val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
         // Extract translations
-        val cameraTranslation = FloatArray(3)
-        val anchorTranslation = FloatArray(3)
-        cameraPose.getTranslation(cameraTranslation, 0)
-        anchor.pose.getTranslation(anchorTranslation, 0)
+        val cameraTranslation = cameraPose.getTranslation()
+        val anchorTranslation = anchor.pose.getTranslation()
         
         // Calculate relative position (very rough approximation)
         val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
