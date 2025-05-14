@@ -429,33 +429,158 @@ class HelloGeoRenderer(val context: Context) :
       val nextAnchor = findNextWaypoint(cameraGeospatialPose)
       
       if (nextAnchor != null) {
-        // Create a floating arrow in front of the user pointing toward the next waypoint
-        val arrowMatrix = FloatArray(16)
-        Matrix.setIdentityM(arrowMatrix, 0)
+        // Get camera pose
+        val cameraPose = session?.camera?.pose ?: return
         
-        // Position the arrow at a fixed distance in front of the user
-        Matrix.translateM(arrowMatrix, 0, 0f, 0f, -2f)
+        // Get anchor pose
+        val anchorPose = nextAnchor.pose
         
-        // Scale the arrow appropriately
-        Matrix.scaleM(arrowMatrix, 0, 0.5f, 0.5f, 0.5f)
+        // First we need to determine if the anchor is in front of the user
+        val cameraForward = cameraPose.zAxis
+        val directionToAnchor = floatArrayOf(
+          anchorPose.tx() - cameraPose.tx(),
+          anchorPose.ty() - cameraPose.ty(),
+          anchorPose.tz() - cameraPose.tz()
+        )
         
-        // Calculate the rotation needed to point toward the waypoint
-        // This is simplified and would need proper vector math for actual implementation
+        // Normalize direction vector
+        val distance = Math.sqrt(
+          (directionToAnchor[0] * directionToAnchor[0] + 
+           directionToAnchor[1] * directionToAnchor[1] + 
+           directionToAnchor[2] * directionToAnchor[2]).toDouble()
+        ).toFloat()
         
-        // Draw the arrow
-        Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, arrowMatrix, 0)
-        Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
-        
-        // Set bright color for the arrow
-        val colorArray = floatArrayOf(1f, 1f, 0f, 0.8f) // Yellow with some transparency
-        virtualObjectShader.setVec4("u_Color", colorArray)
-        
-        // Draw the mesh
-        virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
-        render.draw(virtualObjectMesh, virtualObjectShader)
+        if (distance > 0) {
+          directionToAnchor[0] /= distance
+          directionToAnchor[1] /= distance
+          directionToAnchor[2] /= distance
+          
+          // Calculate dot product with camera forward vector to see if anchor is in front
+          val dotProduct = 
+            directionToAnchor[0] * cameraForward[0] + 
+            directionToAnchor[1] * cameraForward[1] + 
+            directionToAnchor[2] * cameraForward[2]
+            
+          // Only show indicator if the waypoint is not directly visible (outside field of view)
+          // or if it's far away
+          if (dotProduct < 0.7f || distance > 10f) {
+            // Create a floating arrow in front of the user pointing toward the next waypoint
+            val arrowMatrix = FloatArray(16)
+            Matrix.setIdentityM(arrowMatrix, 0)
+            
+            // Position the arrow at a fixed distance in front of the user
+            Matrix.translateM(arrowMatrix, 0, 0f, -0.5f, -2f)
+            
+            // Scale the arrow appropriately
+            Matrix.scaleM(arrowMatrix, 0, 0.5f, 0.5f, 0.5f)
+            
+            // Add a slight up/down rotation based on distance
+            val pitchAngle = -15f * (1f - Math.min(1f, distance / 50f))
+            Matrix.rotateM(arrowMatrix, 0, pitchAngle, 1f, 0f, 0f)
+            
+            // Calculate the angle between forward direction and anchor direction in XZ plane
+            val forwardXZ = floatArrayOf(cameraForward[0], 0f, cameraForward[2])
+            val directionXZ = floatArrayOf(directionToAnchor[0], 0f, directionToAnchor[2])
+            
+            // Normalize XZ vectors
+            val forwardXZLength = Math.sqrt(
+              (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2]).toDouble()
+            ).toFloat()
+            val directionXZLength = Math.sqrt(
+              (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2]).toDouble()
+            ).toFloat()
+            
+            if (forwardXZLength > 0 && directionXZLength > 0) {
+              forwardXZ[0] /= forwardXZLength
+              forwardXZ[2] /= forwardXZLength
+              directionXZ[0] /= directionXZLength
+              directionXZ[2] /= directionXZLength
+              
+              // Calculate dot product
+              val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
+              val angleXZ = Math.toDegrees(Math.acos(
+                dotProductXZ.coerceIn(-1.0, 1.0)
+              )).toFloat()
+              
+              // Determine if the anchor is to the left or right of the camera
+              val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
+              val rotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
+              
+              // Rotate the arrow to point toward the anchor
+              Matrix.rotateM(arrowMatrix, 0, rotationAngle, 0f, 1f, 0f)
+            }
+            
+            // Draw the arrow
+            Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, arrowMatrix, 0)
+            Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+            
+            // Set bright color for the arrow - based on distance
+            val alpha = 0.8f + 0.2f * Math.sin(System.currentTimeMillis() * 0.005).toFloat()
+            val colorArray = when {
+              distance < 5f -> floatArrayOf(0f, 1f, 0f, alpha) // Green when close
+              distance < 20f -> floatArrayOf(1f, 1f, 0f, alpha) // Yellow when medium
+              else -> floatArrayOf(1f, 0.5f, 0f, alpha) // Orange when far
+            }
+            virtualObjectShader.setVec4("u_Color", colorArray)
+            
+            // Draw the mesh
+            virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+            render.draw(virtualObjectMesh, virtualObjectShader)
+            
+            // Update direction instruction based on angle
+            updateDirectionInstruction(rotationAngle, distance)
+          }
+        }
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error drawing directional indicator", e)
+    }
+  }
+  
+  // Update directional text instruction based on the current navigation state
+  private fun updateDirectionInstruction(angle: Float, distance: Float) {
+    try {
+      when {
+        distance < 5f -> {
+          setDirectionInstruction("You have arrived at waypoint")
+        }
+        Math.abs(angle) < 20f -> {
+          setDirectionInstruction("Continue straight ahead for ${formatDistance(distance)}")
+        }
+        Math.abs(angle) < 90f -> {
+          val direction = if (angle < 0) "right" else "left"
+          setDirectionInstruction("Turn slightly $direction and continue for ${formatDistance(distance)}")
+        }
+        Math.abs(angle) < 150f -> {
+          val direction = if (angle < 0) "right" else "left"
+          setDirectionInstruction("Take a sharp $direction turn for ${formatDistance(distance)}")
+        }
+        else -> {
+          setDirectionInstruction("Turn around and go back ${formatDistance(distance)}")
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error updating direction instruction", e)
+    }
+  }
+  
+  // Format distance as text
+  private fun formatDistance(meters: Float): String {
+    return when {
+      meters < 1000f -> "${meters.toInt()} meters"
+      else -> String.format("%.1f km", meters / 1000f)
+    }
+  }
+  
+  // Set instruction text on the view
+  private fun setDirectionInstruction(instruction: String) {
+    // Only attempt to update text if we're in an activity context
+    if (context is HelloGeoActivity) {
+      (context as HelloGeoActivity).view.textViews["direction_text"]?.let { textView ->
+        (context as HelloGeoActivity).runOnUiThread {
+          textView.text = instruction
+        }
+      }
     }
   }
   
@@ -469,6 +594,9 @@ class HelloGeoRenderer(val context: Context) :
     var closestAnchor: Anchor? = null
     var closestDistance = Double.MAX_VALUE
     
+    // Get current camera pose in world space
+    val cameraPose = session?.camera?.pose
+    
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
       
@@ -477,23 +605,82 @@ class HelloGeoRenderer(val context: Context) :
       // Skip start points
       if (anchorType == AnchorType.START) continue
       
-      // Calculate distance
-      val earthAnchor = session?.earth?.getAnchorNodePose(anchor) ?: continue
-      val anchorLat = earthAnchor.translation[0].toDouble() 
-      val anchorLng = earthAnchor.translation[1].toDouble()
-      
-      val distance = Math.sqrt(
-          Math.pow(anchorLat - currentLat, 2.0) +
-          Math.pow(anchorLng - currentLng, 2.0)
-      )
-      
-      if (distance < closestDistance) {
-        closestDistance = distance
-        closestAnchor = anchor
+      // Calculate distance - use a simpler approach
+      try {
+        // Get the anchor's pose in world space
+        val anchorPose = anchor.pose
+        
+        // Check if we have the camera pose
+        if (cameraPose != null) {
+          // Calculate distance in 3D space
+          val dx = anchorPose.tx() - cameraPose.tx()
+          val dy = anchorPose.ty() - cameraPose.ty()
+          val dz = anchorPose.tz() - cameraPose.tz()
+          
+          val distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+          
+          if (distance < closestDistance) {
+            closestDistance = distance
+            closestAnchor = anchor
+          }
+        } else {
+          // Fallback to using latitude/longitude when camera pose is not available
+          val earth = session?.earth
+          if (earth?.trackingState == TrackingState.TRACKING) {
+            // Create a rough approximation using lat/lng
+            val anchorLatLng = approximateAnchorLatLng(earth, anchor)
+            
+            if (anchorLatLng != null) {
+              val distance = calculateDistance(
+                currentLat, currentLng,
+                anchorLatLng.latitude, anchorLatLng.longitude
+              )
+              
+              if (distance < closestDistance) {
+                closestDistance = distance
+                closestAnchor = anchor
+              }
+            }
+          }
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Error calculating distance to anchor", e)
       }
     }
     
     return closestAnchor
+  }
+  
+  // Approximate LatLng for an anchor - this is not precise but works for our needs
+  private fun approximateAnchorLatLng(earth: Earth, anchor: Anchor): LatLng? {
+    try {
+      // Get camera geospatial pose
+      val cameraGeo = earth.cameraGeospatialPose
+      val cameraPose = session?.camera?.pose
+      
+      if (cameraPose != null) {
+        // Get anchor's position relative to camera
+        val anchorPose = anchor.pose
+        
+        // Calculate relative position (very rough approximation)
+        val dx = anchorPose.tx() - cameraPose.tx()
+        val dy = anchorPose.ty() - cameraPose.ty()
+        
+        // Convert to approximate lat/lng difference (very simplistic approach)
+        // This assumes a flat Earth which is not accurate for long distances
+        val metersPerDegreeLatitude = 111320.0 // approximate
+        val metersPerDegreeLongitude = 111320.0 * Math.cos(Math.toRadians(cameraGeo.latitude))
+        
+        val latDiff = dy / metersPerDegreeLatitude
+        val lngDiff = dx / metersPerDegreeLongitude
+        
+        return LatLng(cameraGeo.latitude + latDiff, cameraGeo.longitude + lngDiff)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error approximating anchor position", e)
+    }
+    
+    return null
   }
 
   // Enum to store anchor types
@@ -1013,42 +1200,130 @@ class HelloGeoRenderer(val context: Context) :
         // For resource usage reasons, we'll only create anchors for a subset of points
         // for long routes
         val maxAnchors = 30
-        val step = if (routePoints.size > maxAnchors) routePoints.size / maxAnchors else 1
         
-        // Create anchors for path points at the specified interval
-        for (i in routePoints.indices step step) {
-          val point = routePoints[i]
+        if (routePoints.size <= maxAnchors) {
+          // If route is short enough, use all points
+          createAnchorsForRoutePoints(earth, routePoints)
+        } else {
+          // For longer routes, downsample while keeping significant points (turns)
           
-          // Create the anchor at ground level (0 altitude)
-          val anchor = earth.createAnchor(
-            point.latitude,
-            point.longitude,
-            0.0, // altitude in meters
-            0f, 0f, 0f, 1f // rotation quaternion
-          )
+          // First, identify turns and significant points by angle changes
+          val significantPoints = findSignificantPathPoints(routePoints)
           
-          anchors.add(anchor)
-        }
-        
-        // Always add the final point
-        if (routePoints.size > 1 && (routePoints.size - 1) % step != 0) {
-          val lastPoint = routePoints.last()
-          val anchor = earth.createAnchor(
-            lastPoint.latitude,
-            lastPoint.longitude,
-            0.0,
-            0f, 0f, 0f, 1f
-          )
-          anchors.add(anchor)
+          // Always include start and end points
+          val startPoint = routePoints.first()
+          val endPoint = routePoints.last()
           
-          // Store the destination anchor separately
-          destinationAnchor = anchor
+          // Combine significant points, ensuring we don't exceed maxAnchors
+          val finalPoints = mutableListOf<LatLng>()
+          finalPoints.add(startPoint)
+          
+          // Add significant turn points (limited to maxAnchors - 2 to account for start/end)
+          val maxTurnPoints = maxAnchors - 2
+          if (significantPoints.size <= maxTurnPoints) {
+            // Add all significant points
+            significantPoints.forEach { finalPoints.add(it.position) }
+          } else {
+            // Add only turns (not regular waypoints)
+            val turnPoints = significantPoints.filter { it.isTurn }
+            
+            if (turnPoints.size <= maxTurnPoints) {
+              // Add all turns
+              turnPoints.forEach { finalPoints.add(it.position) }
+            } else {
+              // Even the turns are too many, sample them
+              for (i in 0 until maxTurnPoints) {
+                val index = (i * turnPoints.size) / maxTurnPoints
+                finalPoints.add(turnPoints[index].position)
+              }
+            }
+          }
+          
+          // Make sure the end point is included
+          if (finalPoints.last() != endPoint) {
+            finalPoints.add(endPoint)
+          }
+          
+          createAnchorsForRoutePoints(earth, finalPoints)
         }
         
         Log.d(TAG, "Created ${anchors.size} anchors for navigation")
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error creating route anchors", e)
+    }
+  }
+  
+  // Helper method to create anchors for a list of route points
+  private fun createAnchorsForRoutePoints(earth: Earth, points: List<LatLng>) {
+    try {
+      // Add start point
+      if (points.isNotEmpty()) {
+        val start = points.first()
+        val startAnchor = earth.createAnchor(
+          start.latitude,
+          start.longitude,
+          earth.cameraGeospatialPose.altitude - 1.5, // Place slightly below camera
+          0f, 0f, 0f, 1f
+        )
+        anchors.add(startAnchor)
+        anchorData[startAnchor] = AnchorType.START
+        
+        // Add intermediate waypoints
+        for (i in 1 until points.size - 1) {
+          val point = points[i]
+          
+          // Identify if it's a turn by checking angle with neighbors
+          val isTurn = if (i > 0 && i < points.size - 1) {
+            val prev = points[i-1]
+            val current = point
+            val next = points[i+1]
+            
+            val bearing1 = calculateBearing(
+              prev.latitude, prev.longitude,
+              current.latitude, current.longitude
+            )
+            val bearing2 = calculateBearing(
+              current.latitude, current.longitude,
+              next.latitude, next.longitude
+            )
+            
+            var bearingChange = Math.abs(bearing2 - bearing1)
+            if (bearingChange > 180) bearingChange = 360 - bearingChange
+            
+            bearingChange > 25.0 // Consider it a turn if angle changes by more than 25 degrees
+          } else {
+            false
+          }
+          
+          val anchor = earth.createAnchor(
+            point.latitude,
+            point.longitude,
+            earth.cameraGeospatialPose.altitude - 1.5,
+            0f, 0f, 0f, 1f
+          )
+          
+          anchors.add(anchor)
+          anchorData[anchor] = if (isTurn) AnchorType.TURN else AnchorType.WAYPOINT
+        }
+        
+        // Add destination
+        if (points.size > 1) {
+          val destination = points.last()
+          val destAnchor = earth.createAnchor(
+            destination.latitude,
+            destination.longitude,
+            earth.cameraGeospatialPose.altitude - 1.5,
+            0f, 0f, 0f, 1f
+          )
+          
+          anchors.add(destAnchor)
+          anchorData[destAnchor] = AnchorType.DESTINATION
+          destinationAnchor = destAnchor
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error creating route anchors from points", e)
     }
   }
 
