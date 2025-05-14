@@ -81,6 +81,10 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             // Set content view from layout XML first, to avoid issues with findViewById later
             setContentView(R.layout.activity_fallback)
             
+            // Set up toolbar
+            val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
+            setSupportActionBar(toolbar)
+            
             // Perform Google Play Services check first
             val googleApiAvailability = GoogleApiAvailability.getInstance()
             val resultCode = googleApiAvailability.isGooglePlayServicesAvailable(this)
@@ -121,6 +125,26 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 Log.e(TAG, "Error setting up search bar", e)
             }
             
+            // Setup AR mode button
+            try {
+                val arModeButton = findViewById<Button>(R.id.arModeButton)
+                arModeButton?.setOnClickListener {
+                    launchARMode()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up AR mode button", e)
+            }
+            
+            // Setup Split Screen button
+            try {
+                val splitScreenButton = findViewById<Button>(R.id.splitScreenButton)
+                splitScreenButton?.setOnClickListener {
+                    launchSplitScreenMode()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up split screen button", e)
+            }
+            
             // Setup navigation button
             try {
                 val navigateButton = findViewById<Button>(R.id.navigateButton)
@@ -131,66 +155,6 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting up navigation button", e)
-            }
-            
-            // Setup AR mode button only if successfully initialized other UI elements
-            try {
-                if (isARCorePotentiallySupported()) {
-                    val container = findViewById<LinearLayout>(R.id.container)
-                    if (container != null) {
-                        val navButton = findViewById<Button>(R.id.navigateButton)
-                        
-                        // Add AR Mode button
-                        arModeButton = Button(this).apply {
-                            text = "Try AR Mode"
-                            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_light))
-                            setTextColor(Color.WHITE)
-                            
-                            val layoutParams = LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT
-                            ).apply {
-                                setMargins(16, 0, 16, 16)
-                            }
-                            
-                            setOnClickListener { launchARMode() }
-                            
-                            // Safely add to container
-                            if (navButton != null) {
-                                try {
-                                    container.addView(this, container.indexOfChild(navButton) + 1, layoutParams)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error adding button after nav button", e)
-                                    container.addView(this, layoutParams)
-                                }
-                            } else {
-                                container.addView(this, layoutParams)
-                            }
-                        }
-                        
-                        // Add Split Screen Mode button
-                        val splitModeButton = Button(this).apply {
-                            text = "Split Screen Mode"
-                            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_purple))
-                            setTextColor(Color.WHITE)
-                            
-                            val layoutParams = LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT
-                            ).apply {
-                                setMargins(16, 0, 16, 16)
-                            }
-                            
-                            setOnClickListener { launchSplitScreenMode() }
-                            
-                            // Add to container
-                            container.addView(this, layoutParams)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error setting up AR mode button", e)
-                // Continue without AR button
             }
             
             // Check for location permissions
