@@ -23,16 +23,19 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.CameraPosition
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MapStyleOptions
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.ArCoreApk
@@ -47,12 +50,19 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     private var googleMap: GoogleMap? = null
     private var destinationLatLng: LatLng? = null
     private var arModeButton: Button? = null
+    private var mapLoadingTimeout: Handler? = null
+    private var timeoutRunnable: Runnable? = null
+    private var connectionCheckHandler: Handler? = null
+    private var connectionCheckRunnable: Runnable? = null
+    private var mapIsReady = false
     
     companion object {
         private const val TAG = "FallbackActivity"
         private const val LOCATION_PERMISSION_CODE = 100
         private const val CAMERA_PERMISSION_CODE = 101
         private const val AR_MODE_REQUEST_CODE = 200
+        private const val MAP_TIMEOUT_MS = 40000 // Increased to 40 seconds for very slow connections
+        private const val CONNECTION_CHECK_INTERVAL_MS = 30000 // Check connection every 30 seconds
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -190,46 +200,11 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 // Find the map fragment from layout instead of creating it
                 mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
                 
-                // Add a safety timeout for map loading - increased to 30 seconds for poor connections
-                val mapLoadingTimeout = Handler(Looper.getMainLooper())
-                val timeoutRunnable = Runnable {
-                    Log.e(TAG, "Map loading timed out")
-                    runOnUiThread {
-                        // Check network connectivity
-                        val isConnected = isNetworkAvailable()
-                        val errorMessage = if (isConnected) {
-                            "Map loading timed out. Possible API key issue or service unavailable."
-                        } else {
-                            "Map loading timed out - check internet connection"
-                        }
-                        
-                        Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
-                        showMapErrorUI(errorMessage)
-                    }
-                }
-                
-                // Set a longer 30-second timeout for map loading on slow connections
-                mapLoadingTimeout.postDelayed(timeoutRunnable, 30000)
+                // Set up map loading timeout
+                setupMapLoadingTimeout()
                 
                 // Use OnMapReadyCallback interface implementation for better error handling
-                mapFragment.getMapAsync { map ->
-                    try {
-                        // Cancel the timeout since map loaded successfully
-                        mapLoadingTimeout.removeCallbacks(timeoutRunnable)
-                        
-                        Log.d(TAG, "Google Maps loaded successfully")
-                        googleMap = map
-                        
-                        // Hide the loading indicator
-                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-                        
-                        setupMap(findViewById(R.id.navigateButton))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to initialize map", e)
-                        Toast.makeText(this, "Failed to initialize map: ${e.message}", Toast.LENGTH_LONG).show()
-                        showMapErrorUI("Failed to initialize map: ${e.message}")
-                    }
-                }
+                mapFragment.getMapAsync(this)
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting up map fragment", e)
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
@@ -244,16 +219,171 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
+    private fun setupMapLoadingTimeout() {
+        mapLoadingTimeout = Handler(Looper.getMainLooper())
+        timeoutRunnable = Runnable {
+            if (!mapIsReady) {
+                Log.e(TAG, "Map loading timed out")
+                runOnUiThread {
+                    // Check network connectivity
+                    val isConnected = isNetworkAvailable()
+                    val errorMessage = if (isConnected) {
+                        "Map loading timed out. Possible API key issue or service unavailable."
+                    } else {
+                        "Map loading timed out - check internet connection"
+                    }
+                    
+                    Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
+                    showMapErrorUI(errorMessage)
+                }
+            }
+        }
+        
+        // Set a longer timeout for map loading on slow connections
+        mapLoadingTimeout?.postDelayed(timeoutRunnable!!, MAP_TIMEOUT_MS.toLong())
+    }
+    
+    private fun setupPeriodicConnectionCheck() {
+        connectionCheckHandler = Handler(Looper.getMainLooper())
+        connectionCheckRunnable = Runnable {
+            if (mapIsReady && !isNetworkAvailable()) {
+                // We lost network connection - inform user
+                Toast.makeText(this, "Network connection lost. Map functionality may be limited.", Toast.LENGTH_LONG).show()
+                
+                // Add a refresh button to the map if it's not already there
+                addRefreshButtonToMap()
+            }
+            
+            // Schedule the next check
+            connectionCheckHandler?.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_INTERVAL_MS.toLong())
+        }
+        
+        // Start checking connectivity periodically
+        connectionCheckHandler?.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_INTERVAL_MS.toLong())
+    }
+    
+    private fun addRefreshButtonToMap() {
+        // Check if we already have a refresh button
+        if (findViewById<Button>(R.id.map_refresh_button) == null) {
+            val container = findViewById<LinearLayout>(R.id.container)
+            if (container != null) {
+                val refreshButton = Button(this).apply {
+                    id = R.id.map_refresh_button
+                    text = "Refresh Map"
+                    setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_orange_light))
+                    setTextColor(Color.WHITE)
+                    
+                    val layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(16, 0, 16, 16)
+                    }
+                    
+                    setOnClickListener {
+                        if (isNetworkAvailable()) {
+                            Toast.makeText(this@FallbackActivity, "Refreshing map...", Toast.LENGTH_SHORT).show()
+                            recreateMapIfNeeded()
+                            this.visibility = View.GONE
+                        } else {
+                            Toast.makeText(this@FallbackActivity, "Still no network connection available", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                
+                try {
+                    container.addView(refreshButton, 0) // Add at the top
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error adding refresh button", e)
+                }
+            }
+        }
+    }
+    
+    private fun recreateMapIfNeeded() {
+        try {
+            // Try to reload the map if it's not working
+            mapFragment.getMapAsync { map ->
+                googleMap = map
+                setupMap(findViewById(R.id.navigateButton))
+                
+                // Restore destination if we had one
+                destinationLatLng?.let { dest ->
+                    googleMap?.apply {
+                        clear()
+                        addMarker(MarkerOptions().position(dest).title("Destination"))
+                        animateCamera(CameraUpdateFactory.newLatLngZoom(dest, 15f))
+                    }
+                    findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error refreshing map", e)
+            Toast.makeText(this, "Error refreshing map: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     // This is the OnMapReadyCallback implementation
     override fun onMapReady(map: GoogleMap) {
         try {
+            // Cancel the timeout since map loaded successfully
+            mapLoadingTimeout?.removeCallbacks(timeoutRunnable!!)
+            
             Log.d(TAG, "Google Map is ready")
             googleMap = map
+            mapIsReady = true
+            
+            // Apply lower resource usage settings when possible
+            try {
+                // Load map style from a string instead of a resource file
+                val success = map.setMapStyle(
+                    MapStyleOptions("""
+                    [
+                      {
+                        "featureType": "poi",
+                        "elementType": "all",
+                        "stylers": [
+                          {
+                            "visibility": "off"
+                          }
+                        ]
+                      },
+                      {
+                        "featureType": "transit",
+                        "elementType": "all",
+                        "stylers": [
+                          {
+                            "visibility": "simplified"
+                          }
+                        ]
+                      },
+                      {
+                        "featureType": "road",
+                        "elementType": "labels",
+                        "stylers": [
+                          {
+                            "visibility": "simplified"
+                          }
+                        ]
+                      }
+                    ]
+                    """.trimIndent())
+                )
+                if (!success) {
+                    Log.e(TAG, "Map style parsing failed")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to apply map style", e)
+                // Continue without custom style
+            }
             
             // Hide the loading indicator
             findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
             
             setupMap(findViewById(R.id.navigateButton))
+            
+            // Setup periodic connection checking
+            setupPeriodicConnectionCheck()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onMapReady", e)
             Toast.makeText(this, "Error initializing map: ${e.message}", Toast.LENGTH_LONG).show()
@@ -359,11 +489,30 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun setupMap(navigateButton: Button) {
         try {
             googleMap?.apply {
+                // Set a lower max zoom level to reduce memory usage
+                setMinZoomPreference(5f) // Don't allow extreme zoom out (world view)
+                setMaxZoomPreference(18f) // Limit maximum zoom to reduce memory usage
+                
                 uiSettings.apply {
                     isZoomControlsEnabled = true
                     isCompassEnabled = true
                     isMyLocationButtonEnabled = true
+                    // Disable memory-intensive features
+                    isIndoorLevelPickerEnabled = false
+                    isMapToolbarEnabled = false
+                    // Use less precise but more stable tile rendering
+                    isRotateGesturesEnabled = false // Disable rotation to save memory
                 }
+                
+                // Lower camera tilt to use fewer resources
+                moveCamera(CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(LatLng(37.7749, -122.4194))
+                        .zoom(12f)
+                        .tilt(0f) // No tilt = less rendering complexity
+                        .bearing(0f) // No rotation = less rendering complexity
+                        .build()
+                ))
                 
                 // Enable my location layer if we have permission
                 if (hasLocationPermission()) {
@@ -372,16 +521,6 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     } catch (e: Exception) {
                         Log.e(TAG, "Could not enable my location", e)
                     }
-                }
-                
-                try {
-                    // Move camera to a default location (can be replaced with actual user location)
-                    moveCamera(CameraUpdateFactory.newLatLngZoom(
-                        LatLng(37.7749, -122.4194), // San Francisco as default
-                        10f
-                    ))
-                } catch (e: Exception) {
-                    Log.e(TAG, "Could not move camera", e)
                 }
                 
                 // Add click listener to allow selecting a point on the map
@@ -404,11 +543,43 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 } catch (e: Exception) {
                     Log.e(TAG, "Could not set map click listener", e)
                 }
+                
+                // Add a camera idle listener to monitor for stuck rendering
+                setOnCameraIdleListener {
+                    // Reset any stuck rendering issues when camera stops moving
+                    resetMapIfStuck()
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error setting up map", e)
             Toast.makeText(this, "Error with map controls: ${e.message}", Toast.LENGTH_LONG).show()
         }
+    }
+    
+    private var lastMapReset = 0L
+    
+    private fun resetMapIfStuck() {
+        val currentTime = System.currentTimeMillis()
+        
+        // Only reset once every 5 minutes at most to avoid infinite loops
+        if (currentTime - lastMapReset > 5 * 60 * 1000) {
+            if (!isMapResponsive()) {
+                Log.d(TAG, "Map appears to be stuck, attempting reset")
+                // Force a small camera movement to refresh the view
+                googleMap?.moveCamera(CameraUpdateFactory.scrollBy(1f, 1f))
+                lastMapReset = currentTime
+            }
+        }
+    }
+    
+    private fun isMapResponsive(): Boolean {
+        // Just a placeholder - in a real app, we'd check for actual rendering issues
+        // This is difficult to detect, but we can assume if the device is low on memory
+        // the map might be unresponsive
+        val runtime = Runtime.getRuntime()
+        val usedMemoryPercentage = (runtime.totalMemory() - runtime.freeMemory()) * 100 / runtime.maxMemory()
+        
+        return usedMemoryPercentage < 80 // If more than 80% of memory is used, map might be struggling
     }
     
     private fun searchLocation(query: String) {
@@ -417,46 +588,74 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
             findViewById<TextView>(R.id.map_loading_text)?.text = "Searching for location..."
             
-            val geocoder = Geocoder(this, Locale.getDefault())
-            
-            // Use the geocoder to find the location
-            try {
-                @Suppress("DEPRECATION")
-                val addresses = geocoder.getFromLocationName(query, 1)
-                
-                // Hide loading indicator whether search succeeds or fails
+            // First check network connectivity
+            if (!isNetworkAvailable()) {
+                // Hide loading indicator
                 findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-                
-                if (addresses != null && addresses.isNotEmpty()) {
-                    val address = addresses[0]
-                    val latLng = LatLng(address.latitude, address.longitude)
+                Toast.makeText(this, "Network unavailable. Please check your internet connection.", Toast.LENGTH_LONG).show()
+                return
+            }
+            
+            // Limit search query length to avoid issues
+            val sanitizedQuery = if (query.length > 100) query.substring(0, 100) else query
+            
+            // Use a background thread for geocoding to avoid ANRs
+            Thread {
+                try {
+                    val geocoder = Geocoder(this, Locale.getDefault())
+                    var addresses = emptyList<android.location.Address>()
                     
                     try {
-                        googleMap?.apply {
-                            clear()
-                            addMarker(MarkerOptions().position(latLng).title(query))
-                            animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
-                        }
-                        
-                        // Store as destination
-                        destinationLatLng = latLng
-                        
-                        // Show the navigation button
-                        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                        // Use the appropriate geocoding method depending on Android version
+                        @Suppress("DEPRECATION")
+                        addresses = geocoder.getFromLocationName(sanitizedQuery, 1) ?: emptyList()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error updating map with search result", e)
-                        Toast.makeText(this, "Found location but couldn't display on map", Toast.LENGTH_SHORT).show()
+                        Log.e(TAG, "Error with geocoder", e)
+                        runOnUiThread {
+                            // Hide loading indicator
+                            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                            Toast.makeText(this, "Error looking up location: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                        return@Thread
                     }
-                } else {
-                    Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
+                    
+                    runOnUiThread {
+                        // Hide loading indicator
+                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                        
+                        if (addresses.isNotEmpty()) {
+                            val address = addresses[0]
+                            val latLng = LatLng(address.latitude, address.longitude)
+                            
+                            try {
+                                googleMap?.apply {
+                                    clear()
+                                    addMarker(MarkerOptions().position(latLng).title(query))
+                                    animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
+                                }
+                                
+                                // Store as destination
+                                destinationLatLng = latLng
+                                
+                                // Show the navigation button
+                                findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error updating map with search result", e)
+                                Toast.makeText(this, "Found location but couldn't display on map", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(this, "Location not found. Try a more specific search.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in geocoding thread", e)
+                    runOnUiThread {
+                        // Hide loading indicator
+                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                        Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            } catch (e: Exception) {
-                // Hide loading indicator if an error occurs
-                findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-                
-                Log.e(TAG, "Error with geocoder", e)
-                Toast.makeText(this, "Error looking up location: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+            }.start()
         } catch (e: Exception) {
             // Hide loading indicator if an error occurs
             findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
@@ -744,5 +943,31 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.e(TAG, "Error checking network state", e)
             return false
         }
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        // Clean up handlers to prevent memory leaks
+        connectionCheckHandler?.removeCallbacks(connectionCheckRunnable!!)
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        
+        // Resume connection checking
+        if (mapIsReady) {
+            connectionCheckHandler?.postDelayed(connectionCheckRunnable!!, CONNECTION_CHECK_INTERVAL_MS.toLong())
+        }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        
+        // Clean up all handlers
+        mapLoadingTimeout?.removeCallbacks(timeoutRunnable!!)
+        connectionCheckHandler?.removeCallbacks(connectionCheckRunnable!!)
+        
+        // Clear map reference to prevent memory leaks
+        googleMap = null
     }
 } 
