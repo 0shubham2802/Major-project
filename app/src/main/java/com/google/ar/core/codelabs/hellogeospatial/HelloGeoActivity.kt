@@ -573,7 +573,11 @@ class HelloGeoActivity : AppCompatActivity() {
   private fun setupMapFragment() {
     try {
       // Use our enhanced MapViewWrapper instead of regular SupportMapFragment
-      val mapFragment = supportFragmentManager.findFragmentById(R.id.map) as MapViewWrapper
+      val mapFragment = MapViewWrapper(this)
+      
+      supportFragmentManager.beginTransaction()
+        .replace(R.id.map, mapFragment)
+        .commit()
       
       // Set up error handling for map loading
       mapFragment.setOnMapLoadErrorListener {
@@ -601,7 +605,8 @@ class HelloGeoActivity : AppCompatActivity() {
           Log.e(TAG, "Location permission not granted", e)
         }
         
-        // Create the view with the initialized map
+        // Pass in the activity - the View class will create the MapView with Google Map
+        // Don't try to directly create the MapView here as it's handled inside HelloGeoView
         view = HelloGeoView(this)
         
         // Setup UI components after view is created
