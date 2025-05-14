@@ -731,7 +731,7 @@ class HelloGeoRenderer(val context: Context) :
     // In ARActivity we don't have a mapView to update
   }
 
-  private fun updateStatusText(earth: Earth?, geospatialPose: GeospatialPose?) {
+  private fun updateStatusText(earth: Earth?, geospatialPose: GeospatialPose?, status: String = "") {
     if (context is HelloGeoActivity) {
       context.view.updateStatusText(earth, geospatialPose)
     }
