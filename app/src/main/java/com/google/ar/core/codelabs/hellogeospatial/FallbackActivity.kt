@@ -5,7 +5,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.location.Geocoder
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -186,21 +189,46 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 // Find the map fragment from layout instead of creating it
                 mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
                 
-                // Add a safety timeout for map loading
+                // Add a safety timeout for map loading - increased to 30 seconds for poor connections
                 val mapLoadingTimeout = Handler(Looper.getMainLooper())
                 val timeoutRunnable = Runnable {
                     Log.e(TAG, "Map loading timed out")
                     runOnUiThread {
-                        Toast.makeText(this, "Map loading timed out. Please check your internet connection.", Toast.LENGTH_LONG).show()
-                        showMapErrorUI("Map loading timed out - check internet connection")
+                        // Check network connectivity
+                        val isConnected = isNetworkAvailable()
+                        val errorMessage = if (isConnected) {
+                            "Map loading timed out. Possible API key issue or service unavailable."
+                        } else {
+                            "Map loading timed out - check internet connection"
+                        }
+                        
+                        Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
+                        showMapErrorUI(errorMessage)
                     }
                 }
                 
-                // Set a 20-second timeout for map loading
-                mapLoadingTimeout.postDelayed(timeoutRunnable, 20000)
+                // Set a longer 30-second timeout for map loading on slow connections
+                mapLoadingTimeout.postDelayed(timeoutRunnable, 30000)
                 
                 // Use OnMapReadyCallback interface implementation for better error handling
-                mapFragment.getMapAsync(this)
+                mapFragment.getMapAsync { map ->
+                    try {
+                        // Cancel the timeout since map loaded successfully
+                        mapLoadingTimeout.removeCallbacks(timeoutRunnable)
+                        
+                        Log.d(TAG, "Google Maps loaded successfully")
+                        googleMap = map
+                        
+                        // Hide the loading indicator
+                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                        
+                        setupMap(findViewById(R.id.navigateButton))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initialize map", e)
+                        Toast.makeText(this, "Failed to initialize map: ${e.message}", Toast.LENGTH_LONG).show()
+                        showMapErrorUI("Failed to initialize map: ${e.message}")
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting up map fragment", e)
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
@@ -542,6 +570,13 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             mainLayout.addView(errorText)
             
+            // Create a button container for multiple options
+            val buttonContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(16, 16, 16, 16)
+            }
+            
             // Add retry button
             val retryButton = Button(this).apply {
                 text = "RETRY"
@@ -550,10 +585,10 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 setPadding(32, 16, 32, 16)
                 
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    setMargins(16, 16, 16, 16)
+                    setMargins(16, 8, 16, 8)
                 }
                 
                 setOnClickListener {
@@ -563,7 +598,59 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     startActivity(intent)
                 }
             }
-            mainLayout.addView(retryButton)
+            buttonContainer.addView(retryButton)
+            
+            // Add option to use maps app directly
+            val openMapsButton = Button(this).apply {
+                text = "OPEN GOOGLE MAPS APP"
+                setBackgroundColor(ContextCompat.getColor(context, android.R.color.holo_green_dark))
+                setTextColor(Color.WHITE)
+                setPadding(32, 16, 32, 16)
+                
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(16, 8, 16, 8)
+                }
+                
+                setOnClickListener {
+                    // Open Google Maps app
+                    val gmmIntentUri = Uri.parse("geo:0,0?q=restaurants")
+                    val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
+                    mapIntent.setPackage("com.google.android.apps.maps")
+                    if (mapIntent.resolveActivity(packageManager) != null) {
+                        startActivity(mapIntent)
+                    } else {
+                        Toast.makeText(context, "Google Maps app not installed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            buttonContainer.addView(openMapsButton)
+            
+            // Add option to use browser maps
+            val openBrowserButton = Button(this).apply {
+                text = "OPEN MAPS IN BROWSER"
+                setBackgroundColor(ContextCompat.getColor(context, android.R.color.holo_orange_dark))
+                setTextColor(Color.WHITE)
+                setPadding(32, 16, 32, 16)
+                
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(16, 8, 16, 24)
+                }
+                
+                setOnClickListener {
+                    // Open Google Maps in browser
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com"))
+                    startActivity(browserIntent)
+                }
+            }
+            buttonContainer.addView(openBrowserButton)
+            
+            mainLayout.addView(buttonContainer)
             
             // Set the completely new content view
             setContentView(mainLayout)
@@ -582,7 +669,7 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
                 
                 val simpleText = TextView(this).apply {
-                    text = "Error loading map interface. Please restart the app."
+                    text = "Error loading map interface. Please restart the app or check your internet connection."
                     gravity = Gravity.CENTER
                     textSize = 18f
                     setTextColor(Color.BLACK)
@@ -633,6 +720,28 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch split screen mode", e)
             Toast.makeText(this, "Failed to launch split screen mode: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun isNetworkAvailable(): Boolean {
+        try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = connectivityManager.activeNetwork ?: return false
+                val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+                
+                return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                       capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            } else {
+                // Legacy method for older Android versions
+                @Suppress("DEPRECATION")
+                val networkInfo = connectivityManager.activeNetworkInfo
+                return networkInfo != null && networkInfo.isConnected
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking network state", e)
+            return false
         }
     }
 } 
