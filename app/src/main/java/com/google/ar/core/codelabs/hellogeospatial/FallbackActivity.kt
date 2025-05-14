@@ -64,6 +64,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         
         try {
+            // Set content view from layout XML first, to avoid issues with findViewById later
+            setContentView(R.layout.activity_fallback)
+            
             // Perform Google Play Services check first
             val googleApiAvailability = GoogleApiAvailability.getInstance()
             val resultCode = googleApiAvailability.isGooglePlayServicesAvailable(this)
@@ -80,9 +83,6 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
             }
             
-            // Set content view from layout XML
-            setContentView(R.layout.activity_fallback)
-            
             // Diagnose potential map issues
             val mapIssues = MapErrorHelper.diagnoseMapIssues(this)
             if (mapIssues != "No issues detected") {
@@ -90,62 +90,81 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             
             // Setup search bar functionality
-            val searchBar = findViewById<EditText>(R.id.searchBar)
-            searchBar.setOnEditorActionListener { textView, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    val query = textView.text.toString()
-                    if (query.isNotBlank()) {
-                        searchLocation(query)
-                        return@setOnEditorActionListener true
+            try {
+                val searchBar = findViewById<EditText>(R.id.searchBar)
+                searchBar?.setOnEditorActionListener { textView, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                        val query = textView.text.toString()
+                        if (query.isNotBlank()) {
+                            searchLocation(query)
+                            return@setOnEditorActionListener true
+                        }
                     }
+                    return@setOnEditorActionListener false
                 }
-                return@setOnEditorActionListener false
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up search bar", e)
             }
             
             // Setup navigation button
-            val navigateButton = findViewById<Button>(R.id.navigateButton)
-            navigateButton.setOnClickListener {
-                destinationLatLng?.let { destination ->
-                    openGoogleMapsNavigation(destination)
-                }
-            }
-            
-            // Setup AR mode button (only if AR is potentially supported)
-            if (isARCorePotentiallySupported()) {
-                arModeButton = Button(this).apply {
-                    text = "Try AR Mode"
-                    setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_light))
-                    setTextColor(Color.WHITE)
-                    
-                    // Add right after the navigate button
-                    val layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        setMargins(16, 0, 16, 16)
-                    }
-                    
-                    setOnClickListener {
-                        launchARMode()
-                    }
-                    
-                    // Add to layout
-                    val container = findViewById<LinearLayout>(R.id.container)
-                    container.addView(this, container.indexOfChild(navigateButton) + 1, layoutParams)
-                }
-            }
-            
-            // Add the map fragment with better error handling
             try {
-                mapFragment = supportFragmentManager.findFragmentById(R.id.map_container) as? SupportMapFragment
-                    ?: SupportMapFragment.newInstance()
-                
-                // Only add the fragment if not already added
-                if (supportFragmentManager.findFragmentById(R.id.map_container) == null) {
-                    supportFragmentManager.beginTransaction()
-                        .replace(R.id.map_container, mapFragment)
-                        .commitAllowingStateLoss()
+                val navigateButton = findViewById<Button>(R.id.navigateButton)
+                navigateButton?.setOnClickListener {
+                    destinationLatLng?.let { destination ->
+                        openGoogleMapsNavigation(destination)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up navigation button", e)
+            }
+            
+            // Setup AR mode button only if successfully initialized other UI elements
+            try {
+                if (isARCorePotentiallySupported()) {
+                    val container = findViewById<LinearLayout>(R.id.container)
+                    if (container != null) {
+                        val navButton = findViewById<Button>(R.id.navigateButton)
+                        
+                        arModeButton = Button(this).apply {
+                            text = "Try AR Mode"
+                            setBackgroundColor(ContextCompat.getColor(this@FallbackActivity, android.R.color.holo_blue_light))
+                            setTextColor(Color.WHITE)
+                            
+                            val layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                setMargins(16, 0, 16, 16)
+                            }
+                            
+                            setOnClickListener { launchARMode() }
+                            
+                            // Safely add to container
+                            if (navButton != null) {
+                                try {
+                                    container.addView(this, container.indexOfChild(navButton) + 1, layoutParams)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error adding button after nav button", e)
+                                    container.addView(this, layoutParams)
+                                }
+                            } else {
+                                container.addView(this, layoutParams)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting up AR mode button", e)
+                // Continue without AR button
+            }
+            
+            // Check for location permissions
+            checkLocationPermission()
+            
+            // Add the map fragment with better error handling - do this last
+            try {
+                // Find the map fragment from layout instead of creating it
+                mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
                 
                 // Add a safety timeout for map loading
                 val mapLoadingTimeout = Handler(Looper.getMainLooper())
@@ -167,9 +186,6 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
                 showMapErrorUI("Error setting up map fragment: ${e.message}")
             }
-            
-            // Check for location permissions
-            checkLocationPermission()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing map view: ${e.message}", Toast.LENGTH_LONG).show()
@@ -463,71 +479,81 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     
     private fun showMapErrorUI(errorMessage: String) {
         try {
-            // Hide loading indicator if it's visible
-            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+            Log.e(TAG, "Showing map error UI: $errorMessage")
             
-            // Find the map container
-            val mapContainer = findViewById<FrameLayout>(R.id.map_container)
-            
-            // We don't want to remove the map fragment if it's already added
-            // Instead create a new error view and add it on top
-            val errorLayout = LinearLayout(this).apply {
+            // Create a completely new layout to avoid any issues with existing views
+            val mainLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT
+                )
                 setBackgroundColor(Color.WHITE)
             }
             
+            // Add title
+            val titleText = TextView(this).apply {
+                text = "AR Navigation (Map Mode)"
+                gravity = Gravity.CENTER
+                textSize = 20f
+                setTextColor(Color.BLACK)
+                setPadding(16, 16, 16, 16)
+            }
+            mainLayout.addView(titleText)
+            
+            // Add subtitle
+            val subtitleText = TextView(this).apply {
+                text = "Your device doesn't fully support AR features. Using map-only mode."
+                gravity = Gravity.CENTER
+                textSize = 14f
+                setTextColor(Color.GRAY)
+                setPadding(16, 0, 16, 32)
+            }
+            mainLayout.addView(subtitleText)
+            
+            // Add error text
             val errorText = TextView(this).apply {
                 text = "Error loading map interface. Please restart the app.\n\n$errorMessage"
-                setTextColor(Color.BLACK)
                 gravity = Gravity.CENTER
                 textSize = 16f
+                setTextColor(Color.BLACK)
                 setPadding(32, 32, 32, 32)
             }
+            mainLayout.addView(errorText)
             
+            // Add retry button
             val retryButton = Button(this).apply {
-                text = "Retry"
+                text = "RETRY"
                 setBackgroundColor(ContextCompat.getColor(context, android.R.color.holo_blue_dark))
                 setTextColor(Color.WHITE)
+                setPadding(32, 16, 32, 16)
+                
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(16, 16, 16, 16)
+                }
                 
                 setOnClickListener {
-                    // Remove the error view
-                    mapContainer.removeView(errorLayout)
-                    
-                    // Show loading indicator
-                    findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
-                    
-                    // Retry map initialization
-                    try {
-                        mapFragment = SupportMapFragment.newInstance()
-                        supportFragmentManager.beginTransaction()
-                            .replace(R.id.map_container, mapFragment)
-                            .commitAllowingStateLoss()
-                        
-                        mapFragment.getMapAsync(this@FallbackActivity)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error retrying map initialization", e)
-                        Toast.makeText(this@FallbackActivity, "Error retrying: ${e.message}", Toast.LENGTH_SHORT).show()
-                        
-                        // Show error view again
-                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-                        mapContainer.addView(errorLayout)
-                    }
+                    // Restart the activity
+                    val intent = intent
+                    finish()
+                    startActivity(intent)
                 }
             }
+            mainLayout.addView(retryButton)
             
-            errorLayout.addView(errorText)
-            errorLayout.addView(retryButton)
-            
-            // Add the error view to the map container
-            mapContainer.addView(errorLayout)
+            // Set the completely new content view
+            setContentView(mainLayout)
             
             // Log the error for debugging
             Log.e(TAG, "Map error: $errorMessage")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show map error UI", e)
             
-            // Last resort - create a completely new simple UI
+            // Last resort - create a minimal UI with just an error message and retry button
             try {
                 val simpleLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
@@ -536,14 +562,24 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
                 
                 val simpleText = TextView(this).apply {
-                    text = "Error loading map interface. Please restart the app.\n\n$errorMessage"
+                    text = "Error loading map interface. Please restart the app."
                     gravity = Gravity.CENTER
                     textSize = 18f
                     setTextColor(Color.BLACK)
                     setPadding(32, 32, 32, 32)
                 }
                 
+                val simpleButton = Button(this).apply {
+                    text = "RETRY"
+                    setBackgroundColor(Color.BLUE)
+                    setTextColor(Color.WHITE)
+                    setOnClickListener {
+                        recreate()
+                    }
+                }
+                
                 simpleLayout.addView(simpleText)
+                simpleLayout.addView(simpleButton)
                 setContentView(simpleLayout)
             } catch (t: Throwable) {
                 // At this point, there's not much else we can do
