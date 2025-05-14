@@ -465,7 +465,8 @@ class HelloGeoRenderer(val context: Context) :
         
         // First we need to determine if the anchor is in front of the user
         // Get camera forward vector (negative z-axis in OpenGL convention)
-        val zAxis = cameraPose.getZAxis()
+        val zAxis = FloatArray(3)
+        cameraPose.getZAxis(zAxis, 0)
         val cameraForward = floatArrayOf(
           -zAxis[0],
           -zAxis[1],
