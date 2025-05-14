@@ -88,6 +88,7 @@ class HelloGeoRenderer(val context: Context) :
   private val anchors = mutableListOf<Anchor>()
   private var destinationAnchor: Anchor? = null
   private var isNavigating = false
+  private var routePoints = listOf<LatLng>()
 
   // Initialize display rotation helper with context - it accepts Context instead of Activity now
   val displayRotationHelper = DisplayRotationHelper(context)
@@ -248,136 +249,204 @@ class HelloGeoRenderer(val context: Context) :
           // Track time waiting for Earth to initialize
           if (earthInitializedTime == 0L) {
             earthInitializedTime = System.currentTimeMillis()
-            Log.d(TAG, "Starting Earth initialization timer")
-            
-            // Show a toast to let user know we're initializing Earth
-            updateStatusText(null, null)
-          } else if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
-            // Earth hasn't initialized in the maximum wait time, fall back to map mode
-            Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
-            handlePersistentEarthFailure("Earth initialization timed out")
           }
           
+          // If we've been waiting too long, maybe we should fall back to map-only mode
+          if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
+            Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
+            showError("Earth initialization timed out. Please try again later.")
+            fallbackToMapOnlyMode()
+            return
+          }
           return
         }
+        
+        // Now that Earth is available, create route anchors if needed
+        createRouteAnchorsIfNeeded(earth)
 
-        // Reset Earth initialization timer once Earth is available
-        if (earthInitializedTime > 0) {
-          Log.d(TAG, "Earth initialized after ${System.currentTimeMillis() - earthInitializedTime}ms")
-          earthInitializedTime = 0
+        if (earth.trackingState == TrackingState.TRACKING) {
+          // Reset tracking error counters
+          framesWithoutEarthTracking = 0
+          lastEarthTrackingErrorTime = 0
           
-          // Show a success toast when Earth is initialized
-          updateStatusText(earth, null)
-        }
-
-        // Check Earth tracking state
-        if (earth.trackingState != TrackingState.TRACKING) {
-          val stateDescription = when(earth.trackingState) {
-            TrackingState.PAUSED -> "PAUSED"
-            TrackingState.STOPPED -> "STOPPED" 
-            else -> "UNKNOWN"
+          // Get the current camera geospatial pose
+          val cameraGeospatialPose = earth.cameraGeospatialPose
+          
+          // Check if navigation is in progress and we have enough anchors
+          if (isNavigating && anchors.isNotEmpty()) {
+            // Draw the navigation path
+            drawNavigationPath(render, earth, cameraGeospatialPose)
+          } else {
+            // In non-navigation mode just draw any anchors we have
+            drawAnchors(render, earth)
           }
           
-          Log.d(TAG, "Earth tracking state: $stateDescription, frames without tracking: $framesWithoutEarthTracking")
-          updateStatusText(earth, null)
+          // Update status with coordinates
+          updateStatusText(earth, cameraGeospatialPose)
           
-          // Increment counter for frames without Earth tracking
+        } else {
           framesWithoutEarthTracking++
           
-          // Wait at least 10 seconds before showing error to the user
-          if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
-            lastEarthTrackingErrorTime = System.currentTimeMillis()
-            updateStatusText(earth, null)
+          if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING && !hasFallenBackToMapMode) {
+            Log.e(TAG, "Earth tracking failed for too many frames (${framesWithoutEarthTracking})")
+            
+            if (lastEarthTrackingErrorTime == 0L) {
+              lastEarthTrackingErrorTime = System.currentTimeMillis()
+              showError("Earth tracking lost. Please ensure you're outdoors with a clear view of the sky.")
+            } else if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
+              // If tracking hasn't recovered after 10 seconds, offer to switch to map-only mode
+              hasFallenBackToMapMode = true
+              fallbackToMapOnlyMode()
+            }
           }
           
-          // Check if we've gone too long without Earth tracking
-          if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING) {
-            Log.e(TAG, "Earth tracking failed persistently after ${framesWithoutEarthTracking} frames")
-            handlePersistentEarthFailure("Earth tracking failed persistently")
-          }
-          
-          return
-        }
-
-        // Reset counter since we have successful tracking
-        if (framesWithoutEarthTracking > 0) {
-          Log.d(TAG, "Earth tracking resumed after ${framesWithoutEarthTracking} frames")
-          framesWithoutEarthTracking = 0
-        }
-        
-        // Earth is tracking - evaluate quality
-        val cameraGeospatialPose = earth.cameraGeospatialPose
-        val horizontalAccuracy = cameraGeospatialPose.horizontalAccuracy
-        val headingAccuracy = cameraGeospatialPose.headingAccuracy
-        
-        // Calculate a confidence metric (0-1) - lower is better for accuracies
-        val locationConfidence = if (horizontalAccuracy > 0) Math.min(1.0, 10.0 / horizontalAccuracy) else 0.0
-        val headingConfidence = if (headingAccuracy > 0) Math.min(1.0, 15.0 / headingAccuracy) else 0.0
-        val overallConfidence = (locationConfidence + headingConfidence) / 2.0
-        
-        val qualityString = when {
-            overallConfidence >= 0.8 -> "Excellent"
-            overallConfidence >= REQUIRED_TRACKING_CONFIDENCE -> "Good"
-            overallConfidence >= 0.4 -> "Fair"
-            else -> "Poor"
-        }
-        
-        Log.d(TAG, "Earth tracking quality: $qualityString ($overallConfidence), " +
-              "location accuracy: ${horizontalAccuracy}m, heading accuracy: ${headingAccuracy}°")
-        
-        // Update UI with quality indicators
-        updateStatusText(earth, earth.cameraGeospatialPose)
-        
-        // Provide tracking quality feedback to user if poor
-        if (overallConfidence < REQUIRED_TRACKING_CONFIDENCE && 
-            System.currentTimeMillis() - lastTrackingQualityWarningTime > 30000) {
-          lastTrackingQualityWarningTime = System.currentTimeMillis()
-          updateStatusText(earth, earth.cameraGeospatialPose)
-        }
-        
-        // Log tracking state details
-        Log.d(TAG, "Earth tracking state: TRACKING, camera pose: " +
-              "lat=${cameraGeospatialPose.latitude}, " +
-              "lng=${cameraGeospatialPose.longitude}, " +
-              "alt=${cameraGeospatialPose.altitude}, " +
-              "accuracy=${horizontalAccuracy}m")
-        
-        // Update map position
-        updateMapPosition(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude, cameraGeospatialPose.heading)
-        
-        // Update AR navigation visuals if navigating
-        if (isNavigating) {
-          updateNavigationAnchors(earth, cameraGeospatialPose)
-        }
-        
-        updateStatusText(earth, earth.cameraGeospatialPose)
-
-        // Draw all anchors
-        for (anchor in anchors) {
-          if (anchor.trackingState == TrackingState.TRACKING) {
-            render.renderObject(anchor, arrowMesh, arrowShader)
-          }
-        }
-
-        // Draw the destination anchor with a different model
-        destinationAnchor?.let {
-          if (it.trackingState == TrackingState.TRACKING) {
-            render.renderCompassAtAnchor(it)
+          // Update the status text to show we're not tracking
+          when (earth.trackingState) {
+            TrackingState.PAUSED -> updateStatusText(earth, null, "PAUSED")
+            TrackingState.STOPPED -> updateStatusText(earth, null, "STOPPED")
+            else -> updateStatusText(earth, null, "Not tracking")
           }
         }
 
         // Compose the virtual scene with the background.
         backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
-      } catch (e: Exception) {
-        Log.e(TAG, "Error during onDrawFrame inner block", e)
-        showError("Error during onDrawFrame: $e")
+      } catch(e: Exception) {
+        Log.e(TAG, "Exception on the OpenGL thread", e)
+        showError("Error rendering AR view: ${e.message}")
+      }
+    } catch(e: Exception) {
+      Log.e(TAG, "Exception on the OpenGL thread (outer)", e)
+      showError("Error in AR rendering: ${e.message}")
+    }
+  }
+  
+  // Draw the navigation path connecting the anchors
+  private fun drawNavigationPath(render: SampleRender, earth: Earth, cameraGeospatialPose: GeospatialPose) {
+    try {
+      // Determine how many anchors to draw based on tracking quality
+      val trackingConfidence = calculateTrackingConfidence(cameraGeospatialPose)
+      
+      // Only draw if we have good enough tracking
+      if (trackingConfidence > REQUIRED_TRACKING_CONFIDENCE) {
+        // Draw each anchor in the path
+        for (i in anchors.indices) {
+          val anchor = anchors[i]
+          
+          // Skip detached anchors
+          if (anchor.trackingState == TrackingState.STOPPED) continue
+          
+          // Calculate the model matrix for this anchor
+          anchor.pose.toMatrix(modelMatrix, 0)
+          
+          // Different rendering for different points in the path
+          when {
+              // First point is the start
+              i == 0 -> {
+                  // If navigation just started and we have a first anchor, make it green
+                  Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 1.5f)
+                  Matrix.translateM(modelMatrix, 0, 0f, 0f, 0.5f)
+                  drawAnchorWithColor(render, modelMatrix, 0f, 1f, 0f, 1f)
+              }
+              // Last point is the destination
+              i == anchors.size - 1 -> {
+                  // Make the destination anchor larger and red
+                  Matrix.scaleM(modelMatrix, 0, 1.0f, 1.0f, 2.0f)
+                  Matrix.translateM(modelMatrix, 0, 0f, 0f, 1.0f)
+                  drawAnchorWithColor(render, modelMatrix, 1f, 0f, 0f, 1f)
+              }
+              // Draw intermediary path points smaller and in blue
+              else -> {
+                  Matrix.scaleM(modelMatrix, 0, 0.3f, 0.3f, 0.8f)
+                  Matrix.translateM(modelMatrix, 0, 0f, 0f, 0.4f)
+                  drawAnchorWithColor(render, modelMatrix, 0f, 0f, 1f, 0.7f)
+              }
+          }
+        }
+      } else {
+        // Low tracking confidence - show a warning if we haven't recently
+        val now = System.currentTimeMillis()
+        if (now - lastTrackingQualityWarningTime > 5000) {
+          Log.w(TAG, "Low tracking confidence: $trackingConfidence")
+          showError("Low tracking quality. Please ensure you're outdoors with a clear view of the sky.")
+          lastTrackingQualityWarningTime = now
+        }
       }
     } catch (e: Exception) {
-      // Catch any GL thread errors that might crash the app
-      Log.e(TAG, "Critical error in GL thread", e)
-      updateStatusText(null, null)
-      showError("Critical rendering error: ${e.message}")
+      Log.e(TAG, "Error drawing navigation path", e)
     }
+  }
+  
+  // Draw a standard anchor with specified color
+  private fun drawAnchorWithColor(
+    render: SampleRender, 
+    modelMatrix: FloatArray,
+    red: Float,
+    green: Float,
+    blue: Float,
+    alpha: Float
+  ) {
+    try {
+      // Calculate the model-view and model-view-projection matrices
+      Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+      Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+      
+      // Set custom color for the shader
+      virtualObjectShader.setVec4("u_Color", red, green, blue, alpha)
+      
+      // Draw the mesh with the shader
+      virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+      render.draw(virtualObjectMesh, virtualObjectShader)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error drawing anchor with color", e)
+    }
+  }
+  
+  // Draw all anchors
+  private fun drawAnchors(render: SampleRender, earth: Earth) {
+    try {
+      for (anchor in anchors) {
+        if (anchor.trackingState != TrackingState.TRACKING) continue
+        
+        // Get the anchor's pose
+        anchor.pose.toMatrix(modelMatrix, 0)
+        
+        // Standard scale
+        Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 0.5f)
+        
+        // Calculate the model-view and model-view-projection matrices
+        Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+        Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+        
+        // Draw the mesh with the shader
+        virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+        render.draw(virtualObjectMesh, virtualObjectShader)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error drawing anchors", e)
+    }
+  }
+  
+  // Calculate a confidence score for the AR tracking quality
+  private fun calculateTrackingConfidence(pose: GeospatialPose): Float {
+    // Higher is better, 1.0 is perfect
+    val horizontalConfidence = when {
+      pose.horizontalAccuracy <= 1.0 -> 1.0f
+      pose.horizontalAccuracy <= 3.0 -> 0.7f
+      pose.horizontalAccuracy <= 5.0 -> 0.5f
+      pose.horizontalAccuracy <= 10.0 -> 0.3f
+      else -> 0.1f
+    }
+    
+    val bearingConfidence = when {
+      pose.headingAccuracy <= 5.0 -> 1.0f
+      pose.headingAccuracy <= 10.0 -> 0.7f
+      pose.headingAccuracy <= 15.0 -> 0.5f
+      pose.headingAccuracy <= 20.0 -> 0.3f
+      else -> 0.1f
+    }
+    
+    // Combine confidences (weigh horizontal accuracy more)
+    return (horizontalConfidence * 0.7f) + (bearingConfidence * 0.3f)
   }
   
   private fun updateNavigationAnchors(earth: Earth, cameraGeospatialPose: GeospatialPose) {
@@ -685,5 +754,77 @@ class HelloGeoRenderer(val context: Context) :
         }
       }
     }
+  }
+
+  // Update AR path with new route points
+  fun updatePathAnchors(newRoutePoints: List<LatLng>) {
+    Log.d(TAG, "Updating path anchors with ${newRoutePoints.size} points")
+    
+    // Store the route points
+    routePoints = newRoutePoints
+    
+    // Mark as navigating
+    isNavigating = true
+    
+    // Clear existing anchors on update
+    clearAnchors()
+    
+    // We'll create the anchors when Earth is tracking
+  }
+  
+  // Creates anchors for the current route when Earth is tracking
+  private fun createRouteAnchorsIfNeeded(earth: Earth) {
+    if (!isNavigating || routePoints.isEmpty() || earth.trackingState != TrackingState.TRACKING) {
+      return
+    }
+    
+    try {
+      if (anchors.isEmpty()) {
+        Log.d(TAG, "Creating anchors for route with ${routePoints.size} points")
+        
+        // For resource usage reasons, we'll only create anchors for a subset of points
+        // for long routes
+        val maxAnchors = 30
+        val step = if (routePoints.size > maxAnchors) routePoints.size / maxAnchors else 1
+        
+        // Create anchors for path points at the specified interval
+        for (i in routePoints.indices step step) {
+          val point = routePoints[i]
+          
+          // Create the anchor at ground level (0 altitude)
+          val anchor = earth.createAnchor(
+            point.latitude,
+            point.longitude,
+            0.0, // altitude in meters
+            0f, 0f, 0f, 1f // rotation quaternion
+          )
+          
+          anchors.add(anchor)
+        }
+        
+        // Always add the final point
+        if (routePoints.size > 1 && (routePoints.size - 1) % step != 0) {
+          val lastPoint = routePoints.last()
+          val anchor = earth.createAnchor(
+            lastPoint.latitude,
+            lastPoint.longitude,
+            0.0,
+            0f, 0f, 0f, 1f
+          )
+          anchors.add(anchor)
+          
+          // Store the destination anchor separately
+          destinationAnchor = anchor
+        }
+        
+        Log.d(TAG, "Created ${anchors.size} anchors for navigation")
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error creating route anchors", e)
+    }
+  }
+
+  private fun fallbackToMapOnlyMode() {
+    // Implementation of fallbackToMapOnlyMode method
   }
 }

@@ -20,12 +20,15 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.Polyline
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
@@ -34,6 +37,7 @@ import com.google.ar.core.codelabs.hellogeospatial.ARActivity
 import com.google.ar.core.codelabs.hellogeospatial.FallbackActivity
 import com.google.ar.core.codelabs.hellogeospatial.HelloGeoRenderer
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
+import com.google.ar.core.codelabs.hellogeospatial.helpers.DirectionsHelper
 import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
 import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
 import com.google.ar.core.examples.java.common.samplerender.SampleRender
@@ -43,7 +47,7 @@ import java.util.Locale
 /**
  * Split-screen activity showing both AR and Map views simultaneously
  */
-class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
+class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsHelper.DirectionsListener {
     companion object {
         private const val TAG = "SplitScreenActivity"
         private const val LOCATION_PERMISSION_CODE = 100
@@ -53,6 +57,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     // Map components
     private lateinit var mapFragment: SupportMapFragment
     private var googleMap: GoogleMap? = null
+    private var mapPolyline: Polyline? = null
+    
+    // Location components
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var currentLocation: LatLng? = null
     
     // AR components
     private lateinit var arCoreSessionHelper: ARCoreSessionLifecycleHelper
@@ -64,6 +73,8 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var destinationLatLng: LatLng? = null
     private var isNavigating = false
     private var trackingQualityIndicator: TextView? = null
+    private lateinit var directionsHelper: DirectionsHelper
+    private var routePoints: List<LatLng>? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +99,12 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Set the content view
             setContentView(R.layout.activity_split_screen)
+            
+            // Initialize the location provider
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+            
+            // Initialize the directions helper
+            directionsHelper = DirectionsHelper(this)
             
             // Check for required permissions
             checkAndRequestPermissions()
@@ -118,10 +135,32 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     }
                 }
             }
+            
+            // Get the current location
+            getCurrentLocation()
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing: ${e.message}", Toast.LENGTH_LONG).show()
             fallbackToMapOnlyMode()
+        }
+    }
+    
+    private fun getCurrentLocation() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+            == PackageManager.PERMISSION_GRANTED) {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                location?.let {
+                    currentLocation = LatLng(it.latitude, it.longitude)
+                    Log.d(TAG, "Current location: ${it.latitude}, ${it.longitude}")
+                    
+                    // If we already have a destination, we can calculate the route
+                    destinationLatLng?.let { destination ->
+                        if (isNavigating) {
+                            fetchAndDisplayDirections(currentLocation!!, destination)
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -273,9 +312,23 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             trackingQualityIndicator?.setBackgroundResource(colorRes)
             
+            // Update current location from AR pose
+            updateLocationFromARPose(pose.latitude, pose.longitude)
+            
         } catch (e: Exception) {
             trackingQualityIndicator?.text = "Tracking: ERROR"
             trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
+        }
+    }
+    
+    private fun updateLocationFromARPose(latitude: Double, longitude: Double) {
+        // Update current location from AR
+        currentLocation = LatLng(latitude, longitude)
+        
+        // If navigating, update AR anchors with the new route points
+        if (isNavigating && routePoints != null && routePoints!!.isNotEmpty()) {
+            // Update AR view with the route
+            renderer.updatePathAnchors(routePoints!!)
         }
     }
     
@@ -356,34 +409,69 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     }
     
     private fun startNavigation(destination: LatLng) {
+        isNavigating = true
+        
+        // Get current location (either from AR or location services)
+        val origin = currentLocation ?: return
+        
+        // Fetch directions between current location and destination
+        fetchAndDisplayDirections(origin, destination)
+    }
+    
+    private fun fetchAndDisplayDirections(origin: LatLng, destination: LatLng) {
         try {
-            isNavigating = true
+            // Show loading indicator
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
             
-            // Create AR anchors if Earth is tracking
-            val session = arCoreSessionHelper.session
-            val earth = session?.earth
-            
-            if (earth?.trackingState == TrackingState.TRACKING) {
-                val cameraGeospatialPose = earth.cameraGeospatialPose
-                val currentLatLng = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
-                
-                // Create a simple path from current to destination
-                val simplePath = listOf(currentLatLng, destination)
-                
-                // Create anchors for the path
-                renderer.createPathAnchors(simplePath)
-                
-                Toast.makeText(this, "AR navigation started", Toast.LENGTH_SHORT).show()
-            } else {
-                // If AR is not ready, fall back to Google Maps navigation
-                openGoogleMapsNavigation(destination)
-            }
+            // Fetch directions using our helper
+            directionsHelper.getDirections(origin, destination, this)
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting navigation", e)
-            Toast.makeText(this, "Error starting navigation: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Error fetching directions", e)
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+            Toast.makeText(this, "Error fetching directions: ${e.message}", Toast.LENGTH_SHORT).show()
             
-            // Fall back to Google Maps navigation
+            // Fall back to Google Maps navigation as a last resort
             openGoogleMapsNavigation(destination)
+        }
+    }
+    
+    override fun onDirectionsReady(pathPoints: List<LatLng>) {
+        // Hide loading indicator
+        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+        
+        // Store the route points
+        routePoints = pathPoints
+        
+        // Draw the route on the map
+        directionsHelper.drawRouteOnMap(googleMap!!, pathPoints)
+        
+        // Create AR anchors for the path
+        renderer.updatePathAnchors(pathPoints)
+        
+        Toast.makeText(this, "Navigation started", Toast.LENGTH_SHORT).show()
+    }
+    
+    override fun onDirectionsError(errorMessage: String) {
+        // Hide loading indicator
+        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+        
+        Log.e(TAG, "Directions error: $errorMessage")
+        Toast.makeText(this, "Error getting directions: $errorMessage", Toast.LENGTH_SHORT).show()
+        
+        // Fall back to a direct line between points
+        destinationLatLng?.let { destination ->
+            currentLocation?.let { origin ->
+                val simplePath = listOf(origin, destination)
+                
+                // Still show a simple path on the map
+                googleMap?.clear()
+                directionsHelper.drawRouteOnMap(googleMap!!, simplePath)
+                
+                // Update AR with simple path
+                renderer.updatePathAnchors(simplePath)
+                
+                Toast.makeText(this, "Using simplified navigation route", Toast.LENGTH_SHORT).show()
+            }
         }
     }
     
@@ -460,6 +548,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     // Permission granted, enable my location on the map
                     try {
                         googleMap?.isMyLocationEnabled = true
+                        
+                        // Also get current location
+                        getCurrentLocation()
                     } catch (e: Exception) {
                         Log.e(TAG, "Could not enable my location", e)
                     }
@@ -510,7 +601,12 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             
             // Set initial position
-            map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(37.7749, -122.4194), 10f))
+            currentLocation?.let {
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(it, 15f))
+            } ?: run {
+                // Default to San Francisco if no location
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(37.7749, -122.4194), 10f))
+            }
             
             // If we already have a destination, show it
             destinationLatLng?.let { destination ->
