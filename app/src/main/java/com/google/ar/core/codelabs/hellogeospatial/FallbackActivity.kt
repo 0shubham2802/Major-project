@@ -22,19 +22,23 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.codelabs.hellogeospatial.helpers.MapErrorHelper
 import java.util.Locale
 
 /**
  * A map-based activity with optional AR capabilities
  */
-class FallbackActivity : AppCompatActivity() {
+class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var mapFragment: SupportMapFragment
     private var googleMap: GoogleMap? = null
     private var destinationLatLng: LatLng? = null
@@ -50,15 +54,40 @@ class FallbackActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Set a default uncaught exception handler
+        // Set a default uncaught exception handler to catch and log any unexpected errors
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             Log.e(TAG, "Uncaught exception", throwable)
-            Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
+            runOnUiThread {
+                Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
+                showMapErrorUI("Application error: ${throwable.message}")
+            }
         }
         
         try {
+            // Perform Google Play Services check first
+            val googleApiAvailability = GoogleApiAvailability.getInstance()
+            val resultCode = googleApiAvailability.isGooglePlayServicesAvailable(this)
+            
+            if (resultCode != ConnectionResult.SUCCESS) {
+                Log.e(TAG, "Google Play Services unavailable: ${resultCode}")
+                if (googleApiAvailability.isUserResolvableError(resultCode)) {
+                    Log.i(TAG, "Showing Google Play Services resolution dialog")
+                    googleApiAvailability.getErrorDialog(this, resultCode, 1001)?.show()
+                    return
+                } else {
+                    showMapErrorUI("Google Play Services unavailable and cannot be resolved")
+                    return
+                }
+            }
+            
             // Set content view from layout XML
             setContentView(R.layout.activity_fallback)
+            
+            // Diagnose potential map issues
+            val mapIssues = MapErrorHelper.diagnoseMapIssues(this)
+            if (mapIssues != "No issues detected") {
+                Log.w(TAG, "Potential map issues: $mapIssues")
+            }
             
             // Setup search bar functionality
             val searchBar = findViewById<EditText>(R.id.searchBar)
@@ -81,7 +110,7 @@ class FallbackActivity : AppCompatActivity() {
                 }
             }
             
-            // Setup AR mode button (only if AR is potentially available)
+            // Setup AR mode button (only if AR is potentially supported)
             if (isARCorePotentiallySupported()) {
                 arModeButton = Button(this).apply {
                     text = "Try AR Mode"
@@ -106,42 +135,37 @@ class FallbackActivity : AppCompatActivity() {
                 }
             }
             
-            // Add the map fragment
+            // Add the map fragment with better error handling
             try {
-                mapFragment = SupportMapFragment()
-                supportFragmentManager.beginTransaction()
-                    .replace(R.id.map_container, mapFragment)
-                    .commit()
+                mapFragment = supportFragmentManager.findFragmentById(R.id.map_container) as? SupportMapFragment
+                    ?: SupportMapFragment.newInstance()
+                
+                // Only add the fragment if not already added
+                if (supportFragmentManager.findFragmentById(R.id.map_container) == null) {
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.map_container, mapFragment)
+                        .commitAllowingStateLoss()
+                }
                 
                 // Add a safety timeout for map loading
                 val mapLoadingTimeout = Handler(Looper.getMainLooper())
                 val timeoutRunnable = Runnable {
                     Log.e(TAG, "Map loading timed out")
-                    Toast.makeText(this, "Map loading timed out. Please check your internet connection.", Toast.LENGTH_LONG).show()
-                    showMapErrorUI("Map loading timed out")
-                }
-                
-                // Set a 10-second timeout for map loading
-                mapLoadingTimeout.postDelayed(timeoutRunnable, 10000)
-                
-                mapFragment.getMapAsync { map ->
-                    try {
-                        // Cancel the timeout since map loaded successfully
-                        mapLoadingTimeout.removeCallbacks(timeoutRunnable)
-                        
-                        Log.d(TAG, "Google Maps loaded successfully")
-                        googleMap = map
-                        setupMap(navigateButton)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to initialize map", e)
-                        Toast.makeText(this, "Failed to initialize map: ${e.message}", Toast.LENGTH_LONG).show()
-                        showMapErrorUI("Failed to initialize map: ${e.message}")
+                    runOnUiThread {
+                        Toast.makeText(this, "Map loading timed out. Please check your internet connection.", Toast.LENGTH_LONG).show()
+                        showMapErrorUI("Map loading timed out - check internet connection")
                     }
                 }
+                
+                // Set a 20-second timeout for map loading
+                mapLoadingTimeout.postDelayed(timeoutRunnable, 20000)
+                
+                // Use OnMapReadyCallback interface implementation for better error handling
+                mapFragment.getMapAsync(this)
             } catch (e: Exception) {
-                Log.e(TAG, "Error setting up map", e)
+                Log.e(TAG, "Error setting up map fragment", e)
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
-                showMapErrorUI("Error setting up map: ${e.message}")
+                showMapErrorUI("Error setting up map fragment: ${e.message}")
             }
             
             // Check for location permissions
@@ -151,18 +175,24 @@ class FallbackActivity : AppCompatActivity() {
             Toast.makeText(this, "Error initializing map view: ${e.message}", Toast.LENGTH_LONG).show()
             
             // Create a simple fallback for the fallback
-            try {
-                val simpleText = TextView(this).apply {
-                    text = "Error loading map interface. Please restart the app."
-                    gravity = Gravity.CENTER
-                    textSize = 18f
-                    setTextColor(Color.BLACK)
-                }
-                setContentView(simpleText)
-            } catch (t: Throwable) {
-                // At this point, there's not much else we can do
-                Log.e(TAG, "Fatal error creating UI", t)
-            }
+            showMapErrorUI("Error initializing map view: ${e.message}")
+        }
+    }
+    
+    // This is the OnMapReadyCallback implementation
+    override fun onMapReady(map: GoogleMap) {
+        try {
+            Log.d(TAG, "Google Map is ready")
+            googleMap = map
+            
+            // Hide the loading indicator
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+            
+            setupMap(findViewById(R.id.navigateButton))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in onMapReady", e)
+            Toast.makeText(this, "Error initializing map: ${e.message}", Toast.LENGTH_LONG).show()
+            showMapErrorUI("Error initializing map: ${e.message}")
         }
     }
     
@@ -318,12 +348,19 @@ class FallbackActivity : AppCompatActivity() {
     
     private fun searchLocation(query: String) {
         try {
+            // Show loading indicator when searching
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
+            findViewById<TextView>(R.id.map_loading_text)?.text = "Searching for location..."
+            
             val geocoder = Geocoder(this, Locale.getDefault())
             
             // Use the geocoder to find the location
             try {
                 @Suppress("DEPRECATION")
                 val addresses = geocoder.getFromLocationName(query, 1)
+                
+                // Hide loading indicator whether search succeeds or fails
+                findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
                 
                 if (addresses != null && addresses.isNotEmpty()) {
                     val address = addresses[0]
@@ -349,10 +386,16 @@ class FallbackActivity : AppCompatActivity() {
                     Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
+                // Hide loading indicator if an error occurs
+                findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                
                 Log.e(TAG, "Error with geocoder", e)
                 Toast.makeText(this, "Error looking up location: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
+            // Hide loading indicator if an error occurs
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+            
             Log.e(TAG, "Error in searchLocation", e)
             Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
         }
@@ -420,13 +463,21 @@ class FallbackActivity : AppCompatActivity() {
     
     private fun showMapErrorUI(errorMessage: String) {
         try {
+            // Hide loading indicator if it's visible
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+            
             // Find the map container
             val mapContainer = findViewById<FrameLayout>(R.id.map_container)
             
-            // Clear it and add an error message
-            mapContainer.removeAllViews()
+            // We don't want to remove the map fragment if it's already added
+            // Instead create a new error view and add it on top
+            val errorLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setBackgroundColor(Color.WHITE)
+            }
             
-            val errorView = TextView(this).apply {
+            val errorText = TextView(this).apply {
                 text = "Error loading map interface. Please restart the app.\n\n$errorMessage"
                 setTextColor(Color.BLACK)
                 gravity = Gravity.CENTER
@@ -434,12 +485,70 @@ class FallbackActivity : AppCompatActivity() {
                 setPadding(32, 32, 32, 32)
             }
             
-            mapContainer.addView(errorView)
+            val retryButton = Button(this).apply {
+                text = "Retry"
+                setBackgroundColor(ContextCompat.getColor(context, android.R.color.holo_blue_dark))
+                setTextColor(Color.WHITE)
+                
+                setOnClickListener {
+                    // Remove the error view
+                    mapContainer.removeView(errorLayout)
+                    
+                    // Show loading indicator
+                    findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
+                    
+                    // Retry map initialization
+                    try {
+                        mapFragment = SupportMapFragment.newInstance()
+                        supportFragmentManager.beginTransaction()
+                            .replace(R.id.map_container, mapFragment)
+                            .commitAllowingStateLoss()
+                        
+                        mapFragment.getMapAsync(this@FallbackActivity)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error retrying map initialization", e)
+                        Toast.makeText(this@FallbackActivity, "Error retrying: ${e.message}", Toast.LENGTH_SHORT).show()
+                        
+                        // Show error view again
+                        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
+                        mapContainer.addView(errorLayout)
+                    }
+                }
+            }
+            
+            errorLayout.addView(errorText)
+            errorLayout.addView(retryButton)
+            
+            // Add the error view to the map container
+            mapContainer.addView(errorLayout)
             
             // Log the error for debugging
             Log.e(TAG, "Map error: $errorMessage")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show map error UI", e)
+            
+            // Last resort - create a completely new simple UI
+            try {
+                val simpleLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setBackgroundColor(Color.WHITE)
+                }
+                
+                val simpleText = TextView(this).apply {
+                    text = "Error loading map interface. Please restart the app.\n\n$errorMessage"
+                    gravity = Gravity.CENTER
+                    textSize = 18f
+                    setTextColor(Color.BLACK)
+                    setPadding(32, 32, 32, 32)
+                }
+                
+                simpleLayout.addView(simpleText)
+                setContentView(simpleLayout)
+            } catch (t: Throwable) {
+                // At this point, there's not much else we can do
+                Log.e(TAG, "Fatal error creating UI", t)
+            }
         }
     }
 } 

@@ -66,6 +66,35 @@
     <FrameLayout
         android:id="@+id/map_container"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent">
+
+        <!-- Add a loading indicator for the map -->
+        <LinearLayout
+            android:id="@+id/map_loading_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:background="@android:color/white">
+
+            <ProgressBar
+                android:id="@+id/map_loading_progress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/map_loading_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Loading map..."
+                android:textSize="16sp"
+                android:textColor="@android:color/black" />
+                
+        </LinearLayout>
+        
+        <!-- Fragment will be added here programmatically -->
+
+    </FrameLayout>
 
 </LinearLayout> 
