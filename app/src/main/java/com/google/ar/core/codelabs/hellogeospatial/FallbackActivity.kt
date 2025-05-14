@@ -98,9 +98,10 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             
             // Diagnose potential map issues
-            val mapIssues = MapErrorHelper.diagnoseMapIssues(this)
-            if (mapIssues != "No issues detected") {
-                Log.w(TAG, "Potential map issues: $mapIssues")
+            val mapErrorHelper = MapErrorHelper(this)
+            val mapIssuesFound = mapErrorHelper.diagnoseMapsIssue()
+            if (mapIssuesFound) {
+                Log.w(TAG, "Map issues detected and handled by MapErrorHelper")
             }
             
             // Setup search bar functionality

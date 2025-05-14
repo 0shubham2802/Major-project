@@ -21,6 +21,7 @@ import android.location.Address
 import android.location.Geocoder
 import android.opengl.GLSurfaceView
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -39,6 +40,7 @@ import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
@@ -61,11 +63,21 @@ import kotlin.math.PI
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView : DefaultLifecycleObserver {
+  companion object {
+    private const val TAG = "HelloGeoView"
+  }
+  
+  // Main context and activity references
   private val context: Context
   private val appCompatActivity: AppCompatActivity?
   private val helloGeoActivity: HelloGeoActivity?
   private val arActivity: ARActivity?
   private val splitScreenActivity: SplitScreenActivity?
+  
+  // Map-related variables
+  private var googleMap: GoogleMap? = null
+  private var isMapInitialized = false
+  private val onMapReadyListeners = mutableListOf<(GoogleMap) -> Unit>()
   
   // Root view containing all UI elements
   val root: View
@@ -98,7 +110,7 @@ class HelloGeoView : DefaultLifecycleObserver {
   val statusText: TextView?
   
   // Add MapErrorHelper at the class level
-  private val mapErrorHelper by lazy { MapErrorHelper(context) }
+  private val mapErrorHelper: MapErrorHelper
   private var mapLoadAttempts = 0
   private val MAX_MAP_LOAD_ATTEMPTS = 3
 
@@ -109,6 +121,9 @@ class HelloGeoView : DefaultLifecycleObserver {
     this.helloGeoActivity = activity
     this.arActivity = null
     this.splitScreenActivity = null
+    
+    // Initialize error helper
+    this.mapErrorHelper = MapErrorHelper(activity)
     
     // Initialize UI from activity_main layout
     root = View.inflate(activity, R.layout.activity_main, null)
@@ -163,6 +178,9 @@ class HelloGeoView : DefaultLifecycleObserver {
     this.arActivity = activity
     this.splitScreenActivity = null
     
+    // Initialize error helper
+    this.mapErrorHelper = MapErrorHelper(activity)
+    
     // For AR activity, we don't inflate a layout - we just need a reference to hold the surfaceView
     // The surfaceView itself is created and managed by the ARActivity
     root = LinearLayout(activity) // Dummy root view - not actually used
@@ -191,6 +209,9 @@ class HelloGeoView : DefaultLifecycleObserver {
     this.helloGeoActivity = null
     this.arActivity = null
     this.splitScreenActivity = activity
+    
+    // Initialize error helper
+    this.mapErrorHelper = MapErrorHelper(activity)
     
     // For split screen mode, we also just need a reference to the surfaceView
     // The actual surfaceView is managed by the SplitScreenActivity
@@ -868,68 +889,18 @@ class HelloGeoView : DefaultLifecycleObserver {
     }
   }
 
-  // Add this to mapView?.onCreate() section
-  mapView?.apply {
-    onCreate(savedInstanceState)
-    getMapAsync { map ->
-      mapLoadAttempts = 0
-      setupMap(map)
-    }
-    
-    // Set an error listener for map loading failures
-    this.setOnMapLoadErrorListener {
-      context.runOnUiThread {
-        mapLoadAttempts++
-        if (mapLoadAttempts < MAX_MAP_LOAD_ATTEMPTS) {
-          // Show error and retry
-          Toast.makeText(context, "Map loading timed out. Retrying...", Toast.LENGTH_SHORT).show()
-          // Retry after a delay
-          Handler(Looper.getMainLooper()).postDelayed({
-            this.getMapAsync { map -> setupMap(map) }
-          }, 2000)
-        } else {
-          // After MAX_MAP_LOAD_ATTEMPTS, show diagnostic information
-          Toast.makeText(context, 
-              "Map loading failed. Checking for solutions...", 
-              Toast.LENGTH_LONG).show()
-          
-          // Run map diagnostic
-          mapErrorHelper.diagnoseMapsIssue()
-        }
-      }
-    }
-  }
-  
-  private fun setupMap(map: GoogleMap) {
-    googleMap = map
-    
+  /**
+   * Set up location tracking for the map view
+   */
+  private fun setupLocationTracking() {
+    // This is a placeholder method that would normally handle location tracking
+    // For now, we're just logging that it was called
     try {
-      // Initialize map settings
-      map.mapType = GoogleMap.MAP_TYPE_NORMAL
-      map.isMyLocationEnabled = true
-      map.uiSettings.isMyLocationButtonEnabled = true
-      map.uiSettings.isCompassEnabled = true
-      map.uiSettings.isZoomControlsEnabled = true
-      
-      // Create MapView wrapper with our enhanced functionality
-      mapView = MapView(helloGeoActivity!!, map)
-      
-      // Show current location for split screen mode
-      setupLocationTracking()
-      
-      // Set map initialized flag
-      isMapInitialized = true
-      
-      // Notify listeners
-      onMapReadyListeners.forEach { it.invoke(map) }
-      
-    } catch (e: SecurityException) {
-      Log.e(TAG, "Location permission not granted", e)
-      Toast.makeText(context, "Location permission required for AR navigation", Toast.LENGTH_LONG).show()
+      Log.d(TAG, "Setting up location tracking")
+      // In a real implementation, this would initialize location services
+      // and possibly show the user's current location on the map
     } catch (e: Exception) {
-      Log.e(TAG, "Error initializing map", e)
-      // Try to diagnose and fix map issues
-      mapErrorHelper.diagnoseMapsIssue()
+      Log.e(TAG, "Error setting up location tracking", e)
     }
   }
 }

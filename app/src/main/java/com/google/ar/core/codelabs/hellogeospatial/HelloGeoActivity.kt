@@ -16,7 +16,6 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -69,9 +68,12 @@ import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
-import com.google.ar.core.codelabs.hellogeospatial.helpers.BuildConfig
+import com.google.ar.core.codelabs.hellogeospatial.BuildConfig
+import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
+import com.google.ar.core.examples.java.common.samplerender.SampleRender
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import android.opengl.GLSurfaceView
 
 class HelloGeoActivity : AppCompatActivity() {
   companion object {
@@ -88,6 +90,10 @@ class HelloGeoActivity : AppCompatActivity() {
   private var destinationLatLng: LatLng? = null
   private var isNavigating = false
   private lateinit var directionsHelper: DirectionsHelper
+  
+  // Add missing variables
+  private lateinit var surfaceView: GLSurfaceView
+  private var installRequested = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -124,7 +130,6 @@ class HelloGeoActivity : AppCompatActivity() {
       setupMapFragment()
       
       // Additional setup
-      snackbarHelper.setParentView(findViewById(android.R.id.content))
       installRequested = false
       
     } catch (e: Exception) {
@@ -438,7 +443,7 @@ class HelloGeoActivity : AppCompatActivity() {
     AlertDialog.Builder(this)
       .setTitle("Stop Navigation")
       .setMessage("Do you want to stop the current navigation?")
-      .setPositiveButton("Yes") { _, _ ->
+      .setPositiveButton("Yes") { dialog, which ->
         stopNavigation()
       }
       .setNegativeButton("No", null)
@@ -568,11 +573,7 @@ class HelloGeoActivity : AppCompatActivity() {
   private fun setupMapFragment() {
     try {
       // Use our enhanced MapViewWrapper instead of regular SupportMapFragment
-      val mapFragment = MapViewWrapper(this)
-      
-      supportFragmentManager.beginTransaction()
-        .replace(R.id.map_fragment, mapFragment)
-        .commit()
+      val mapFragment = supportFragmentManager.findFragmentById(R.id.map) as MapViewWrapper
       
       // Set up error handling for map loading
       mapFragment.setOnMapLoadErrorListener {
@@ -601,7 +602,7 @@ class HelloGeoActivity : AppCompatActivity() {
         }
         
         // Create the view with the initialized map
-        view = HelloGeoView(this, null, googleMap)
+        view = HelloGeoView(this)
         
         // Setup UI components after view is created
         setupNavigationUI()
@@ -634,7 +635,7 @@ class HelloGeoActivity : AppCompatActivity() {
       Toast.makeText(this, "AR feature unavailable: $message", Toast.LENGTH_LONG).show()
       
       // Instead of showing a blank screen, still allow using the map
-      findViewById<View>(R.id.map_fragment)?.visibility = View.VISIBLE
+      findViewById<View>(R.id.map)?.visibility = View.VISIBLE
       
       // Hide AR view
       findViewById<View>(R.id.surfaceview)?.visibility = View.GONE
