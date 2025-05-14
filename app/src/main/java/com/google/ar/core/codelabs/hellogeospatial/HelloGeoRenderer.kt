@@ -370,7 +370,9 @@ class HelloGeoRenderer(val context: Context) :
                   // Pulsate the destination for better visibility
                   val pulsateFrequency = 0.003f
                   val currentTimeMillis = System.currentTimeMillis().toFloat()
-                  val pulsateValue = 0.7f + 0.3f * Math.sin(currentTimeMillis.toDouble() * pulsateFrequency.toDouble()).toFloat()
+                  val sinResult = Math.sin(pulsateFrequency.toDouble() * currentTimeMillis.toDouble())
+                  val sinValue = sinResult.toFloat()
+                  val pulsateValue = 0.7f + 0.3f * sinValue
                   drawAnchorWithColor(render, modelMatrix, 1f, 0f, 0f, pulsateValue)
               }
               // Turn points (yellow)
@@ -415,7 +417,7 @@ class HelloGeoRenderer(val context: Context) :
       // Get current frame's camera
       val frame = session?.update()
       val camera = frame?.camera
-      val cameraPose = camera?.displayOrientedPose
+      val cameraPose = camera?.pose
       
       if (cameraPose != null) {
         // Extract translations
@@ -452,7 +454,7 @@ class HelloGeoRenderer(val context: Context) :
         // Get camera and anchor poses
         val frame = session?.update()
         val camera = frame?.camera
-        val cameraPose = camera?.displayOrientedPose
+        val cameraPose = camera?.pose
         
         if (cameraPose == null) return
         
@@ -554,7 +556,8 @@ class HelloGeoRenderer(val context: Context) :
             val currentTimeMillis = System.currentTimeMillis().toFloat()
             val freq = 0.005f
             val thetaRadians = currentTimeMillis * freq
-            val sinValue = Math.sin(thetaRadians.toDouble()).toFloat()
+            val sinResult = Math.sin(thetaRadians.toDouble())
+            val sinValue = sinResult.toFloat()
             val alpha = 0.8f + 0.2f * sinValue
             
             val colorArray = when {
@@ -644,7 +647,7 @@ class HelloGeoRenderer(val context: Context) :
     
     // Get current camera pose in world space
     val camera = session?.update()
-    val cameraPose = camera?.displayOrientedPose
+    val cameraPose = camera?.pose
     
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
@@ -710,7 +713,7 @@ class HelloGeoRenderer(val context: Context) :
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
       val camera = session?.update()
-      val cameraPose = camera?.displayOrientedPose
+      val cameraPose = camera?.pose
       
       if (cameraPose != null) {
         // Extract translations
@@ -883,10 +886,11 @@ class HelloGeoRenderer(val context: Context) :
     
     // Convert bearing to quaternion (rotate arrow to point in right direction)
     val radians = Math.toRadians(bearing)
+    val halfRadians = radians / 2.0
     val qx = 0f
-    val qy = (Math.sin(radians / 2.0)).toFloat()
+    val qy = Math.sin(halfRadians).toFloat()
     val qz = 0f
-    val qw = (Math.cos(radians / 2.0)).toFloat()
+    val qw = Math.cos(halfRadians).toFloat()
     
     val anchor = earth.createAnchor(
       midLat, 
@@ -907,9 +911,16 @@ class HelloGeoRenderer(val context: Context) :
     
     val dLng = endLngRad - startLngRad
     
-    val y = Math.sin(dLng) * Math.cos(endLatRad)
-    val x = Math.cos(startLatRad) * Math.sin(endLatRad) -
-            Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(dLng)
+    val sinDLng = Math.sin(dLng)
+    val cosEndLatRad = Math.cos(endLatRad)
+    val cosStartLatRad = Math.cos(startLatRad)
+    val sinEndLatRad = Math.sin(endLatRad)
+    val sinStartLatRad = Math.sin(startLatRad)
+    val cosDLng = Math.cos(dLng)
+    
+    val y = sinDLng * cosEndLatRad
+    val x = cosStartLatRad * sinEndLatRad -
+            sinStartLatRad * cosEndLatRad * cosDLng
     
     var bearing = Math.atan2(y, x)
     if (bearing < 0) {
@@ -1018,9 +1029,16 @@ class HelloGeoRenderer(val context: Context) :
     val dLat = Math.toRadians(lat2 - lat1)
     val dLng = Math.toRadians(lng2 - lng1)
     
-    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-            Math.sin(dLng / 2) * Math.sin(dLng / 2)
+    val sinHalfDLat = Math.sin(dLat / 2)
+    val sinHalfDLng = Math.sin(dLng / 2)
+    
+    val lat1Rad = Math.toRadians(lat1)
+    val lat2Rad = Math.toRadians(lat2)
+    val cosLat1 = Math.cos(lat1Rad)
+    val cosLat2 = Math.cos(lat2Rad)
+    
+    val a = sinHalfDLat * sinHalfDLat + 
+            cosLat1 * cosLat2 * sinHalfDLng * sinHalfDLng
     
     val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
     
