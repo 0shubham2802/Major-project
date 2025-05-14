@@ -102,41 +102,42 @@
                         android:textSize="14sp" />
 
                 </LinearLayout>
+                
+                <!-- Mode control buttons positioned in the bottom-left corner of map section -->
+                <LinearLayout
+                    android:id="@+id/mode_controls"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="start|bottom"
+                    android:orientation="horizontal"
+                    android:background="#88FFFFFF"
+                    android:padding="8dp"
+                    android:layout_marginBottom="16dp"
+                    android:layout_marginStart="16dp">
+
+                    <!-- AR-only mode button -->
+                    <Button
+                        android:id="@+id/ar_mode_button"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginEnd="16dp"
+                        android:background="@android:drawable/ic_menu_camera"
+                        android:backgroundTint="#2196F3" />
+
+                    <!-- Map-only mode button -->
+                    <Button
+                        android:id="@+id/map_mode_button"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:background="@android:drawable/ic_dialog_map"
+                        android:backgroundTint="#2196F3" />
+
+                </LinearLayout>
 
             </FrameLayout>
 
         </LinearLayout>
 
-        <!-- Mode control buttons positioned in the top-right corner -->
-        <LinearLayout
-            android:id="@+id/mode_controls"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="end|top"
-            android:orientation="horizontal"
-            android:background="#88FFFFFF"
-            android:padding="8dp"
-            android:layout_marginTop="16dp"
-            android:layout_marginEnd="16dp">
-
-            <!-- AR-only mode button -->
-            <Button
-                android:id="@+id/ar_mode_button"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginEnd="16dp"
-                android:background="@android:drawable/ic_menu_camera"
-                android:backgroundTint="#2196F3" />
-
-            <!-- Map-only mode button -->
-            <Button
-                android:id="@+id/map_mode_button"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="@android:drawable/ic_dialog_map"
-                android:backgroundTint="#2196F3" />
-
-        </LinearLayout>
     </FrameLayout>
 
     <!-- Bottom control bar with increased height and better spacing -->
