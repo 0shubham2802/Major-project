@@ -30,8 +30,10 @@ import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
+import com.google.ar.core.codelabs.hellogeospatial.ARActivity
+import com.google.ar.core.codelabs.hellogeospatial.FallbackActivity
+import com.google.ar.core.codelabs.hellogeospatial.HelloGeoRenderer
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
-import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoRenderer
 import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
 import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
 import com.google.ar.core.examples.java.common.samplerender.SampleRender
