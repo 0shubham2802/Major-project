@@ -429,26 +429,34 @@ class HelloGeoRenderer(val context: Context) :
       val nextAnchor = findNextWaypoint(cameraGeospatialPose)
       
       if (nextAnchor != null) {
-        // Get camera pose
-        val cameraPose = session?.camera?.pose ?: return
+        // Get camera and anchor poses
+        val cameraPose = session?.camera?.displayOrientedPose
+        
+        if (cameraPose == null) return
         
         // Get anchor pose
         val anchorPose = nextAnchor.pose
         
         // First we need to determine if the anchor is in front of the user
-        val cameraForward = cameraPose.zAxis
+        // Get camera forward vector (negative z-axis in OpenGL convention)
+        val cameraForward = floatArrayOf(
+          -cameraPose.zAxis[0],
+          -cameraPose.zAxis[1],
+          -cameraPose.zAxis[2]
+        )
+        
+        // Vector from camera to anchor
         val directionToAnchor = floatArrayOf(
-          anchorPose.tx() - cameraPose.tx(),
-          anchorPose.ty() - cameraPose.ty(),
-          anchorPose.tz() - cameraPose.tz()
+          anchorPose.translation[0] - cameraPose.translation[0],
+          anchorPose.translation[1] - cameraPose.translation[1],
+          anchorPose.translation[2] - cameraPose.translation[2]
         )
         
         // Normalize direction vector
-        val distance = Math.sqrt(
-          (directionToAnchor[0] * directionToAnchor[0] + 
-           directionToAnchor[1] * directionToAnchor[1] + 
-           directionToAnchor[2] * directionToAnchor[2]).toDouble()
-        ).toFloat()
+        val distanceSquared = (directionToAnchor[0] * directionToAnchor[0] + 
+                             directionToAnchor[1] * directionToAnchor[1] + 
+                             directionToAnchor[2] * directionToAnchor[2])
+        val distance = Math.sqrt(distanceSquared.toDouble()).toFloat()
         
         if (distance > 0) {
           directionToAnchor[0] /= distance
@@ -483,12 +491,13 @@ class HelloGeoRenderer(val context: Context) :
             val directionXZ = floatArrayOf(directionToAnchor[0], 0f, directionToAnchor[2])
             
             // Normalize XZ vectors
-            val forwardXZLength = Math.sqrt(
-              (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2]).toDouble()
-            ).toFloat()
-            val directionXZLength = Math.sqrt(
-              (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2]).toDouble()
-            ).toFloat()
+            val forwardXZLengthSquared = (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2])
+            val directionXZLengthSquared = (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2])
+            
+            val forwardXZLength = Math.sqrt(forwardXZLengthSquared.toDouble()).toFloat()
+            val directionXZLength = Math.sqrt(directionXZLengthSquared.toDouble()).toFloat()
+            
+            var currentRotationAngle = 0f
             
             if (forwardXZLength > 0 && directionXZLength > 0) {
               forwardXZ[0] /= forwardXZLength
@@ -504,10 +513,10 @@ class HelloGeoRenderer(val context: Context) :
               
               // Determine if the anchor is to the left or right of the camera
               val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
-              val rotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
+              currentRotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
               
               // Rotate the arrow to point toward the anchor
-              Matrix.rotateM(arrowMatrix, 0, rotationAngle, 0f, 1f, 0f)
+              Matrix.rotateM(arrowMatrix, 0, currentRotationAngle, 0f, 1f, 0f)
             }
             
             // Draw the arrow
@@ -528,7 +537,7 @@ class HelloGeoRenderer(val context: Context) :
             render.draw(virtualObjectMesh, virtualObjectShader)
             
             // Update direction instruction based on angle
-            updateDirectionInstruction(rotationAngle, distance)
+            updateDirectionInstruction(currentRotationAngle, distance)
           }
         }
       }
@@ -572,13 +581,20 @@ class HelloGeoRenderer(val context: Context) :
     }
   }
   
-  // Set instruction text on the view
+  // Set instruction text on the view - access via view.updateDirectionText instead of directly accessing textViews
   private fun setDirectionInstruction(instruction: String) {
     // Only attempt to update text if we're in an activity context
     if (context is HelloGeoActivity) {
-      (context as HelloGeoActivity).view.textViews["direction_text"]?.let { textView ->
-        (context as HelloGeoActivity).runOnUiThread {
-          textView.text = instruction
+      (context as HelloGeoActivity).runOnUiThread {
+        try {
+          // Update the direction text through the view
+          if (helloGeoView != null) {
+            helloGeoView?.setDirectionText(instruction)
+          } else if (context is HelloGeoActivity) {
+            (context as HelloGeoActivity).view.setDirectionText(instruction)
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error setting direction instruction", e)
         }
       }
     }
@@ -595,7 +611,7 @@ class HelloGeoRenderer(val context: Context) :
     var closestDistance = Double.MAX_VALUE
     
     // Get current camera pose in world space
-    val cameraPose = session?.camera?.pose
+    val cameraPose = session?.camera?.displayOrientedPose
     
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
@@ -613,9 +629,9 @@ class HelloGeoRenderer(val context: Context) :
         // Check if we have the camera pose
         if (cameraPose != null) {
           // Calculate distance in 3D space
-          val dx = anchorPose.tx() - cameraPose.tx()
-          val dy = anchorPose.ty() - cameraPose.ty()
-          val dz = anchorPose.tz() - cameraPose.tz()
+          val dx = (anchorPose.translation[0] - cameraPose.translation[0]).toDouble()
+          val dy = (anchorPose.translation[1] - cameraPose.translation[1]).toDouble()
+          val dz = (anchorPose.translation[2] - cameraPose.translation[2]).toDouble()
           
           val distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
           
@@ -656,15 +672,15 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
-      val cameraPose = session?.camera?.pose
+      val cameraPose = session?.camera?.displayOrientedPose
       
       if (cameraPose != null) {
         // Get anchor's position relative to camera
         val anchorPose = anchor.pose
         
         // Calculate relative position (very rough approximation)
-        val dx = anchorPose.tx() - cameraPose.tx()
-        val dy = anchorPose.ty() - cameraPose.ty()
+        val dx = (anchorPose.translation[0] - cameraPose.translation[0]).toDouble()
+        val dy = (anchorPose.translation[1] - cameraPose.translation[1]).toDouble()
         
         // Convert to approximate lat/lng difference (very simplistic approach)
         // This assumes a flat Earth which is not accurate for long distances
@@ -1291,7 +1307,8 @@ class HelloGeoRenderer(val context: Context) :
             var bearingChange = Math.abs(bearing2 - bearing1)
             if (bearingChange > 180) bearingChange = 360 - bearingChange
             
-            bearingChange > 25.0 // Consider it a turn if angle changes by more than 25 degrees
+            // Consider it a turn if angle changes by more than 25 degrees
+            bearingChange > 25.0
           } else {
             false
           }

@@ -794,4 +794,60 @@ class HelloGeoView : DefaultLifecycleObserver {
       }
     }
   }
+
+  // Set direction text - public accessor method for updating the navigation instructions
+  fun setDirectionText(text: String) {
+    appCompatActivity?.runOnUiThread {
+      try {
+        // Find or create the direction text view
+        var directionTextView = textViews["direction_text"]
+        
+        if (directionTextView == null && root is FrameLayout) {
+          // Create the text view if it doesn't exist yet
+          directionTextView = TextView(context).apply {
+            setText(text)
+            setBackgroundColor(Color.argb(200, 0, 0, 0))
+            setTextColor(Color.WHITE)
+            setPadding(16, 12, 16, 12)
+            gravity = Gravity.CENTER
+            textSize = 16f
+            
+            val layoutParams = FrameLayout.LayoutParams(
+              FrameLayout.LayoutParams.MATCH_PARENT,
+              FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+              gravity = Gravity.BOTTOM
+              bottomMargin = 150
+            }
+            
+            (root as FrameLayout).addView(this, layoutParams)
+            textViews["direction_text"] = this
+          }
+        } else {
+          // Update the existing text view
+          directionTextView?.text = text
+          
+          // Flash animation to draw attention to the new instruction
+          directionTextView?.let { view ->
+            if (view.text != text) {
+              view.text = text
+              view.alpha = 1.0f
+              view.animate()
+                .alpha(0.7f)
+                .setDuration(100)
+                .withEndAction {
+                  view.animate()
+                    .alpha(1.0f)
+                    .setDuration(100)
+                    .start()
+                }
+                .start()
+            }
+          }
+        }
+      } catch (e: Exception) {
+        Log.e("HelloGeoView", "Error setting direction text", e)
+      }
+    }
+  }
 }
