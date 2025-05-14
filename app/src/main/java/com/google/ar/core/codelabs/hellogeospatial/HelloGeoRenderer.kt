@@ -41,11 +41,16 @@ import com.google.ar.core.examples.java.common.samplerender.Texture
 import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRenderer
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.io.IOException
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.toDegrees
+import kotlin.math.toRadians
 
 
 class HelloGeoRenderer(val context: Context) :
@@ -416,7 +421,8 @@ class HelloGeoRenderer(val context: Context) :
       anchorPose.getTranslation(anchorTranslation, 0)
       
       // Get current frame's camera
-      val camera = session?.frame?.camera
+      val frame = session?.update()
+      val camera = frame?.camera
       val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
@@ -451,7 +457,8 @@ class HelloGeoRenderer(val context: Context) :
       
       if (nextAnchor != null) {
         // Get camera and anchor poses
-        val camera = session?.frame?.camera
+        val frame = session?.update()
+        val camera = frame?.camera
         val cameraPose = camera?.displayOrientedPose
         
         if (cameraPose == null) return
@@ -485,7 +492,7 @@ class HelloGeoRenderer(val context: Context) :
         val distanceSquared = (directionToAnchor[0] * directionToAnchor[0] + 
                               directionToAnchor[1] * directionToAnchor[1] + 
                               directionToAnchor[2] * directionToAnchor[2])
-        val distance = sqrt(distanceSquared.toDouble()).toFloat()
+        val distance = sqrt(distanceSquared)
         
         if (distance > 0) {
           directionToAnchor[0] /= distance
@@ -523,8 +530,8 @@ class HelloGeoRenderer(val context: Context) :
             val forwardXZLengthSquared = (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2])
             val directionXZLengthSquared = (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2])
             
-            val forwardXZLength = sqrt(forwardXZLengthSquared.toDouble()).toFloat()
-            val directionXZLength = sqrt(directionXZLengthSquared.toDouble()).toFloat()
+            val forwardXZLength = sqrt(forwardXZLengthSquared)
+            val directionXZLength = sqrt(directionXZLengthSquared)
             
             var currentRotationAngle = 0f
             
@@ -537,7 +544,7 @@ class HelloGeoRenderer(val context: Context) :
               // Calculate dot product
               val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
               val angleXZ = acos(
-                dotProductXZ.coerceIn(-1.0, 1.0)
+                dotProductXZ.coerceIn(-1.0f, 1.0f)
               ).toFloat()
               
               // Determine if the anchor is to the left or right of the camera
@@ -646,7 +653,7 @@ class HelloGeoRenderer(val context: Context) :
     var closestDistance = Double.MAX_VALUE
     
     // Get current camera pose in world space
-    val camera = session?.frame?.camera
+    val camera = session?.update()
     val cameraPose = camera?.displayOrientedPose
     
     for (anchor in anchors) {
@@ -671,11 +678,11 @@ class HelloGeoRenderer(val context: Context) :
           anchorPose.getTranslation(anchorTranslation, 0)
           
           // Calculate distance in 3D space
-          val dx = (anchorTranslation[0] - cameraTranslation[0]).toDouble()
-          val dy = (anchorTranslation[1] - cameraTranslation[1]).toDouble()
-          val dz = (anchorTranslation[2] - cameraTranslation[2]).toDouble()
+          val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
+          val dy = (anchorTranslation[1] - cameraTranslation[1]).toFloat()
+          val dz = (anchorTranslation[2] - cameraTranslation[2]).toFloat()
           
-          val distance = sqrt(dx * dx + dy * dy + dz * dz)
+          val distance = sqrt(dx * dx + dy * dy + dz * dz).toDouble()
           
           if (distance < closestDistance) {
             closestDistance = distance
@@ -714,7 +721,7 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
-      val camera = session?.frame?.camera
+      val camera = session?.update()
       val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
@@ -725,16 +732,16 @@ class HelloGeoRenderer(val context: Context) :
         anchor.pose.getTranslation(anchorTranslation, 0)
         
         // Calculate relative position (very rough approximation)
-        val dx = (anchorTranslation[0] - cameraTranslation[0]).toDouble()
-        val dy = (anchorTranslation[1] - cameraTranslation[1]).toDouble()
+        val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
+        val dy = (anchorTranslation[1] - cameraTranslation[1]).toFloat()
         
         // Convert to approximate lat/lng difference (very simplistic approach)
         // This assumes a flat Earth which is not accurate for long distances
         val metersPerDegreeLatitude = 111320.0 // approximate
-        val metersPerDegreeLongitude = 111320.0 * cos(Math.toRadians(cameraGeo.latitude))
+        val metersPerDegreeLongitude = 111320.0 * cos(toRadians(cameraGeo.latitude))
         
-        val latDiff = dy / metersPerDegreeLatitude
-        val lngDiff = dx / metersPerDegreeLongitude
+        val latDiff = dy.toDouble() / metersPerDegreeLatitude
+        val lngDiff = dx.toDouble() / metersPerDegreeLongitude
         
         return LatLng(cameraGeo.latitude + latDiff, cameraGeo.longitude + lngDiff)
       }
@@ -889,11 +896,11 @@ class HelloGeoRenderer(val context: Context) :
     val altitude = earth.cameraGeospatialPose.altitude - 1.0
     
     // Convert bearing to quaternion (rotate arrow to point in right direction)
-    val radians = Math.toRadians(bearing)
+    val radians = toRadians(bearing)
     val qx = 0f
-    val qy = Math.sin(radians / 2).toFloat()
+    val qy = sin(radians / 2).toFloat()
     val qz = 0f
-    val qw = Math.cos(radians / 2).toFloat()
+    val qw = cos(radians / 2).toFloat()
     
     val anchor = earth.createAnchor(
       midLat, 
@@ -907,23 +914,23 @@ class HelloGeoRenderer(val context: Context) :
   }
   
   private fun calculateBearing(startLat: Double, startLng: Double, endLat: Double, endLng: Double): Double {
-    val startLatRad = Math.toRadians(startLat)
-    val startLngRad = Math.toRadians(startLng)
-    val endLatRad = Math.toRadians(endLat)
-    val endLngRad = Math.toRadians(endLng)
+    val startLatRad = toRadians(startLat)
+    val startLngRad = toRadians(startLng)
+    val endLatRad = toRadians(endLat)
+    val endLngRad = toRadians(endLng)
     
     val dLng = endLngRad - startLngRad
     
-    val y = Math.sin(dLng) * Math.cos(endLatRad)
-    val x = Math.cos(startLatRad) * Math.sin(endLatRad) -
-            Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(dLng)
+    val y = sin(dLng) * cos(endLatRad)
+    val x = cos(startLatRad) * sin(endLatRad) -
+            sin(startLatRad) * cos(endLatRad) * cos(dLng)
     
-    var bearing = Math.toDegrees(Math.atan2(y, x))
+    var bearing = atan2(y, x)
     if (bearing < 0) {
-      bearing += 360.0
+      bearing += 2 * PI
     }
     
-    return bearing
+    return toDegrees(bearing)
   }
   
   fun createPathAnchors(path: List<LatLng>) {
@@ -997,7 +1004,7 @@ class HelloGeoRenderer(val context: Context) :
       val bearing1 = calculateBearing(prev.latitude, prev.longitude, current.latitude, current.longitude)
       val bearing2 = calculateBearing(current.latitude, current.longitude, next.latitude, next.longitude)
       
-      var bearingChange = Math.abs(bearing2 - bearing1)
+      var bearingChange = abs(bearing2 - bearing1)
       if (bearingChange > 180) bearingChange = 360 - bearingChange
       
       // Calculate distance from last added point
@@ -1022,14 +1029,14 @@ class HelloGeoRenderer(val context: Context) :
   private fun calculateDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
     val earthRadius = 6371000.0 // meters
     
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLng = Math.toRadians(lng2 - lng1)
+    val dLat = toRadians(lat2 - lat1)
+    val dLng = toRadians(lng2 - lng1)
     
     val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            cos(toRadians(lat1)) * cos(toRadians(lat2)) *
             sin(dLng / 2) * sin(dLng / 2)
     
-    val c = 2 * Math.atan2(sqrt(a), sqrt(1 - a))
+    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
     
     return earthRadius * c // Distance in meters
   }
@@ -1350,7 +1357,7 @@ class HelloGeoRenderer(val context: Context) :
               next.latitude, next.longitude
             )
             
-            var bearingChange = Math.abs(bearing2 - bearing1)
+            var bearingChange = abs(bearing2 - bearing1)
             if (bearingChange > 180) bearingChange = 360 - bearingChange
             
             // Consider it a turn if angle changes by more than 25 degrees
