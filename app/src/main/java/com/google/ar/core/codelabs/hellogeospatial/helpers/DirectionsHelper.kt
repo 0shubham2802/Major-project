@@ -25,15 +25,45 @@ class DirectionsHelper(private val context: Context) {
         private const val DIRECTIONS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
     }
     
+    // Data class for direction steps with instructions
+    data class DirectionStep(
+        val startLocation: LatLng,
+        val endLocation: LatLng,
+        val instruction: String,
+        val distance: Int, // in meters
+        val points: List<LatLng> // polyline points for this step
+    )
+    
     interface DirectionsListener {
         fun onDirectionsReady(pathPoints: List<LatLng>)
         fun onDirectionsError(errorMessage: String)
     }
     
+    // Enhanced interface with instructions
+    interface DirectionsWithInstructionsListener {
+        fun onDirectionsReady(pathPoints: List<LatLng>, instructions: List<String>, steps: List<DirectionStep>)
+        fun onDirectionsError(errorMessage: String)
+    }
+    
     /**
-     * Fetch directions between two points
+     * Fetch directions between two points (basic)
      */
     fun getDirections(origin: LatLng, destination: LatLng, listener: DirectionsListener) {
+        FetchDirectionsTask(object : DirectionsWithInstructionsListener {
+            override fun onDirectionsReady(pathPoints: List<LatLng>, instructions: List<String>, steps: List<DirectionStep>) {
+                listener.onDirectionsReady(pathPoints)
+            }
+            
+            override fun onDirectionsError(errorMessage: String) {
+                listener.onDirectionsError(errorMessage)
+            }
+        }).execute(origin, destination)
+    }
+    
+    /**
+     * Fetch directions with turn-by-turn instructions
+     */
+    fun getDirectionsWithInstructions(origin: LatLng, destination: LatLng, listener: DirectionsWithInstructionsListener) {
         FetchDirectionsTask(listener).execute(origin, destination)
     }
     
@@ -61,7 +91,7 @@ class DirectionsHelper(private val context: Context) {
     /**
      * AsyncTask to fetch directions in background
      */
-    private inner class FetchDirectionsTask(private val listener: DirectionsListener) : 
+    private inner class FetchDirectionsTask(private val listener: DirectionsWithInstructionsListener) : 
             AsyncTask<LatLng, Void, String>() {
         
         private var errorMessage: String? = null
@@ -125,12 +155,13 @@ class DirectionsHelper(private val context: Context) {
             
             try {
                 // Parse the JSON response
-                val pathPoints = parseDirectionsJson(result)
+                val directionResult = parseDirectionsJsonWithInstructions(result)
                 
-                if (pathPoints.isEmpty()) {
+                if (directionResult.first.isEmpty()) {
                     listener.onDirectionsError("No route found")
                 } else {
-                    listener.onDirectionsReady(pathPoints)
+                    // Pass path points and the textual instructions
+                    listener.onDirectionsReady(directionResult.first, directionResult.second, directionResult.third)
                 }
             } catch (e: Exception) {
                 listener.onDirectionsError("Error parsing directions: ${e.message}")
@@ -139,7 +170,94 @@ class DirectionsHelper(private val context: Context) {
         }
         
         /**
-         * Parse the Google Directions API JSON response
+         * Parse the Google Directions API JSON response with instructions
+         * Returns a Triple of (pathPoints, textInstructions, directionSteps)
+         */
+        private fun parseDirectionsJsonWithInstructions(jsonData: String): Triple<List<LatLng>, List<String>, List<DirectionStep>> {
+            val pathPoints = ArrayList<LatLng>()
+            val instructions = ArrayList<String>()
+            val steps = ArrayList<DirectionStep>()
+            
+            try {
+                val jsonObject = JSONObject(jsonData)
+                
+                // Get the routes array
+                val routes = jsonObject.getJSONArray("routes")
+                
+                if (routes.length() == 0) {
+                    return Triple(pathPoints, instructions, steps)
+                }
+                
+                // Get the first route
+                val route = routes.getJSONObject(0)
+                
+                // Get the legs array (usually just one for direct routes)
+                val legs = route.getJSONArray("legs")
+                val leg = legs.getJSONObject(0)
+                
+                // Add summary instruction
+                val startAddress = leg.getString("start_address")
+                val endAddress = leg.getString("end_address")
+                val totalDistance = leg.getJSONObject("distance").getString("text")
+                val totalDuration = leg.getJSONObject("duration").getString("text")
+                
+                instructions.add("Navigate from $startAddress to $endAddress ($totalDistance, about $totalDuration)")
+                
+                // Process each step for detailed instructions
+                val stepsJson = leg.getJSONArray("steps")
+                for (i in 0 until stepsJson.length()) {
+                    val step = stepsJson.getJSONObject(i)
+                    
+                    // Get the instructions (HTML, need to clean up)
+                    var instruction = step.getString("html_instructions")
+                    
+                    // Clean up HTML tags
+                    instruction = instruction.replace("<[^>]*>".toRegex(), " ")
+                        .replace("\\s+".toRegex(), " ")
+                        .trim()
+                    
+                    // Get step distance
+                    val distance = step.getJSONObject("distance").getInt("value")
+                    
+                    // Get start and end location
+                    val startLoc = step.getJSONObject("start_location")
+                    val startLatLng = LatLng(startLoc.getDouble("lat"), startLoc.getDouble("lng"))
+                    
+                    val endLoc = step.getJSONObject("end_location")
+                    val endLatLng = LatLng(endLoc.getDouble("lat"), endLoc.getDouble("lng"))
+                    
+                    // Get the encoded polyline for this step
+                    val polyline = step.getJSONObject("polyline").getString("points")
+                    val stepPoints = decodePolyline(polyline)
+                    
+                    // Add the step to our list
+                    steps.add(DirectionStep(startLatLng, endLatLng, instruction, distance, stepPoints))
+                    
+                    // Format a user-friendly instruction with distance
+                    val distanceText = step.getJSONObject("distance").getString("text")
+                    instructions.add("$instruction ($distanceText)")
+                    
+                    // Add all polyline points to the main path
+                    pathPoints.addAll(stepPoints)
+                }
+                
+                // If there was an overview polyline but no step details
+                if (pathPoints.isEmpty()) {
+                    val overviewPolyline = route.getJSONObject("overview_polyline")
+                    val encodedPolyline = overviewPolyline.getString("points")
+                    pathPoints.addAll(decodePolyline(encodedPolyline))
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parsing directions JSON", e)
+                throw e
+            }
+            
+            return Triple(pathPoints, instructions, steps)
+        }
+        
+        /**
+         * Parse the Google Directions API JSON response (simplified version)
          */
         private fun parseDirectionsJson(jsonData: String): List<LatLng> {
             val pathPoints = ArrayList<LatLng>()

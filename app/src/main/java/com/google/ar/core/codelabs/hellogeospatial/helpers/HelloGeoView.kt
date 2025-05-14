@@ -78,6 +78,10 @@ class HelloGeoView : DefaultLifecycleObserver {
   private var destinationSelectedListener: ((LatLng, String) -> Unit)? = null
   private var routePolyline: com.google.android.gms.maps.model.Polyline? = null
   private var isNavigationMode = false
+  
+  // Store navigation instructions
+  private var navigationInstructions = mutableListOf<String>()
+  private var currentInstructionIndex = 0
 
   val snackbarHelper = SnackbarHelper()
 
@@ -348,6 +352,27 @@ class HelloGeoView : DefaultLifecycleObserver {
       
       (root as FrameLayout).addView(distanceText, layoutParams)
       textViews["distance_text"] = distanceText
+      
+      // Add turn-by-turn direction indicator
+      val directionText = TextView(context).apply {
+        text = "Follow the blue path"
+        setBackgroundColor(Color.argb(200, 0, 0, 0))
+        setTextColor(Color.WHITE)
+        setPadding(16, 12, 16, 12)
+        gravity = Gravity.CENTER
+        textSize = 16f
+      }
+      
+      val directionLayoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.BOTTOM
+        bottomMargin = 150 // Above the navigation buttons
+      }
+      
+      (root as FrameLayout).addView(directionText, directionLayoutParams)
+      textViews["direction_text"] = directionText
     }
     
     // Add Google Maps option button - works in both modes
@@ -360,6 +385,10 @@ class HelloGeoView : DefaultLifecycleObserver {
       }
       addActionButton(gmapsButton, "gmaps_button")
     }
+    
+    // Reset navigation instructions
+    navigationInstructions.clear()
+    currentInstructionIndex = 0
   }
   
   fun stopNavigationMode() {
@@ -372,6 +401,11 @@ class HelloGeoView : DefaultLifecycleObserver {
           (root as FrameLayout).removeView(it)
           textViews.remove("distance_text")
         }
+        
+        textViews["direction_text"]?.let {
+          (root as FrameLayout).removeView(it)
+          textViews.remove("direction_text")
+        }
       }
       
       // Remove Google Maps button
@@ -383,6 +417,10 @@ class HelloGeoView : DefaultLifecycleObserver {
       // Clear route from map
       routePolyline?.remove()
       routePolyline = null
+      
+      // Clear navigation instructions
+      navigationInstructions.clear()
+      currentInstructionIndex = 0
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error stopping navigation mode", e)
     }
@@ -393,17 +431,85 @@ class HelloGeoView : DefaultLifecycleObserver {
     routePolyline?.remove()
     
     // Only draw on map if we have a map in this mode
-    mapView?.googleMap?.let {
-      // In a full implementation, we would use the Directions API to get a route
-      // For this example, we'll just draw a straight line
-      val polylineOptions = PolylineOptions()
-        .add(origin, destination)
-        .width(8f)
-        .color(Color.BLUE)
-        .geodesic(true)
+    mapView?.googleMap?.let { googleMap ->
+      // Add markers for start and end if not already there
+      googleMap.clear() // Clear existing markers
       
-      // Add the polyline to the map
-      routePolyline = it.addPolyline(polylineOptions)
+      // Add start marker (blue)
+      googleMap.addMarker(
+        MarkerOptions()
+          .position(origin)
+          .title("Start")
+          .snippet("Your current location")
+      )
+      
+      // Add destination marker (red)
+      mapView?.searchMarker = googleMap.addMarker(
+        MarkerOptions()
+          .position(destination)
+          .title("Destination")
+      )
+      
+      // Get directions 
+      val directionsHelper = DirectionsHelper(context)
+      
+      directionsHelper.getDirections(origin, destination, object : DirectionsHelper.DirectionsListener {
+        override fun onDirectionsReady(pathPoints: List<LatLng>) {
+          appCompatActivity?.runOnUiThread {
+            // Create polyline options with the route points
+            val polylineOptions = PolylineOptions()
+              .addAll(pathPoints)
+              .width(8f)
+              .color(Color.BLUE)
+              .geodesic(true)
+            
+            // Add the polyline to the map
+            routePolyline = googleMap.addPolyline(polylineOptions)
+            
+            // Zoom to show the whole route
+            val boundsBuilder = com.google.android.gms.maps.model.LatLngBounds.Builder()
+            for (point in pathPoints) {
+              boundsBuilder.include(point)
+            }
+            val bounds = boundsBuilder.build()
+            
+            // Add padding to the bounds
+            val padding = 100 // pixels
+            val cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, padding)
+            googleMap.animateCamera(cameraUpdate)
+          }
+        }
+        
+        override fun onDirectionsError(errorMessage: String) {
+          Log.e("HelloGeoView", "Error getting directions: $errorMessage")
+          
+          appCompatActivity?.runOnUiThread {
+            // Fallback to a simple straight line
+            val polylineOptions = PolylineOptions()
+              .add(origin, destination)
+              .width(8f)
+              .color(Color.RED) // Use red to indicate fallback route
+              .geodesic(true)
+            
+            // Add the polyline to the map
+            routePolyline = googleMap.addPolyline(polylineOptions)
+            
+            // Zoom to show the whole route
+            val boundsBuilder = com.google.android.gms.maps.model.LatLngBounds.Builder()
+            boundsBuilder.include(origin)
+            boundsBuilder.include(destination)
+            val bounds = boundsBuilder.build()
+            
+            // Add padding to the bounds
+            val padding = 100 // pixels
+            val cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, padding)
+            googleMap.animateCamera(cameraUpdate)
+            
+            // Show error toast
+            Toast.makeText(context, "Using direct route: $errorMessage", Toast.LENGTH_SHORT).show()
+          }
+        }
+      })
     }
   }
 
@@ -460,6 +566,16 @@ class HelloGeoView : DefaultLifecycleObserver {
           String.format("%.1f km", distance / 1000)
         }
         it.text = "Distance to destination: $formattedDistance"
+      }
+      
+      // Show arrival message if we're close to destination
+      if (distance < 20 && navigationInstructions.isNotEmpty()) { // Within 20 meters
+        textViews["direction_text"]?.let { textView ->
+          appCompatActivity?.runOnUiThread {
+            textView.text = "You have arrived at your destination"
+            textView.setBackgroundColor(Color.argb(200, 0, 100, 0)) // Green background
+          }
+        }
       }
     }
   }
@@ -633,6 +749,48 @@ class HelloGeoView : DefaultLifecycleObserver {
         Toast.makeText(activity, errorMessage, Toast.LENGTH_LONG).show()
       } catch (e: Exception) {
         Log.e("HelloGeoView", "Error showing map error UI", e)
+      }
+    }
+  }
+
+  // Update the navigation instructions for turn-by-turn directions
+  fun updateNavigationInstructions(instructions: List<String>) {
+    navigationInstructions.clear()
+    navigationInstructions.addAll(instructions)
+    currentInstructionIndex = 0
+    
+    // Update the direction text if it exists
+    textViews["direction_text"]?.let { textView ->
+      if (navigationInstructions.isNotEmpty()) {
+        appCompatActivity?.runOnUiThread {
+          textView.text = navigationInstructions[0]
+        }
+      }
+    }
+  }
+  
+  // Set the current active instruction based on progress
+  fun setCurrentNavigationInstruction(index: Int) {
+    if (index >= 0 && index < navigationInstructions.size && index != currentInstructionIndex) {
+      currentInstructionIndex = index
+      
+      // Update the direction text if it exists
+      textViews["direction_text"]?.let { textView ->
+        appCompatActivity?.runOnUiThread {
+          textView.text = navigationInstructions[index]
+          
+          // Flash animation to draw attention to the new instruction
+          textView.animate()
+            .alpha(0.5f)
+            .setDuration(200)
+            .withEndAction {
+              textView.animate()
+                .alpha(1.0f)
+                .setDuration(200)
+                .start()
+            }
+            .start()
+        }
       }
     }
   }

@@ -61,6 +61,7 @@ import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GoogleApiKeyValidator
 import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
 import com.google.ar.core.examples.java.common.samplerender.SampleRender
+import com.google.ar.core.codelabs.hellogeospatial.helpers.DirectionsHelper
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
@@ -82,6 +83,7 @@ class HelloGeoActivity : AppCompatActivity() {
   private var currentLocation: Location? = null
   private var destinationLatLng: LatLng? = null
   private var isNavigating = false
+  private lateinit var directionsHelper: DirectionsHelper
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -101,6 +103,12 @@ class HelloGeoActivity : AppCompatActivity() {
       
       // DUAL MODE: Always start FallbackActivity first, but keep trying AR in background
       Log.d(TAG, "Starting in dual mode - map first with AR initialization in background")
+      
+      // Initialize location services
+      fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+      
+      // Initialize directions helper
+      directionsHelper = DirectionsHelper(this)
       
       // Create a simple loading screen
       val loadingLayout = LinearLayout(this).apply {
@@ -211,30 +219,89 @@ class HelloGeoActivity : AppCompatActivity() {
       view.getActionButton("navigate_button")?.visibility = View.GONE
       view.getActionButton("stop_button")?.visibility = View.VISIBLE
       
-      // Create AR anchor at destination
+      // Get current location from Earth or from location services
       val earth = arCoreSessionHelper.session?.earth
-      if (earth?.trackingState == TrackingState.TRACKING) {
+      val currentLatLng = if (earth?.trackingState == TrackingState.TRACKING) {
         val cameraGeospatialPose = earth.cameraGeospatialPose
-        
-        // Create current location point
-        val currentLatLng = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
-        
-        // For now, just create a simple path from current to destination
-        val simplePath = listOf(currentLatLng, destination)
-        
-        // Create anchors for the path
-        renderer.createPathAnchors(simplePath)
-        
-        // Notify view that navigation has started
-        view.startNavigationMode(destination)
-        
-        // Show route on the map
-        view.showRouteOnMap(currentLatLng, destination)
-        
-        Toast.makeText(this, "Navigation started", Toast.LENGTH_SHORT).show()
+        LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
       } else {
-        Toast.makeText(this, "Earth tracking not available yet. Try again.", Toast.LENGTH_SHORT).show()
+        // Fallback to last known location
+        currentLocation?.let { LatLng(it.latitude, it.longitude) } 
+          ?: run {
+            Toast.makeText(this, "Cannot determine current location", Toast.LENGTH_SHORT).show()
+            return@let
+          }
       }
+      
+      // Show loading indicator
+      val loadingDialog = AlertDialog.Builder(this)
+        .setTitle("Getting Directions")
+        .setMessage("Please wait...")
+        .setCancelable(false)
+        .create()
+      loadingDialog.show()
+      
+      // Fetch directions with turn-by-turn instructions
+      directionsHelper.getDirectionsWithInstructions(
+        currentLatLng, 
+        destination, 
+        object : DirectionsHelper.DirectionsWithInstructionsListener {
+          override fun onDirectionsReady(
+            pathPoints: List<LatLng>, 
+            instructions: List<String>, 
+            steps: List<DirectionsHelper.DirectionStep>
+          ) {
+            loadingDialog.dismiss()
+            
+            // Create anchors for the path
+            renderer.updatePathAnchors(pathPoints)
+            
+            // Notify view that navigation has started
+            view.startNavigationMode(destination)
+            
+            // Update the navigation instructions
+            view.updateNavigationInstructions(instructions)
+            
+            // Show route on the map
+            view.showRouteOnMap(currentLatLng, destination)
+            
+            // Create directional waypoints for turns
+            val waypoints = steps.mapNotNull { step ->
+              if (step.instruction.contains("turn", ignoreCase = true) || 
+                  step.instruction.contains("onto", ignoreCase = true) ||
+                  step.instruction.contains("left", ignoreCase = true) ||
+                  step.instruction.contains("right", ignoreCase = true)) {
+                step.startLocation
+              } else null
+            }
+            
+            // Log the route details
+            Log.d(TAG, "Navigation started with ${pathPoints.size} points and ${instructions.size} instructions")
+            Log.d(TAG, "First instruction: ${if (instructions.isNotEmpty()) instructions[0] else "none"}")
+            
+            Toast.makeText(this@HelloGeoActivity, "Navigation started", Toast.LENGTH_SHORT).show()
+          }
+          
+          override fun onDirectionsError(errorMessage: String) {
+            loadingDialog.dismiss()
+            
+            Log.e(TAG, "Directions API error: $errorMessage")
+            Toast.makeText(this@HelloGeoActivity, "Error getting directions: $errorMessage", Toast.LENGTH_SHORT).show()
+            
+            // Fallback to direct path
+            val simplePath = listOf(currentLatLng, destination)
+            renderer.createPathAnchors(simplePath)
+            view.startNavigationMode(destination)
+            
+            // Create a simple instruction
+            view.updateNavigationInstructions(listOf("Head toward destination"))
+            
+            view.showRouteOnMap(currentLatLng, destination)
+            
+            Toast.makeText(this@HelloGeoActivity, "Using direct route", Toast.LENGTH_SHORT).show()
+          }
+        }
+      )
     } ?: run {
       Toast.makeText(this, "Please set a destination first", Toast.LENGTH_SHORT).show()
     }
