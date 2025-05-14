@@ -58,6 +58,7 @@ import com.google.ar.core.TrackingState
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GeoPermissionsHelper
 import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
+import com.google.ar.core.codelabs.hellogeospatial.helpers.GoogleApiKeyValidator
 import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
 import com.google.ar.core.examples.java.common.samplerender.SampleRender
 import com.google.ar.core.exceptions.CameraNotAvailableException
@@ -95,6 +96,9 @@ class HelloGeoActivity : AppCompatActivity() {
     }
 
     try {
+      // Validate Google Maps API key and log information
+      GoogleApiKeyValidator.validateApiKey(this)
+      
       // DUAL MODE: Always start FallbackActivity first, but keep trying AR in background
       Log.d(TAG, "Starting in dual mode - map first with AR initialization in background")
       

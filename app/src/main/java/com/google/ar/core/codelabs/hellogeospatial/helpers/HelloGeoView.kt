@@ -115,7 +115,20 @@ class HelloGeoView : DefaultLifecycleObserver {
     
     // Set up map fragment
     mapFragment = (activity.supportFragmentManager.findFragmentById(R.id.map)!! as SupportMapFragment).also {
-      it.getMapAsync { googleMap -> mapView = MapView(activity, googleMap) }
+      try {
+        it.getMapAsync { googleMap -> 
+          try {
+            Log.d("HelloGeoView", "Map loaded successfully")
+            mapView = MapView(activity, googleMap) 
+          } catch (e: Exception) {
+            Log.e("HelloGeoView", "Error initializing MapView: ${e.message}", e)
+            showMapError(activity, "Error initializing map view: ${e.message}")
+          }
+        }
+      } catch (e: Exception) {
+        Log.e("HelloGeoView", "Error loading Google Maps: ${e.message}", e)
+        showMapError(activity, "Error loading Google Maps. Please check your internet connection and API key.")
+      }
     }
     
     // Initialize UI elements
@@ -560,6 +573,33 @@ class HelloGeoView : DefaultLifecycleObserver {
         "earth" -> mapView.earthMarker?.isVisible = isVisible
         "search" -> mapView.searchMarker?.isVisible = isVisible
         else -> Log.d("HelloGeoView", "Unknown marker ID: $markerId")
+      }
+    }
+  }
+
+  private fun showMapError(activity: AppCompatActivity, errorMessage: String) {
+    activity.runOnUiThread {
+      try {
+        // Create an error message
+        val errorText = TextView(activity).apply {
+          text = "Error loading map interface. Please restart the app."
+          textSize = 18f
+          gravity = Gravity.CENTER
+          setTextColor(Color.BLACK)
+        }
+        
+        // Find the map wrapper
+        val mapWrapper = activity.findViewById<FrameLayout>(R.id.map_wrapper)
+        mapWrapper?.removeAllViews()
+        mapWrapper?.addView(errorText)
+        
+        // Log the detailed error
+        Log.e("HelloGeoView", errorMessage)
+        
+        // Show the error as a toast
+        Toast.makeText(activity, errorMessage, Toast.LENGTH_LONG).show()
+      } catch (e: Exception) {
+        Log.e("HelloGeoView", "Error showing map error UI", e)
       }
     }
   }

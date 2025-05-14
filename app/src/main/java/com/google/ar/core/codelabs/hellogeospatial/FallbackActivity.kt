@@ -7,12 +7,15 @@ import android.graphics.Color
 import android.location.Geocoder
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -110,13 +113,35 @@ class FallbackActivity : AppCompatActivity() {
                     .replace(R.id.map_container, mapFragment)
                     .commit()
                 
+                // Add a safety timeout for map loading
+                val mapLoadingTimeout = Handler(Looper.getMainLooper())
+                val timeoutRunnable = Runnable {
+                    Log.e(TAG, "Map loading timed out")
+                    Toast.makeText(this, "Map loading timed out. Please check your internet connection.", Toast.LENGTH_LONG).show()
+                    showMapErrorUI("Map loading timed out")
+                }
+                
+                // Set a 10-second timeout for map loading
+                mapLoadingTimeout.postDelayed(timeoutRunnable, 10000)
+                
                 mapFragment.getMapAsync { map ->
-                    googleMap = map
-                    setupMap(navigateButton)
+                    try {
+                        // Cancel the timeout since map loaded successfully
+                        mapLoadingTimeout.removeCallbacks(timeoutRunnable)
+                        
+                        Log.d(TAG, "Google Maps loaded successfully")
+                        googleMap = map
+                        setupMap(navigateButton)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to initialize map", e)
+                        Toast.makeText(this, "Failed to initialize map: ${e.message}", Toast.LENGTH_LONG).show()
+                        showMapErrorUI("Failed to initialize map: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting up map", e)
                 Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
+                showMapErrorUI("Error setting up map: ${e.message}")
             }
             
             // Check for location permissions
@@ -390,6 +415,31 @@ class FallbackActivity : AppCompatActivity() {
                     Toast.makeText(this, "Camera permission is required for AR mode", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+    
+    private fun showMapErrorUI(errorMessage: String) {
+        try {
+            // Find the map container
+            val mapContainer = findViewById<FrameLayout>(R.id.map_container)
+            
+            // Clear it and add an error message
+            mapContainer.removeAllViews()
+            
+            val errorView = TextView(this).apply {
+                text = "Error loading map interface. Please restart the app.\n\n$errorMessage"
+                setTextColor(Color.BLACK)
+                gravity = Gravity.CENTER
+                textSize = 16f
+                setPadding(32, 32, 32, 32)
+            }
+            
+            mapContainer.addView(errorView)
+            
+            // Log the error for debugging
+            Log.e(TAG, "Map error: $errorMessage")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show map error UI", e)
         }
     }
 } 
