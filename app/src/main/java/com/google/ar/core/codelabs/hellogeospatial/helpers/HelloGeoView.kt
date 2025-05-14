@@ -407,7 +407,7 @@ class HelloGeoView : DefaultLifecycleObserver {
     }
   }
 
-  fun updateStatusText(earth: Earth?, cameraGeospatialPose: GeospatialPose?) {
+  fun updateStatusText(earth: Earth?, cameraGeospatialPose: GeospatialPose?, status: String = "") {
     // Only update status if we have the statusText view (in HelloGeoActivity mode)
     statusText?.let { statusTextView ->
       appCompatActivity?.runOnUiThread {
@@ -422,12 +422,14 @@ class HelloGeoView : DefaultLifecycleObserver {
                          cameraGeospatialPose.headingAccuracy)
                          
         if (earth == null) {
-          statusTextView.text = "Waiting for Earth to initialize..."
+          val baseText = "Waiting for Earth to initialize..."
+          statusTextView.text = if (status.isNotEmpty()) "$baseText ($status)" else baseText
         } else {
-          statusTextView.text = context.resources.getString(R.string.earth_state,
-                                                     earth.earthState.toString(),
-                                                     earth.trackingState.toString(),
-                                                     poseText)
+          val baseText = context.resources.getString(R.string.earth_state,
+                                                  earth.earthState.toString(),
+                                                  earth.trackingState.toString(),
+                                                  poseText)
+          statusTextView.text = if (status.isNotEmpty()) "$baseText\nStatus: $status" else baseText
         }
         
         // If in navigation mode, update distance to destination

@@ -390,8 +390,9 @@ class HelloGeoRenderer(val context: Context) :
       Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
       Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
       
-      // Set custom color for the shader
-      virtualObjectShader.setVec4("u_Color", red, green, blue, alpha)
+      // Set custom color for the shader - create a float array for the color values
+      val colorArray = floatArrayOf(red, green, blue, alpha)
+      virtualObjectShader.setVec4("u_Color", colorArray)
       
       // Draw the mesh with the shader
       virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
@@ -733,7 +734,24 @@ class HelloGeoRenderer(val context: Context) :
 
   private fun updateStatusText(earth: Earth?, geospatialPose: GeospatialPose?, status: String = "") {
     if (context is HelloGeoActivity) {
-      context.view.updateStatusText(earth, geospatialPose)
+      if (status.isNotEmpty()) {
+        // If we have a status string, let's just use a simpler approach
+        val statusMessage = if (earth == null) {
+          "Earth: NULL - $status"
+        } else {
+          "Earth: ${earth.trackingState} - $status"
+        }
+        
+        // Show the status directly using a Toast for critical status updates
+        if (status != "PAUSED" && status != "Not tracking") { // Don't show too many toasts
+          (context as HelloGeoActivity).runOnUiThread {
+            Log.d(TAG, "Status update: $statusMessage")
+          }
+        }
+      }
+      
+      // Always update the regular status display with Earth and pose data
+      (context as HelloGeoActivity).view.updateStatusText(earth, geospatialPose, status)
     }
     // ARActivity has its own status indicator
   }
