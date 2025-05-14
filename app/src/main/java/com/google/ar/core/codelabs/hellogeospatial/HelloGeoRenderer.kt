@@ -420,7 +420,7 @@ class HelloGeoRenderer(val context: Context) :
       // Get current frame's camera
       val frame = session?.update()
       val camera = frame?.camera
-      val cameraPose = camera?.pose
+      val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
         val cameraTranslation = FloatArray(3)
@@ -456,7 +456,7 @@ class HelloGeoRenderer(val context: Context) :
         // Get camera and anchor poses
         val frame = session?.update()
         val camera = frame?.camera
-        val cameraPose = camera?.pose
+        val cameraPose = camera?.displayOrientedPose
         
         if (cameraPose == null) return
         
@@ -465,8 +465,7 @@ class HelloGeoRenderer(val context: Context) :
         
         // First we need to determine if the anchor is in front of the user
         // Get camera forward vector (negative z-axis in OpenGL convention)
-        val zAxis = FloatArray(3)
-        cameraPose.getZAxis(zAxis, 0)
+        val zAxis = cameraPose.getZAxis()
         val cameraForward = floatArrayOf(
           -zAxis[0],
           -zAxis[1],
@@ -651,7 +650,7 @@ class HelloGeoRenderer(val context: Context) :
     
     // Get current camera pose in world space
     val camera = session?.update()
-    val cameraPose = camera?.pose
+    val cameraPose = camera?.displayOrientedPose
     
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
@@ -719,7 +718,7 @@ class HelloGeoRenderer(val context: Context) :
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
       val camera = session?.update()
-      val cameraPose = camera?.pose
+      val cameraPose = camera?.displayOrientedPose
       
       if (cameraPose != null) {
         // Extract translations
