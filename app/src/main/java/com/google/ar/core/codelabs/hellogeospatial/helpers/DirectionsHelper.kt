@@ -9,6 +9,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.PolylineOptions
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -114,7 +115,16 @@ class DirectionsHelper(private val context: Context) {
                 
                 val url = URL(urlString)
                 connection = url.openConnection() as HttpURLConnection
-                connection.connect()
+                connection.connectTimeout = 15000 // 15 second timeout
+                connection.readTimeout = 15000
+                
+                try {
+                    connection.connect()
+                } catch (e: IOException) {
+                    errorMessage = "Network error: Please check your internet connection"
+                    Log.e(TAG, "Failed to connect to Directions API", e)
+                    return result
+                }
                 
                 // If connection is successful
                 if (connection.responseCode == HttpURLConnection.HTTP_OK) {
@@ -129,20 +139,52 @@ class DirectionsHelper(private val context: Context) {
                     }
                     
                     result = stringBuilder.toString()
+                    
+                    // Check if the response contains an error
+                    if (result.contains("\"status\" : \"REQUEST_DENIED\"") || 
+                        result.contains("\"status\":\"REQUEST_DENIED\"")) {
+                        val errorMsg = parseErrorMessage(result)
+                        errorMessage = "API access error: $errorMsg (Check your API key configuration)"
+                        result = ""
+                    }
+                } else if (connection.responseCode == HttpURLConnection.HTTP_FORBIDDEN || 
+                           connection.responseCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
+                    errorMessage = "API Key error: Your Google Maps API key may be invalid or missing required permissions"
                 } else {
-                    errorMessage = "Error connecting to Directions API: ${connection.responseCode}"
+                    errorMessage = "Error connecting to Directions API: HTTP ${connection.responseCode} - ${connection.responseMessage}"
                     Log.e(TAG, errorMessage!!)
                 }
             } catch (e: Exception) {
-                errorMessage = "Error fetching directions: ${e.message}"
-                Log.e(TAG, errorMessage!!, e)
+                errorMessage = when {
+                    e is java.net.UnknownHostException -> "Network error: Unable to connect to Google Maps servers. Please check your internet connection."
+                    e is java.net.SocketTimeoutException -> "Connection timed out. Please try again when you have a better connection."
+                    e.message?.contains("API key") == true -> "Invalid API key. Please update the Google Maps API key in the application."
+                    else -> "Error fetching directions: ${e.message}"
+                }
+                Log.e(TAG, "Error in directions request", e)
             } finally {
                 // Close connections
-                inputStream?.close()
+                try {
+                    inputStream?.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error closing input stream", e)
+                }
                 connection?.disconnect()
             }
             
             return result
+        }
+        
+        private fun parseErrorMessage(jsonResponse: String): String {
+            try {
+                val json = JSONObject(jsonResponse)
+                if (json.has("error_message")) {
+                    return json.getString("error_message")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse error message", e)
+            }
+            return "Unknown API error"
         }
         
         override fun onPostExecute(result: String) {
@@ -346,9 +388,28 @@ class DirectionsHelper(private val context: Context) {
         )
         
         if (resourceId > 0) {
-            return context.resources.getString(resourceId)
+            val apiKey = context.getString(resourceId)
+            if (apiKey == "YOUR_API_KEY_HERE") {
+                Log.e(TAG, "Invalid Google Maps API key - default placeholder value detected")
+                throw IllegalStateException("Google Maps API Key not properly configured. Please replace 'YOUR_API_KEY_HERE' with a valid key.")
+            }
+            return apiKey
         }
         
-        throw IllegalStateException("Google Maps API Key not found in resources")
+        // Try GoogleCloudApiKey as fallback
+        val cloudKeyId = context.resources.getIdentifier(
+            "GoogleCloudApiKey", 
+            "string", 
+            context.packageName
+        )
+        
+        if (cloudKeyId > 0) {
+            val cloudKey = context.getString(cloudKeyId)
+            if (cloudKey != "REPLACE_WITH_REAL_KEY") {
+                return cloudKey
+            }
+        }
+        
+        throw IllegalStateException("Google Maps API Key not found in resources. Please add 'google_maps_key' to your values/google_maps_api.xml file.")
     }
 } 

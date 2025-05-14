@@ -21,6 +21,8 @@ import android.location.Address
 import android.location.Geocoder
 import android.opengl.GLSurfaceView
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -95,6 +97,11 @@ class HelloGeoView : DefaultLifecycleObserver {
   val mapFragment: SupportMapFragment?
   val statusText: TextView?
   
+  // Add MapErrorHelper at the class level
+  private val mapErrorHelper by lazy { MapErrorHelper(context) }
+  private var mapLoadAttempts = 0
+  private val MAX_MAP_LOAD_ATTEMPTS = 3
+
   // Constructor for HelloGeoActivity
   constructor(activity: HelloGeoActivity) {
     this.context = activity
@@ -858,6 +865,71 @@ class HelloGeoView : DefaultLifecycleObserver {
       } catch (e: Exception) {
         Log.e("HelloGeoView", "Error setting direction text", e)
       }
+    }
+  }
+
+  // Add this to mapView?.onCreate() section
+  mapView?.apply {
+    onCreate(savedInstanceState)
+    getMapAsync { map ->
+      mapLoadAttempts = 0
+      setupMap(map)
+    }
+    
+    // Set an error listener for map loading failures
+    this.setOnMapLoadErrorListener {
+      context.runOnUiThread {
+        mapLoadAttempts++
+        if (mapLoadAttempts < MAX_MAP_LOAD_ATTEMPTS) {
+          // Show error and retry
+          Toast.makeText(context, "Map loading timed out. Retrying...", Toast.LENGTH_SHORT).show()
+          // Retry after a delay
+          Handler(Looper.getMainLooper()).postDelayed({
+            this.getMapAsync { map -> setupMap(map) }
+          }, 2000)
+        } else {
+          // After MAX_MAP_LOAD_ATTEMPTS, show diagnostic information
+          Toast.makeText(context, 
+              "Map loading failed. Checking for solutions...", 
+              Toast.LENGTH_LONG).show()
+          
+          // Run map diagnostic
+          mapErrorHelper.diagnoseMapsIssue()
+        }
+      }
+    }
+  }
+  
+  private fun setupMap(map: GoogleMap) {
+    googleMap = map
+    
+    try {
+      // Initialize map settings
+      map.mapType = GoogleMap.MAP_TYPE_NORMAL
+      map.isMyLocationEnabled = true
+      map.uiSettings.isMyLocationButtonEnabled = true
+      map.uiSettings.isCompassEnabled = true
+      map.uiSettings.isZoomControlsEnabled = true
+      
+      // Create MapView wrapper with our enhanced functionality
+      mapView = MapView(helloGeoActivity!!, map)
+      
+      // Show current location for split screen mode
+      setupLocationTracking()
+      
+      // Set map initialized flag
+      isMapInitialized = true
+      
+      // Notify listeners
+      onMapReadyListeners.forEach { it.invoke(map) }
+      
+    } catch (e: SecurityException) {
+      Log.e(TAG, "Location permission not granted", e)
+      Toast.makeText(context, "Location permission required for AR navigation", Toast.LENGTH_LONG).show()
+    } catch (e: Exception) {
+      Log.e(TAG, "Error initializing map", e)
+      // Try to diagnose and fix map issues
+      mapErrorHelper.diagnoseMapsIssue()
     }
   }
 }

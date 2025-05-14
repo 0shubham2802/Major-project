@@ -1124,16 +1124,34 @@ class HelloGeoRenderer(val context: Context) :
   private fun showError(errorMessage: String) {
     when (context) {
       is HelloGeoActivity -> {
-        (context as HelloGeoActivity).view.snackbarHelper.showError(context, errorMessage)
+        (context as HelloGeoActivity).runOnUiThread {
+          // Provide a more descriptive error message if it's null or empty
+          val displayMessage = when {
+            errorMessage.isNullOrEmpty() -> "Unknown error occurred in AR rendering"
+            errorMessage.contains("null") -> "AR initialization error - please check location permissions and internet connection"
+            else -> errorMessage
+          }
+          (context as HelloGeoActivity).view.snackbarHelper.showError(context, displayMessage)
+        }
       }
       is ARActivity -> {
         (context as ARActivity).runOnUiThread {
-          Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+          val displayMessage = when {
+            errorMessage.isNullOrEmpty() -> "Unknown error occurred in AR rendering"
+            errorMessage.contains("null") -> "AR initialization error - please check location permissions and internet connection"
+            else -> errorMessage
+          }
+          Toast.makeText(context, displayMessage, Toast.LENGTH_LONG).show()
         }
       }
       is Activity -> {
         (context as Activity).runOnUiThread {
-          Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+          val displayMessage = when {
+            errorMessage.isNullOrEmpty() -> "Unknown error occurred in AR rendering"
+            errorMessage.contains("null") -> "AR initialization error - please check location permissions and internet connection"
+            else -> errorMessage
+          }
+          Toast.makeText(context, displayMessage, Toast.LENGTH_LONG).show()
         }
       }
       else -> {

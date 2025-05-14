@@ -16,6 +16,7 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -42,6 +43,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.common.api.Status
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -57,17 +59,19 @@ import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GeoPermissionsHelper
-import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GoogleApiKeyValidator
-import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
-import com.google.ar.core.examples.java.common.samplerender.SampleRender
+import com.google.ar.core.codelabs.hellogeospatial.helpers.HelloGeoView
+import com.google.ar.core.codelabs.hellogeospatial.helpers.MapErrorHelper
+import com.google.ar.core.codelabs.hellogeospatial.helpers.MapViewWrapper
 import com.google.ar.core.codelabs.hellogeospatial.helpers.DirectionsHelper
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
+import com.google.ar.core.codelabs.hellogeospatial.helpers.BuildConfig
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class HelloGeoActivity : AppCompatActivity() {
   companion object {
@@ -87,55 +91,42 @@ class HelloGeoActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-
-    // Wrap everything in a try-catch to prevent crashes
-    Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-      Log.e(TAG, "Uncaught exception", throwable)
-      runOnUiThread {
-        Toast.makeText(this, "Error: ${throwable.message}", Toast.LENGTH_LONG).show()
-        startFallbackActivity()
-      }
-    }
-
+    
     try {
       // Validate Google Maps API key and log information
       GoogleApiKeyValidator.validateApiKey(this)
       
-      // DUAL MODE: Always start FallbackActivity first, but keep trying AR in background
-      Log.d(TAG, "Starting in dual mode - map first with AR initialization in background")
+      // Initialize AR components
+      arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+      arCoreSessionHelper.exceptionCallback = { exception ->
+        handleARException(exception)
+      }
       
       // Initialize location services
       fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
       
       // Initialize directions helper
       directionsHelper = DirectionsHelper(this)
+    
+      // Set AR view as the main content view
+      setContentView(R.layout.activity_main)
       
-      // Create a simple loading screen
-      val loadingLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        setBackgroundColor(Color.WHITE)
-      }
+      // Initialize the GL surface view
+      surfaceView = findViewById(R.id.surfaceview)
       
-      val loadingText = TextView(this).apply {
-        text = "Initializing Navigation..."
-        textSize = 18f
-        gravity = Gravity.CENTER
-        setTextColor(Color.BLACK)
-      }
+      // Set up AR renderer and initialize
+      renderer = HelloGeoRenderer(this)
       
-      val progressBar = ProgressBar(this)
-      loadingLayout.addView(progressBar)
-      loadingLayout.addView(loadingText)
-      setContentView(loadingLayout)
+      // Initialize the sample renderer
+      SampleRender(surfaceView, renderer, assets)
       
-      // Start fallback immediately so user can use app while AR initializes
-      Handler(Looper.getMainLooper()).postDelayed({
-        startActivity(Intent(this, FallbackActivity::class.java))
-        finish()
-      }, 1500)
+      // Set up the Map View Fragment
+      setupMapFragment()
       
-      return
+      // Additional setup
+      snackbarHelper.setParentView(findViewById(android.R.id.content))
+      installRequested = false
+      
     } catch (e: Exception) {
       Log.e(TAG, "Error in onCreate", e)
       startFallbackActivity()
@@ -571,6 +562,90 @@ class HelloGeoActivity : AppCompatActivity() {
     } catch (e: Exception) {
       Log.e(TAG, "Error in fallback search", e)
       Toast.makeText(this, "Error searching for location", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  private fun setupMapFragment() {
+    try {
+      // Use our enhanced MapViewWrapper instead of regular SupportMapFragment
+      val mapFragment = MapViewWrapper(this)
+      
+      supportFragmentManager.beginTransaction()
+        .replace(R.id.map_fragment, mapFragment)
+        .commit()
+      
+      // Set up error handling for map loading
+      mapFragment.setOnMapLoadErrorListener {
+        Toast.makeText(this, "Error loading map. Attempting to recover...", Toast.LENGTH_SHORT).show()
+        
+        // Create and use the map error helper to diagnose issues
+        val mapErrorHelper = MapErrorHelper(this)
+        mapErrorHelper.diagnoseMapsIssue()
+      }
+      
+      // Set up the map when it's ready
+      mapFragment.getMapAsync { googleMap ->
+        Log.d(TAG, "Map is ready")
+        
+        // Initialize map settings
+        googleMap.uiSettings.apply {
+          isZoomControlsEnabled = true
+          isCompassEnabled = true
+          isMyLocationButtonEnabled = true
+        }
+        
+        try {
+          googleMap.isMyLocationEnabled = true
+        } catch (e: SecurityException) {
+          Log.e(TAG, "Location permission not granted", e)
+        }
+        
+        // Create the view with the initialized map
+        view = HelloGeoView(this, null, googleMap)
+        
+        // Setup UI components after view is created
+        setupNavigationUI()
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error setting up map fragment", e)
+      Toast.makeText(this, "Error initializing map. Please restart the app.", Toast.LENGTH_LONG).show()
+    }
+  }
+
+  private fun handleARException(exception: Exception) {
+    val message = when (exception) {
+      is UnavailableUserDeclinedInstallationException ->
+        "Please install ARCore"
+      is UnavailableApkTooOldException ->
+        "Please update ARCore"
+      is UnavailableSdkTooOldException ->
+        "Please update this app"
+      is UnavailableDeviceNotCompatibleException ->
+        "This device does not support AR"
+      is CameraNotAvailableException ->
+        "Camera not available. Try restarting the app."
+      else -> "Failed to initialize AR: ${exception.message}"
+    }
+    
+    Log.e(TAG, "AR error: $message", exception)
+    
+    runOnUiThread {
+      // Show a descriptive error message
+      Toast.makeText(this, "AR feature unavailable: $message", Toast.LENGTH_LONG).show()
+      
+      // Instead of showing a blank screen, still allow using the map
+      findViewById<View>(R.id.map_fragment)?.visibility = View.VISIBLE
+      
+      // Hide AR view
+      findViewById<View>(R.id.surfaceview)?.visibility = View.GONE
+      
+      // Update status display
+      val statusTextView = findViewById<TextView>(R.id.statusText)
+      statusTextView?.text = "AR UNAVAILABLE\n$message\nUsing map-only mode"
+      statusTextView?.setBackgroundColor(Color.RED)
+      
+      // Explicitly tell user that we're in map-only mode now
+      Toast.makeText(this, "Continuing in map-only mode", Toast.LENGTH_LONG).show()
     }
   }
 }
