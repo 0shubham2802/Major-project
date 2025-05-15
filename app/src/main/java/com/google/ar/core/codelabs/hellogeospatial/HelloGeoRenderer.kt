@@ -44,6 +44,7 @@ import java.io.IOException
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.PI
@@ -777,25 +778,54 @@ class HelloGeoRenderer(val context: Context) :
     }
   }
   
-  // Draw all anchors
+  // Draw all anchors with different colors based on type
   private fun drawAnchors(render: SampleRender, earth: Earth) {
     try {
+      // First draw the destination anchor if it exists
+      destinationAnchor?.let { anchor ->
+        if (anchor.trackingState == TrackingState.TRACKING) {
+          anchor.getPose().toMatrix(modelMatrix, 0)
+          
+          // Make destination anchor larger
+          Matrix.scaleM(modelMatrix, 0, 0.7f, 0.7f, 0.7f)
+          
+          // Draw with red color
+          drawAnchorWithColor(render, modelMatrix, 1.0f, 0.0f, 0.0f, 1.0f)
+        }
+      }
+      
+      // Draw regular path anchors with colors based on type
       for (anchor in anchors) {
         if (anchor.trackingState != TrackingState.TRACKING) continue
         
-        // Get the anchor's pose
         anchor.getPose().toMatrix(modelMatrix, 0)
         
-        // Standard scale
-        Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 0.5f)
+        // Get anchor type
+        val anchorType = anchorData[anchor] ?: AnchorType.WAYPOINT
         
-        // Calculate the model-view and model-view-projection matrices
-        Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, modelMatrix, 0)
-        Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
-        
-        // Draw the mesh with the shader
-        virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
-        render.draw(virtualObjectMesh, virtualObjectShader)
+        // Set color and scale based on anchor type
+        when (anchorType) {
+          AnchorType.START -> {
+            // Green for start
+            Matrix.scaleM(modelMatrix, 0, 0.6f, 0.6f, 0.6f)
+            drawAnchorWithColor(render, modelMatrix, 0.0f, 0.8f, 0.0f, 1.0f)
+          }
+          AnchorType.TURN -> {
+            // Yellow for turns - make them larger
+            Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 0.5f)
+            drawAnchorWithColor(render, modelMatrix, 1.0f, 0.84f, 0.0f, 1.0f)
+          }
+          AnchorType.WAYPOINT -> {
+            // Blue for regular waypoints - make them smaller
+            Matrix.scaleM(modelMatrix, 0, 0.3f, 0.3f, 0.3f)
+            drawAnchorWithColor(render, modelMatrix, 0.0f, 0.5f, 1.0f, 0.8f)
+          }
+          else -> {
+            // Default - white
+            Matrix.scaleM(modelMatrix, 0, 0.4f, 0.4f, 0.4f)
+            drawAnchorWithColor(render, modelMatrix, 1.0f, 1.0f, 1.0f, 0.7f)
+          }
+        }
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error drawing anchors", e)
@@ -959,12 +989,57 @@ class HelloGeoRenderer(val context: Context) :
           // Analyze path for turns and significant points
           val significantPoints = findSignificantPathPoints(path)
           
-          for (point in significantPoints) {
-            val anchor = createAnchorAtLocation(point.position.latitude, point.position.longitude)
+          Log.d(TAG, "Path has ${significantPoints.size} significant points")
+          
+          // Create anchors with more density for better visual guidance
+          val maxSpacing = 30.0 // Maximum 30 meters between anchors for better visibility
+          
+          // Track last anchor position to ensure proper spacing
+          var lastAnchorPos = start
+          
+          for (i in 0 until significantPoints.size) {
+            val point = significantPoints[i]
+            val pointPos = point.position
+            
+            // Calculate distance from last anchor
+            val distanceFromLast = calculateDistance(
+              lastAnchorPos.latitude, lastAnchorPos.longitude,
+              pointPos.latitude, pointPos.longitude
+            )
+            
+            // If this point is too far from the last anchor, add intermediate anchors
+            if (distanceFromLast > maxSpacing) {
+              val segmentCount = ceil(distanceFromLast / maxSpacing).toInt()
+              
+              for (j in 1 until segmentCount) {
+                val fraction = j.toDouble() / segmentCount
+                
+                // Linear interpolation between points
+                val intermediateLat = lastAnchorPos.latitude + (pointPos.latitude - lastAnchorPos.latitude) * fraction
+                val intermediateLng = lastAnchorPos.longitude + (pointPos.longitude - lastAnchorPos.longitude) * fraction
+                
+                val intermediateAnchor = createAnchorAtLocation(intermediateLat, intermediateLng)
+                intermediateAnchor?.let {
+                  anchors.add(it)
+                  anchorData[it] = AnchorType.WAYPOINT
+                }
+              }
+            }
+            
+            // Now add the actual point
+            val anchor = createAnchorAtLocation(pointPos.latitude, pointPos.longitude)
             anchor?.let {
               anchors.add(it)
               anchorData[it] = if (point.isTurn) AnchorType.TURN else AnchorType.WAYPOINT
+              
+              // If it's a turn, log the angle for debugging
+              if (point.isTurn) {
+                Log.d(TAG, "Created turn anchor with angle: ${point.angle} degrees")
+              }
             }
+            
+            // Update last anchor position
+            lastAnchorPos = pointPos
           }
         }
         

@@ -32,6 +32,21 @@
 
     </LinearLayout>
 
+    <!-- Direction text above the button -->
+    <TextView
+        android:id="@+id/direction_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="70dp"
+        android:background="#AA000000"
+        android:gravity="center"
+        android:padding="12dp"
+        android:text="Preparing navigation..."
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:visibility="gone" />
+
     <!-- Return to map button at bottom -->
     <Button
         android:id="@+id/return_to_map_button"
