@@ -55,6 +55,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     private var connectionCheckHandler: Handler? = null
     private var connectionCheckRunnable: Runnable? = null
     private var mapIsReady = false
+    private var mapRetryCount = 0
+    private var mapRetryHandler: Handler? = null
+    private var mapRetryRunnable: Runnable? = null
     
     companion object {
         private const val TAG = "FallbackActivity"
@@ -63,6 +66,8 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val AR_MODE_REQUEST_CODE = 200
         private const val MAP_TIMEOUT_MS = 40000 // Increased to 40 seconds for very slow connections
         private const val CONNECTION_CHECK_INTERVAL_MS = 30000 // Check connection every 30 seconds
+        private const val MAP_RETRY_INTERVAL_MS = 5000 // Retry every 5 seconds
+        private const val MAX_MAP_RETRIES = 3 // Maximum number of automatic retries
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -200,7 +205,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     }
                     
                     Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
-                    showMapErrorUI(errorMessage)
+                    
+                    // Try to reload map automatically instead of showing error UI immediately
+                    tryMapRetry(errorMessage)
                 }
             }
         }
@@ -298,6 +305,7 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.d(TAG, "Google Map is ready")
             googleMap = map
             mapIsReady = true
+            mapRetryCount = 0 // Reset retry count on successful load
             
             // Apply lower resource usage settings when possible
             try {
@@ -346,14 +354,31 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             // Hide the loading indicator
             findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
             
+            // Hide any error messages that might be showing
+            findViewById<View>(R.id.map_error_container)?.visibility = View.GONE
+            
+            // Setup the map with controls and current location
             setupMap(findViewById(R.id.navigateButton))
             
             // Setup periodic connection checking
             setupPeriodicConnectionCheck()
+            
+            // Check if map tiles loaded properly
+            map.setOnMapLoadedCallback {
+                Log.d(TAG, "Map tiles loaded successfully")
+                // Additional check after map is fully loaded to verify there are no rendering issues
+                if (findViewById<View>(R.id.map) != null && 
+                    findViewById<View>(R.id.map).visibility == View.VISIBLE) {
+                    // Map is visible and loaded successfully
+                } else {
+                    Log.e(TAG, "Map view is not visible after load")
+                    tryMapRetry("Map view is not visible after load")
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onMapReady", e)
             Toast.makeText(this, "Error initializing map: ${e.message}", Toast.LENGTH_LONG).show()
-            showMapErrorUI("Error initializing map: ${e.message}")
+            tryMapRetry("Error in onMapReady: ${e.message}")
         }
     }
     
@@ -470,23 +495,63 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     isRotateGesturesEnabled = false // Disable rotation to save memory
                 }
                 
-                // Lower camera tilt to use fewer resources
-                moveCamera(CameraUpdateFactory.newCameraPosition(
-                    CameraPosition.Builder()
-                        .target(LatLng(37.7749, -122.4194))
-                        .zoom(12f)
-                        .tilt(0f) // No tilt = less rendering complexity
-                        .bearing(0f) // No rotation = less rendering complexity
-                        .build()
-                ))
-                
                 // Enable my location layer if we have permission
                 if (hasLocationPermission()) {
                     try {
                         isMyLocationEnabled = true
+                        
+                        // Get current location and move camera to it
+                        val locationManager = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                        // Try to get last known location from multiple providers
+                        val location = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER) 
+                                       ?: locationManager.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                                       ?: locationManager.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER)
+                        
+                        if (location != null) {
+                            // Move camera to user's location
+                            val currentLatLng = LatLng(location.latitude, location.longitude)
+                            moveCamera(CameraUpdateFactory.newCameraPosition(
+                                CameraPosition.Builder()
+                                    .target(currentLatLng)
+                                    .zoom(15f)
+                                    .tilt(0f) // No tilt = less rendering complexity
+                                    .bearing(0f) // No rotation = less rendering complexity
+                                    .build()
+                            ))
+                        } else {
+                            // Fallback to default location if can't get current location
+                            Log.d(TAG, "Could not get current location, using default")
+                            moveCamera(CameraUpdateFactory.newCameraPosition(
+                                CameraPosition.Builder()
+                                    .target(LatLng(37.7749, -122.4194)) // Default: San Francisco
+                                    .zoom(12f)
+                                    .tilt(0f) // No tilt = less rendering complexity
+                                    .bearing(0f) // No rotation = less rendering complexity
+                                    .build()
+                            ))
+                        }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Could not enable my location", e)
+                        Log.e(TAG, "Could not enable my location or get position", e)
+                        // Fallback to default location
+                        moveCamera(CameraUpdateFactory.newCameraPosition(
+                            CameraPosition.Builder()
+                                .target(LatLng(37.7749, -122.4194)) // Default: San Francisco
+                                .zoom(12f)
+                                .tilt(0f) // No tilt = less rendering complexity
+                                .bearing(0f) // No rotation = less rendering complexity
+                                .build()
+                        ))
                     }
+                } else {
+                    // No location permission, use default location
+                    moveCamera(CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(37.7749, -122.4194)) // Default: San Francisco
+                            .zoom(12f)
+                            .tilt(0f) // No tilt = less rendering complexity
+                            .bearing(0f) // No rotation = less rendering complexity
+                            .build()
+                    ))
                 }
                 
                 // Add click listener to allow selecting a point on the map
@@ -932,8 +997,76 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         // Clean up all handlers
         mapLoadingTimeout?.removeCallbacks(timeoutRunnable!!)
         connectionCheckHandler?.removeCallbacks(connectionCheckRunnable!!)
+        mapRetryHandler?.removeCallbacks(mapRetryRunnable!!)
         
         // Clear map reference to prevent memory leaks
         googleMap = null
+    }
+    
+    private fun tryMapRetry(error: String) {
+        // Only retry a certain number of times
+        if (mapRetryCount < MAX_MAP_RETRIES) {
+            mapRetryCount++
+            
+            // Show retry message
+            Toast.makeText(
+                this, 
+                "Map service temporarily unavailable. Retrying (${mapRetryCount}/${MAX_MAP_RETRIES})...", 
+                Toast.LENGTH_SHORT
+            ).show()
+            
+            // Create a clear visual indicator that we're retrying
+            val mapContainer = findViewById<FrameLayout>(R.id.map_container)
+            
+            var errorContainer = findViewById<LinearLayout>(R.id.map_error_container)
+            if (errorContainer == null) {
+                errorContainer = LinearLayout(this).apply {
+                    id = R.id.map_error_container
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setBackgroundColor(Color.argb(200, 0, 0, 0))
+                    
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        gravity = Gravity.BOTTOM
+                    }
+                }
+                
+                // Add to map container if it exists
+                mapContainer?.addView(errorContainer)
+            }
+            
+            // Add or update the error message
+            var errorText = errorContainer.findViewById<TextView>(R.id.map_error_text)
+            if (errorText == null) {
+                errorText = TextView(this).apply {
+                    id = R.id.map_error_text
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                    gravity = Gravity.CENTER
+                    setPadding(16, 16, 16, 16)
+                }
+                errorContainer.addView(errorText)
+            }
+            
+            errorText.text = "Map service temporarily unavailable. Retrying..."
+            errorContainer.visibility = View.VISIBLE
+            
+            // Schedule retry after delay
+            mapRetryHandler = Handler(Looper.getMainLooper())
+            mapRetryRunnable = Runnable {
+                Log.d(TAG, "Retrying map load (attempt $mapRetryCount)")
+                
+                // Reload the map fragment
+                recreateMapIfNeeded()
+            }
+            
+            mapRetryHandler?.postDelayed(mapRetryRunnable!!, MAP_RETRY_INTERVAL_MS.toLong())
+        } else {
+            // If we've exceeded retries, show the full error UI
+            showMapErrorUI(error)
+        }
     }
 } 
