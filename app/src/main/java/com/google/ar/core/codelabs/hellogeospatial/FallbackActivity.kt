@@ -13,10 +13,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -41,6 +45,10 @@ import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.codelabs.hellogeospatial.helpers.MapErrorHelper
 import java.util.Locale
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.FusedLocationProviderClient
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 
 /**
  * A map-based activity with optional AR capabilities
@@ -58,6 +66,16 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     private var mapRetryCount = 0
     private var mapRetryHandler: Handler? = null
     private var mapRetryRunnable: Runnable? = null
+    
+    // Search suggestion components
+    private lateinit var suggestionProvider: SearchSuggestionProvider
+    private lateinit var suggestionAdapter: SearchSuggestionAdapter
+    private lateinit var suggestionsList: RecyclerView
+    private var searchQueryHandler = Handler(Looper.getMainLooper())
+    private var lastSearchRunnable: Runnable? = null
+    
+    // Location and map components
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
     
     companion object {
         private const val TAG = "FallbackActivity"
@@ -114,22 +132,27 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 Log.w(TAG, "Map issues detected and handled by MapErrorHelper")
             }
             
-            // Setup search bar functionality
-            try {
-                val searchBar = findViewById<EditText>(R.id.searchBar)
-                searchBar?.setOnEditorActionListener { textView, actionId, _ ->
-                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                        val query = textView.text.toString()
-                        if (query.isNotBlank()) {
-                            searchLocation(query)
-                            return@setOnEditorActionListener true
-                        }
-                    }
-                    return@setOnEditorActionListener false
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error setting up search bar", e)
-            }
+            // Initialize components
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+            
+            // Initialize search suggestion provider
+            suggestionProvider = SearchSuggestionProvider(this)
+            
+            // Check for location permission
+            checkLocationPermission()
+            
+            // Set up the map
+            mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
+            mapFragment.getMapAsync(this)
+            
+            // Set up map loading timeout
+            setupMapLoadingTimeout()
+            
+            // Set up UI elements
+            setupUIControls()
+            
+            // Set up search suggestions
+            setupSearchSuggestions()
             
             // Setup AR mode button
             try {
@@ -162,31 +185,101 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             } catch (e: Exception) {
                 Log.e(TAG, "Error setting up navigation button", e)
             }
-            
-            // Check for location permissions
-            checkLocationPermission()
-            
-            // Add the map fragment with better error handling - do this last
-            try {
-                // Find the map fragment from layout instead of creating it
-                mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
-                
-                // Set up map loading timeout
-                setupMapLoadingTimeout()
-                
-                // Use OnMapReadyCallback interface implementation for better error handling
-                mapFragment.getMapAsync(this)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error setting up map fragment", e)
-                Toast.makeText(this, "Error setting up map: ${e.message}", Toast.LENGTH_LONG).show()
-                showMapErrorUI("Error setting up map fragment: ${e.message}")
-            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing map view: ${e.message}", Toast.LENGTH_LONG).show()
             
             // Create a simple fallback for the fallback
             showMapErrorUI("Error initializing map view: ${e.message}")
+        }
+    }
+    
+    private fun setupUIControls() {
+        // Set up search bar
+        val searchBar = findViewById<EditText>(R.id.searchBar)
+        searchBar.setOnEditorActionListener { textView, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                val query = textView.text.toString()
+                if (query.isNotBlank()) {
+                    hideSuggestions()
+                    searchLocation(query)
+                    hideKeyboard()
+                    return@setOnEditorActionListener true
+                }
+            }
+            return@setOnEditorActionListener false
+        }
+        
+        // Set up text change listener for search suggestions
+        searchBar.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Cancel any pending search
+                lastSearchRunnable?.let { searchQueryHandler.removeCallbacks(it) }
+                
+                val query = s?.toString() ?: ""
+                
+                if (query.length < 3) {
+                    hideSuggestions()
+                    return
+                }
+                
+                // Delay the search to avoid too many requests while typing
+                val searchRunnable = Runnable {
+                    suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
+                        override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
+                            if (suggestions.isEmpty()) {
+                                hideSuggestions()
+                            } else {
+                                showSuggestions(suggestions)
+                            }
+                        }
+                        
+                        override fun onError(message: String) {
+                            hideSuggestions()
+                            Log.e(TAG, "Error getting suggestions: $message")
+                        }
+                    })
+                }
+                
+                lastSearchRunnable = searchRunnable
+                searchQueryHandler.postDelayed(searchRunnable, 300) // 300ms delay
+            }
+            
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        
+        // Setup AR mode button
+        try {
+            val arModeButton = findViewById<Button>(R.id.arModeButton)
+            arModeButton?.setOnClickListener {
+                launchARMode()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up AR mode button", e)
+        }
+        
+        // Setup Split Screen button
+        try {
+            val splitScreenButton = findViewById<Button>(R.id.splitScreenButton)
+            splitScreenButton?.setOnClickListener {
+                launchSplitScreenMode()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up split screen button", e)
+        }
+        
+        // Setup navigation button
+        try {
+            val navigateButton = findViewById<Button>(R.id.navigateButton)
+            navigateButton?.setOnClickListener {
+                destinationLatLng?.let { destination ->
+                    openGoogleMapsNavigation(destination)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up navigation button", e)
         }
     }
     
@@ -618,6 +711,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             // Show loading indicator when searching
             findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
             findViewById<TextView>(R.id.map_loading_text)?.text = "Searching for location..."
+            
+            // Hide any suggestions
+            hideSuggestions()
             
             // First check network connectivity
             if (!isNetworkAvailable()) {
@@ -1068,5 +1164,78 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             // If we've exceeded retries, show the full error UI
             showMapErrorUI(error)
         }
+    }
+    
+    private fun setupSearchSuggestions() {
+        // Get the suggestions RecyclerView
+        suggestionsList = findViewById(R.id.suggestionsList)
+        
+        // Set up the adapter
+        suggestionAdapter = SearchSuggestionAdapter { suggestion ->
+            // Handle suggestion click
+            hideSuggestions()
+            hideKeyboard()
+            handleSelectedSuggestion(suggestion)
+        }
+        
+        // Set up the RecyclerView
+        suggestionsList.apply {
+            layoutManager = LinearLayoutManager(this@FallbackActivity)
+            adapter = suggestionAdapter
+            setHasFixedSize(true)
+        }
+        
+        // Initially hide suggestions
+        hideSuggestions()
+        
+        // Set up touch listener to dismiss suggestions when clicking outside
+        findViewById<View>(android.R.id.content).setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN && suggestionsList.visibility == View.VISIBLE) {
+                // Check if touch is outside suggestions
+                val location = IntArray(2)
+                suggestionsList.getLocationOnScreen(location)
+                val x = event.rawX
+                val y = event.rawY
+                
+                if (x < location[0] || x > location[0] + suggestionsList.width ||
+                    y < location[1] || y > location[1] + suggestionsList.height) {
+                    hideSuggestions()
+                    hideKeyboard()
+                }
+            }
+            false
+        }
+    }
+    
+    private fun showSuggestions(suggestions: List<SearchSuggestion>) {
+        suggestionAdapter.updateSuggestions(suggestions)
+        suggestionsList.visibility = View.VISIBLE
+    }
+    
+    private fun hideSuggestions() {
+        suggestionsList.visibility = View.GONE
+    }
+    
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
+    }
+    
+    private fun handleSelectedSuggestion(suggestion: SearchSuggestion) {
+        // Update search bar with selected suggestion
+        findViewById<EditText>(R.id.searchBar).setText(suggestion.title)
+        
+        // Update map with the selected location
+        googleMap?.apply {
+            clear()
+            addMarker(MarkerOptions().position(suggestion.latLng).title(suggestion.title))
+            animateCamera(CameraUpdateFactory.newLatLngZoom(suggestion.latLng, 15f))
+        }
+        
+        // Store as destination
+        destinationLatLng = suggestion.latLng
+        
+        // Show navigation button
+        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
     }
 } 

@@ -1,6 +1,7 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
@@ -43,6 +44,12 @@ import com.google.ar.core.examples.java.common.helpers.FullScreenHelper
 import com.google.ar.core.examples.java.common.samplerender.SampleRender
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.util.Locale
+import android.text.Editable
+import android.text.TextWatcher
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import android.view.MotionEvent
+import android.view.inputmethod.InputMethodManager
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -76,6 +83,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var directionsHelper: DirectionsHelper
     private var routePoints: List<LatLng>? = null
     
+    // Search suggestion components
+    private lateinit var suggestionProvider: SearchSuggestionProvider
+    private lateinit var suggestionAdapter: SearchSuggestionAdapter
+    private lateinit var suggestionsList: RecyclerView
+    private var searchQueryHandler = Handler(Looper.getMainLooper())
+    private var lastSearchRunnable: Runnable? = null
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -106,6 +120,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Initialize the directions helper
             directionsHelper = DirectionsHelper(this)
             
+            // Initialize search suggestion provider
+            suggestionProvider = SearchSuggestionProvider(this)
+            
             // Check for required permissions
             checkAndRequestPermissions()
             
@@ -117,6 +134,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Set up UI controls
             setupUIControls()
+            
+            // Set up search suggestions
+            setupSearchSuggestions()
             
             // Get destination from intent if available
             if (intent.hasExtra("DESTINATION_LAT") && intent.hasExtra("DESTINATION_LNG")) {
@@ -354,34 +374,102 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     }
     
     private fun setupUIControls() {
-        // Setup search bar
+        // Get the search bar
         val searchBar = findViewById<EditText>(R.id.searchBar)
-        searchBar.setOnEditorActionListener { textView, actionId, _ ->
+        
+        // Set up search bar
+        searchBar.setOnEditorActionListener { v, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                val query = textView.text.toString()
+                val query = v.text.toString()
                 if (query.isNotBlank()) {
+                    hideSuggestions()
                     searchLocation(query)
-                    return@setOnEditorActionListener true
+                    hideKeyboard()
                 }
+                true
+            } else {
+                false
             }
-            return@setOnEditorActionListener false
         }
         
-        // Setup navigation button
+        // Set up text change listener for search suggestions
+        searchBar.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                // Cancel any pending search
+                lastSearchRunnable?.let { searchQueryHandler.removeCallbacks(it) }
+                
+                val query = s?.toString() ?: ""
+                
+                if (query.length < 3) {
+                    hideSuggestions()
+                    return
+                }
+                
+                // Delay the search to avoid too many requests while typing
+                val searchRunnable = Runnable {
+                    showSuggestionsLoading()
+                    suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
+                        override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
+                            if (suggestions.isEmpty()) {
+                                hideSuggestions()
+                            } else {
+                                showSuggestions(suggestions)
+                            }
+                        }
+                        
+                        override fun onError(message: String) {
+                            hideSuggestions()
+                            Log.e(TAG, "Error getting suggestions: $message")
+                        }
+                    })
+                }
+                
+                lastSearchRunnable = searchRunnable
+                searchQueryHandler.postDelayed(searchRunnable, 300) // 300ms delay
+            }
+            
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        
+        // Set up focus change listener
+        searchBar.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                // If query already has content, show suggestions
+                val query = searchBar.text.toString()
+                if (query.length >= 3) {
+                    // Trigger the text changed listener
+                    searchBar.setText(query)
+                }
+            } else {
+                // Hide suggestions when focus is lost
+                hideSuggestions()
+            }
+        }
+        
+        // Set up navigate button
         val navigateButton = findViewById<Button>(R.id.navigateButton)
         navigateButton.setOnClickListener {
             startNavigation()
         }
         
-        // Setup mode toggle buttons
-        val arModeButton = findViewById<Button>(R.id.ar_mode_button)
-        arModeButton.setOnClickListener {
-            switchToAROnlyMode()
+        // Set up stop navigate button
+        val stopNavigateButton = findViewById<Button>(R.id.stopNavigateButton)
+        stopNavigateButton.setOnClickListener {
+            stopNavigation()
         }
         
+        // Set up AR mode button
+        val arModeButton = findViewById<Button>(R.id.ar_mode_button)
+        arModeButton.setOnClickListener {
+            launchAROnlyMode()
+        }
+        
+        // Set up map mode button
         val mapModeButton = findViewById<Button>(R.id.map_mode_button)
         mapModeButton.setOnClickListener {
-            switchToMapOnlyMode()
+            launchMapOnlyMode()
         }
         
         // Set up periodic AR status updates
@@ -392,6 +480,84 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 handler.postDelayed(this, 1000)
             }
         })
+    }
+    
+    private fun setupSearchSuggestions() {
+        // Get the suggestions RecyclerView
+        suggestionsList = findViewById(R.id.suggestionsList)
+        
+        // Set up the adapter
+        suggestionAdapter = SearchSuggestionAdapter { suggestion ->
+            // Handle suggestion click
+            hideSuggestions()
+            hideKeyboard()
+            handleSelectedSuggestion(suggestion)
+        }
+        
+        // Set up the RecyclerView
+        suggestionsList.apply {
+            layoutManager = LinearLayoutManager(this@SplitScreenActivity)
+            adapter = suggestionAdapter
+            setHasFixedSize(true)
+        }
+        
+        // Initially hide suggestions
+        hideSuggestions()
+        
+        // Set up touch listener to dismiss suggestions when clicking outside
+        findViewById<View>(android.R.id.content).setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN && suggestionsList.visibility == View.VISIBLE) {
+                // Check if touch is outside suggestions
+                val location = IntArray(2)
+                suggestionsList.getLocationOnScreen(location)
+                val x = event.rawX
+                val y = event.rawY
+                
+                if (x < location[0] || x > location[0] + suggestionsList.width ||
+                    y < location[1] || y > location[1] + suggestionsList.height) {
+                    hideSuggestions()
+                    hideKeyboard()
+                }
+            }
+            false
+        }
+    }
+    
+    private fun showSuggestions(suggestions: List<SearchSuggestion>) {
+        suggestionAdapter.updateSuggestions(suggestions)
+        suggestionsList.visibility = View.VISIBLE
+    }
+    
+    private fun showSuggestionsLoading() {
+        // If we want to show a loading state for suggestions
+        // We could implement this with a ProgressBar in the suggestions list
+    }
+    
+    private fun hideSuggestions() {
+        suggestionsList.visibility = View.GONE
+    }
+    
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(currentFocus?.windowToken, 0)
+    }
+    
+    private fun handleSelectedSuggestion(suggestion: SearchSuggestion) {
+        // Update search bar with selected suggestion
+        findViewById<EditText>(R.id.searchBar).setText(suggestion.title)
+        
+        // Update map with the selected location
+        googleMap?.apply {
+            clear()
+            addMarker(MarkerOptions().position(suggestion.latLng).title(suggestion.title))
+            animateCamera(CameraUpdateFactory.newLatLngZoom(suggestion.latLng, 15f))
+        }
+        
+        // Store as destination
+        destinationLatLng = suggestion.latLng
+        
+        // Show navigation button
+        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
     }
     
     private fun updateARStatus() {
@@ -491,6 +657,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         try {
             // Show loading indicator
             findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
+            
+            // Hide any suggestions
+            hideSuggestions()
             
             val geocoder = Geocoder(this, Locale.getDefault())
             
@@ -669,7 +838,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
-    private fun switchToAROnlyMode() {
+    private fun launchAROnlyMode() {
         val intent = Intent(this, ARActivity::class.java)
         
         // Pass destination data if we have it
@@ -682,7 +851,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         finish()
     }
     
-    private fun switchToMapOnlyMode() {
+    private fun launchMapOnlyMode() {
         fallbackToMapOnlyMode()
     }
     
@@ -744,7 +913,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(this, "Camera permission required for AR", Toast.LENGTH_LONG).show()
                     // Switch to map-only mode if camera permission denied
-                    switchToMapOnlyMode()
+                    launchMapOnlyMode()
                 }
             }
         }
@@ -831,5 +1000,24 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus)
+    }
+    
+    private fun stopNavigation() {
+        isNavigating = false
+        
+        // Update UI
+        findViewById<Button>(R.id.stopNavigateButton).visibility = View.GONE
+        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+        
+        // Clear route visualization
+        googleMap?.clear()
+        
+        // Reset AR visualization
+        renderer.clearAnchors()
+        
+        // Hide directions text
+        findViewById<TextView>(R.id.directionsText)?.visibility = View.GONE
+        
+        Toast.makeText(this, "Navigation stopped", Toast.LENGTH_SHORT).show()
     }
 } 
