@@ -69,10 +69,11 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     
     // Search suggestion components
     private lateinit var suggestionProvider: SearchSuggestionProvider
-    private lateinit var suggestionAdapter: SearchSuggestionAdapter
+    private lateinit var placesAdapter: PlacesAdapter
     private lateinit var suggestionsList: RecyclerView
     private var searchQueryHandler = Handler(Looper.getMainLooper())
     private var lastSearchRunnable: Runnable? = null
+    private lateinit var recentPlacesManager: RecentPlacesManager
     
     // Location and map components
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -137,6 +138,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Initialize search suggestion provider
             suggestionProvider = SearchSuggestionProvider(this)
+            
+            // Initialize recent places manager
+            recentPlacesManager = RecentPlacesManager(this)
             
             // Check for location permission
             checkLocationPermission()
@@ -221,7 +225,12 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                 val query = s?.toString() ?: ""
                 
                 if (query.length < 3) {
-                    hideSuggestions()
+                    // Show recent places if search field has focus
+                    if (searchBar.hasFocus()) {
+                        showRecentPlacesOnly()
+                    } else {
+                        hideSuggestions()
+                    }
                     return
                 }
                 
@@ -230,14 +239,14 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                     suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
                         override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
                             if (suggestions.isEmpty()) {
-                                hideSuggestions()
+                                showRecentPlacesOnly()
                             } else {
                                 showSuggestions(suggestions)
                             }
                         }
                         
                         override fun onError(message: String) {
-                            hideSuggestions()
+                            showRecentPlacesOnly()
                             Log.e(TAG, "Error getting suggestions: $message")
                         }
                     })
@@ -249,6 +258,24 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
             
             override fun afterTextChanged(s: Editable?) {}
         })
+        
+        // Set up focus change listener
+        searchBar.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                // If query already has content, show suggestions
+                val query = searchBar.text.toString()
+                if (query.length >= 3) {
+                    // Trigger the text changed listener
+                    searchBar.setText(query)
+                } else {
+                    // Show recent places if no query
+                    showRecentPlacesOnly()
+                }
+            } else {
+                // Hide suggestions when focus is lost
+                hideSuggestions()
+            }
+        }
         
         // Setup AR mode button
         try {
@@ -755,9 +782,20 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                             val latLng = LatLng(address.latitude, address.longitude)
                             
                             try {
+                                // Create a suggestion from the address
+                                val mainText = if (!address.featureName.isNullOrBlank()) address.featureName else query
+                                val secondaryText = address.getAddressLine(0) ?: ""
+                                
+                                val suggestion = SearchSuggestion(
+                                    title = mainText,
+                                    address = secondaryText,
+                                    latLng = latLng,
+                                    originalAddress = address
+                                )
+                                
                                 googleMap?.apply {
                                     clear()
-                                    addMarker(MarkerOptions().position(latLng).title(query))
+                                    addMarker(MarkerOptions().position(latLng).title(suggestion.title))
                                     animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
                                 }
                                 
@@ -766,6 +804,9 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
                                 
                                 // Show the navigation button
                                 findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                                
+                                // Add to recent places
+                                recentPlacesManager.addRecentPlace(suggestion)
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error updating map with search result", e)
                                 Toast.makeText(this, "Found location but couldn't display on map", Toast.LENGTH_SHORT).show()
@@ -1171,17 +1212,24 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         suggestionsList = findViewById(R.id.suggestionsList)
         
         // Set up the adapter
-        suggestionAdapter = SearchSuggestionAdapter { suggestion ->
-            // Handle suggestion click
-            hideSuggestions()
-            hideKeyboard()
-            handleSelectedSuggestion(suggestion)
-        }
+        placesAdapter = PlacesAdapter(
+            onItemClickListener = { suggestion ->
+                // Handle suggestion click
+                hideSuggestions()
+                hideKeyboard()
+                handleSelectedSuggestion(suggestion)
+            },
+            onClearRecentPlacesListener = {
+                // Clear recent places
+                recentPlacesManager.clearRecentPlaces()
+                refreshRecentPlaces()
+            }
+        )
         
         // Set up the RecyclerView
         suggestionsList.apply {
             layoutManager = LinearLayoutManager(this@FallbackActivity)
-            adapter = suggestionAdapter
+            adapter = placesAdapter
             setHasFixedSize(true)
         }
         
@@ -1207,8 +1255,24 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
+    private fun refreshRecentPlaces() {
+        // Get recent places and update adapter
+        val recentPlaces = recentPlacesManager.getRecentPlaces()
+        placesAdapter.setRecentPlaces(recentPlaces)
+    }
+    
     private fun showSuggestions(suggestions: List<SearchSuggestion>) {
-        suggestionAdapter.updateSuggestions(suggestions)
+        placesAdapter.updateSuggestions(suggestions)
+        
+        // Load recent places when showing suggestions
+        refreshRecentPlaces()
+        
+        suggestionsList.visibility = View.VISIBLE
+    }
+    
+    private fun showRecentPlacesOnly() {
+        placesAdapter.updateSuggestions(emptyList())
+        refreshRecentPlaces()
         suggestionsList.visibility = View.VISIBLE
     }
     
@@ -1237,5 +1301,8 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
         
         // Show navigation button
         findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+        
+        // Add to recent places
+        recentPlacesManager.addRecentPlace(suggestion)
     }
 } 

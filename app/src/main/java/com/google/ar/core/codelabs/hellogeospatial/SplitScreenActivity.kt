@@ -85,10 +85,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     
     // Search suggestion components
     private lateinit var suggestionProvider: SearchSuggestionProvider
-    private lateinit var suggestionAdapter: SearchSuggestionAdapter
+    private lateinit var placesAdapter: PlacesAdapter
     private lateinit var suggestionsList: RecyclerView
     private var searchQueryHandler = Handler(Looper.getMainLooper())
     private var lastSearchRunnable: Runnable? = null
+    private lateinit var recentPlacesManager: RecentPlacesManager
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -122,6 +123,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Initialize search suggestion provider
             suggestionProvider = SearchSuggestionProvider(this)
+            
+            // Initialize recent places manager
+            recentPlacesManager = RecentPlacesManager(this)
             
             // Check for required permissions
             checkAndRequestPermissions()
@@ -403,7 +407,12 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 val query = s?.toString() ?: ""
                 
                 if (query.length < 3) {
-                    hideSuggestions()
+                    // Show recent places if search field has focus
+                    if (searchBar.hasFocus()) {
+                        showRecentPlacesOnly()
+                    } else {
+                        hideSuggestions()
+                    }
                     return
                 }
                 
@@ -413,14 +422,14 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
                         override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
                             if (suggestions.isEmpty()) {
-                                hideSuggestions()
+                                showRecentPlacesOnly()
                             } else {
                                 showSuggestions(suggestions)
                             }
                         }
                         
                         override fun onError(message: String) {
-                            hideSuggestions()
+                            showRecentPlacesOnly()
                             Log.e(TAG, "Error getting suggestions: $message")
                         }
                     })
@@ -441,6 +450,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 if (query.length >= 3) {
                     // Trigger the text changed listener
                     searchBar.setText(query)
+                } else {
+                    // Show recent places if no query
+                    showRecentPlacesOnly()
                 }
             } else {
                 // Hide suggestions when focus is lost
@@ -487,17 +499,24 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         suggestionsList = findViewById(R.id.suggestionsList)
         
         // Set up the adapter
-        suggestionAdapter = SearchSuggestionAdapter { suggestion ->
-            // Handle suggestion click
-            hideSuggestions()
-            hideKeyboard()
-            handleSelectedSuggestion(suggestion)
-        }
+        placesAdapter = PlacesAdapter(
+            onItemClickListener = { suggestion ->
+                // Handle item click
+                hideSuggestions()
+                hideKeyboard()
+                handleSelectedSuggestion(suggestion)
+            },
+            onClearRecentPlacesListener = {
+                // Clear recent places
+                recentPlacesManager.clearRecentPlaces()
+                refreshRecentPlaces()
+            }
+        )
         
         // Set up the RecyclerView
         suggestionsList.apply {
             layoutManager = LinearLayoutManager(this@SplitScreenActivity)
-            adapter = suggestionAdapter
+            adapter = placesAdapter
             setHasFixedSize(true)
         }
         
@@ -523,8 +542,24 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
+    private fun refreshRecentPlaces() {
+        // Get recent places and update adapter
+        val recentPlaces = recentPlacesManager.getRecentPlaces()
+        placesAdapter.setRecentPlaces(recentPlaces)
+    }
+    
     private fun showSuggestions(suggestions: List<SearchSuggestion>) {
-        suggestionAdapter.updateSuggestions(suggestions)
+        placesAdapter.updateSuggestions(suggestions)
+        
+        // Only load recent places when showing suggestions
+        refreshRecentPlaces()
+        
+        suggestionsList.visibility = View.VISIBLE
+    }
+    
+    private fun showRecentPlacesOnly() {
+        placesAdapter.updateSuggestions(emptyList())
+        refreshRecentPlaces()
         suggestionsList.visibility = View.VISIBLE
     }
     
@@ -558,6 +593,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         
         // Show navigation button
         findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+        
+        // Add to recent places
+        recentPlacesManager.addRecentPlace(suggestion)
     }
     
     private fun updateARStatus() {
@@ -674,10 +712,21 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     val address = addresses[0]
                     val latLng = LatLng(address.latitude, address.longitude)
                     
+                    // Create a suggestion from the address
+                    val mainText = if (!address.featureName.isNullOrBlank()) address.featureName else query
+                    val secondaryText = address.getAddressLine(0) ?: ""
+                    
+                    val suggestion = SearchSuggestion(
+                        title = mainText,
+                        address = secondaryText,
+                        latLng = latLng,
+                        originalAddress = address
+                    )
+                    
                     // Update map
                     googleMap?.apply {
                         clear()
-                        addMarker(MarkerOptions().position(latLng).title(query))
+                        addMarker(MarkerOptions().position(latLng).title(suggestion.title))
                         animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
                     }
                     
@@ -686,6 +735,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     
                     // Show navigation button
                     findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                    
+                    // Add to recent places
+                    recentPlacesManager.addRecentPlace(suggestion)
                 } else {
                     Toast.makeText(this, "Location not found", Toast.LENGTH_SHORT).show()
                 }
