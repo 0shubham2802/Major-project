@@ -499,82 +499,98 @@ class HelloGeoRenderer(val context: Context) :
             directionToAnchor[1] * cameraForward[1] + 
             directionToAnchor[2] * cameraForward[2]
             
-          // Only show indicator if the waypoint is not directly visible (outside field of view)
-          // or if it's far away
-          if (dotProduct < 0.7f || distance > 10f) {
-            // Create a floating arrow in front of the user pointing toward the next waypoint
-            val arrowMatrix = FloatArray(16)
-            Matrix.setIdentityM(arrowMatrix, 0)
+          // Always show navigation arrows for better guidance, regardless of if waypoint is visible
+          // This enhances usability by consistently showing guidance arrows
+          
+          // Create a floating arrow pointing toward the next waypoint
+          val arrowMatrix = FloatArray(16)
+          Matrix.setIdentityM(arrowMatrix, 0)
+          
+          // Position the arrow at a fixed distance in front of the user
+          // Place it in the lower portion of the view for better visibility
+          Matrix.translateM(arrowMatrix, 0, 0f, -0.7f, -2f)
+          
+          // Scale the arrow appropriately
+          Matrix.scaleM(arrowMatrix, 0, 0.4f, 0.4f, 0.6f)
+          
+          // Add a slight up/down rotation based on distance
+          val pitchAngle = -10f * (1f - min(1f, distance / 30f))
+          Matrix.rotateM(arrowMatrix, 0, pitchAngle, 1f, 0f, 0f)
+          
+          // Calculate the angle between forward direction and anchor direction in XZ plane
+          val forwardXZ = floatArrayOf(cameraForward[0], 0f, cameraForward[2])
+          val directionXZ = floatArrayOf(directionToAnchor[0], 0f, directionToAnchor[2])
+          
+          // Normalize XZ vectors
+          val forwardXZLengthSquared = (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2])
+          val directionXZLengthSquared = (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2])
+          
+          val forwardXZLength = sqrt(forwardXZLengthSquared)
+          val directionXZLength = sqrt(directionXZLengthSquared)
+          
+          var currentRotationAngle = 0f
+          
+          if (forwardXZLength > 0 && directionXZLength > 0) {
+            forwardXZ[0] /= forwardXZLength
+            forwardXZ[2] /= forwardXZLength
+            directionXZ[0] /= directionXZLength
+            directionXZ[2] /= directionXZLength
             
-            // Position the arrow at a fixed distance in front of the user
-            Matrix.translateM(arrowMatrix, 0, 0f, -0.5f, -2f)
+            // Calculate dot product
+            val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
+            val angleRadians = acos(dotProductXZ.toDouble().coerceIn(-1.0, 1.0))
+            val angleXZ = toDegrees(angleRadians).toFloat()
             
-            // Scale the arrow appropriately
-            Matrix.scaleM(arrowMatrix, 0, 0.5f, 0.5f, 0.5f)
+            // Determine if the anchor is to the left or right of the camera
+            val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
+            currentRotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
             
-            // Add a slight up/down rotation based on distance
-            val pitchAngle = -15f * (1f - min(1f, distance / 50f))
-            Matrix.rotateM(arrowMatrix, 0, pitchAngle, 1f, 0f, 0f)
-            
-            // Calculate the angle between forward direction and anchor direction in XZ plane
-            val forwardXZ = floatArrayOf(cameraForward[0], 0f, cameraForward[2])
-            val directionXZ = floatArrayOf(directionToAnchor[0], 0f, directionToAnchor[2])
-            
-            // Normalize XZ vectors
-            val forwardXZLengthSquared = (forwardXZ[0] * forwardXZ[0] + forwardXZ[2] * forwardXZ[2])
-            val directionXZLengthSquared = (directionXZ[0] * directionXZ[0] + directionXZ[2] * directionXZ[2])
-            
-            val forwardXZLength = sqrt(forwardXZLengthSquared)
-            val directionXZLength = sqrt(directionXZLengthSquared)
-            
-            var currentRotationAngle = 0f
-            
-            if (forwardXZLength > 0 && directionXZLength > 0) {
-              forwardXZ[0] /= forwardXZLength
-              forwardXZ[2] /= forwardXZLength
-              directionXZ[0] /= directionXZLength
-              directionXZ[2] /= directionXZLength
-              
-              // Calculate dot product
-              val dotProductXZ = forwardXZ[0] * directionXZ[0] + forwardXZ[2] * directionXZ[2]
-              val angleRadians = acos(dotProductXZ.toDouble().coerceIn(-1.0, 1.0))
-              val angleXZ = toDegrees(angleRadians).toFloat()
-              
-              // Determine if the anchor is to the left or right of the camera
-              val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
-              currentRotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
-              
-              // Rotate the arrow to point toward the anchor
-              Matrix.rotateM(arrowMatrix, 0, currentRotationAngle, 0f, 1f, 0f)
-            }
-            
-            // Draw the arrow
-            Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, arrowMatrix, 0)
-            Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
-            
-            // Set bright color for the arrow - based on distance
-            // Avoid double/float ambiguities by using all float math
-            val currentTimeMillis = System.currentTimeMillis().toFloat()
-            val freq = 0.005f
-            val thetaRadians = currentTimeMillis * freq
-            val sinResult = sin(thetaRadians.toDouble())
-            val sinValue = sinResult.toFloat()
-            val alpha = 0.8f + 0.2f * sinValue
-            
-            val colorArray = when {
-              distance < 5f -> floatArrayOf(0f, 1f, 0f, alpha) // Green when close
-              distance < 20f -> floatArrayOf(1f, 1f, 0f, alpha) // Yellow when medium
-              else -> floatArrayOf(1f, 0.5f, 0f, alpha) // Orange when far
-            }
-            virtualObjectShader.setVec4("u_Color", colorArray)
-            
-            // Draw the mesh
-            virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
-            render.draw(virtualObjectMesh, virtualObjectShader)
-            
-            // Update direction instruction based on angle
-            updateDirectionInstruction(currentRotationAngle, distance)
+            // Rotate the arrow to point toward the anchor
+            Matrix.rotateM(arrowMatrix, 0, currentRotationAngle, 0f, 1f, 0f)
           }
+          
+          // Draw the arrow
+          Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, arrowMatrix, 0)
+          Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+          
+          // Set bright color for the arrow - based on distance and make it pulsate
+          val currentTimeMillis = System.currentTimeMillis().toFloat()
+          val freq = 0.002f
+          val thetaRadians = currentTimeMillis * freq
+          val sinResult = sin(thetaRadians.toDouble())
+          val sinValue = sinResult.toFloat()
+          val alpha = 0.85f + 0.15f * sinValue
+          
+          val anchorType = anchorData[nextAnchor]
+          
+          val colorArray = when {
+            // If this is the destination anchor, use red pulsating color
+            anchorType == AnchorType.DESTINATION -> {
+              floatArrayOf(1f, 0.5f, 0f, alpha) // Orange for destination
+            }
+            // If this is a turn, use yellow
+            anchorType == AnchorType.TURN -> {
+              floatArrayOf(1f, 1f, 0f, alpha) // Yellow for turns
+            }
+            // For regular waypoints, use lighter blue
+            distance < 5f -> floatArrayOf(0f, 1f, 0.5f, alpha) // Green when close
+            distance < 20f -> floatArrayOf(0f, 0.7f, 1f, alpha) // Blue-green when medium
+            else -> floatArrayOf(0f, 0.5f, 1f, alpha) // Blue when far
+          }
+          
+          virtualObjectShader.setVec4("u_Color", colorArray)
+          
+          // Draw the mesh
+          virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+          render.draw(virtualObjectMesh, virtualObjectShader)
+          
+          // For the destination anchor, add a hovering marker when close enough
+          if (anchorType == AnchorType.DESTINATION && distance < 50) {
+            drawHoveringDestinationMarker(render, anchorPose, distance, cameraGeospatialPose)
+          }
+          
+          // Update direction instruction based on angle
+          updateDirectionInstruction(currentRotationAngle, distance, anchorType == AnchorType.DESTINATION)
         }
       }
     } catch (e: Exception) {
@@ -582,27 +598,115 @@ class HelloGeoRenderer(val context: Context) :
     }
   }
   
-  // Update directional text instruction based on the current navigation state
-  private fun updateDirectionInstruction(angle: Float, distance: Float) {
+  // Draw a special hovering marker for the destination point
+  private fun drawHoveringDestinationMarker(render: SampleRender, anchorPose: com.google.ar.core.Pose, distance: Float, cameraGeospatialPose: GeospatialPose) {
     try {
-      when {
-        distance < 5f -> {
-          setDirectionInstruction("You have arrived at waypoint")
+      // Create matrix for the destination marker
+      val markerMatrix = FloatArray(16)
+      anchorPose.toMatrix(markerMatrix, 0)
+      
+      // Add a hovering effect - make it float up and down
+      val currentTimeMillis = System.currentTimeMillis().toFloat()
+      val hoverFreq = 0.001f
+      val hoverHeight = 0.2f
+      val hoverOffset = sin(currentTimeMillis * hoverFreq) * hoverHeight
+      
+      // Apply the hover and make it larger
+      Matrix.translateM(markerMatrix, 0, 0f, hoverOffset, 0f)
+      
+      // Make the marker larger as you get closer
+      val scaleMultiplier = 1.0f + 1.0f * (1.0f - min(1.0f, distance / 30f))
+      Matrix.scaleM(markerMatrix, 0, scaleMultiplier, scaleMultiplier, scaleMultiplier)
+      
+      // Add a slow rotation
+      val rotationAngle = (currentTimeMillis * 0.02f) % 360f
+      Matrix.rotateM(markerMatrix, 0, rotationAngle, 0f, 1f, 0f)
+      
+      // Draw the marker with a special color
+      Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, markerMatrix, 0)
+      Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+      
+      // Pulsating effect with red color for destination
+      val pulseFreq = 0.003f
+      val pulseValue = 0.7f + 0.3f * sin((pulseFreq * currentTimeMillis).toDouble()).toFloat()
+      virtualObjectShader.setVec4("u_Color", floatArrayOf(1f, 0f, 0f, pulseValue))
+      
+      virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+      render.draw(virtualObjectMesh, virtualObjectShader)
+      
+      // Draw a circle around the destination when very close
+      if (distance < 10f) {
+        drawDestinationCircle(render, anchorPose, distance)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error drawing destination marker", e)
+    }
+  }
+  
+  // Draw a circle around the destination point when close
+  private fun drawDestinationCircle(render: SampleRender, anchorPose: com.google.ar.core.Pose, distance: Float) {
+    try {
+      // Create multiple points in a circle around the destination
+      val circlePoints = 12
+      val circleRadius = 0.8f + (10f - min(10f, distance)) * 0.1f // Grows as you get closer
+      
+      for (i in 0 until circlePoints) {
+        val angle = (i.toFloat() / circlePoints) * 2 * PI.toFloat()
+        val circleMatrix = FloatArray(16)
+        anchorPose.toMatrix(circleMatrix, 0)
+        
+        // Position around the circle
+        Matrix.translateM(circleMatrix, 0, 
+          circleRadius * sin(angle.toDouble()).toFloat(), 
+          0.05f, 
+          circleRadius * cos(angle.toDouble()).toFloat())
+        
+        // Make smaller dots
+        Matrix.scaleM(circleMatrix, 0, 0.2f, 0.2f, 0.2f)
+        
+        // Calculate pulsing effect with phase shift based on position
+        val currentTimeMillis = System.currentTimeMillis().toFloat()
+        val pulseFreq = 0.002f
+        val phaseShift = i.toFloat() / circlePoints * 2 * PI.toFloat()
+        val pulseValue = 0.5f + 0.5f * sin((pulseFreq * currentTimeMillis + phaseShift).toDouble()).toFloat()
+        
+        // Draw the dot with a different color
+        Matrix.multiplyMM(modelViewMatrix, 0, viewMatrix, 0, circleMatrix, 0)
+        Matrix.multiplyMM(modelViewProjectionMatrix, 0, projectionMatrix, 0, modelViewMatrix, 0)
+        
+        // Alternate colors
+        val dotColor = if (i % 2 == 0) {
+          floatArrayOf(1f, 0.2f, 0.2f, pulseValue) // Red
+        } else {
+          floatArrayOf(1f, 1f, 0.2f, pulseValue) // Yellow
         }
-        abs(angle) < 20f -> {
-          setDirectionInstruction("Continue straight ahead for ${formatDistance(distance)}")
-        }
-        abs(angle) < 90f -> {
-          val direction = if (angle < 0) "right" else "left"
-          setDirectionInstruction("Turn slightly $direction and continue for ${formatDistance(distance)}")
-        }
-        abs(angle) < 150f -> {
-          val direction = if (angle < 0) "right" else "left"
-          setDirectionInstruction("Take a sharp $direction turn for ${formatDistance(distance)}")
-        }
-        else -> {
-          setDirectionInstruction("Turn around and go back ${formatDistance(distance)}")
-        }
+        
+        virtualObjectShader.setVec4("u_Color", dotColor)
+        virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+        render.draw(virtualObjectMesh, virtualObjectShader)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error drawing destination circle", e)
+    }
+  }
+  
+  // Update directional text instruction based on the current navigation state
+  private fun updateDirectionInstruction(angle: Float, distance: Float, isDestination: Boolean) {
+    try {
+      if (isDestination && distance < 5f) {
+        setDirectionInstruction("You have arrived at your destination!")
+      } else if (isDestination && distance < 15f) {
+        setDirectionInstruction("Your destination is ${formatDistance(distance)} ahead")
+      } else if (abs(angle) < 15f) {
+        setDirectionInstruction("Continue straight ahead for ${formatDistance(distance)}")
+      } else if (abs(angle) < 60f) {
+        val direction = if (angle < 0) "right" else "left" 
+        setDirectionInstruction("Turn slightly $direction and go ${formatDistance(distance)}")
+      } else if (abs(angle) < 120f) {
+        val direction = if (angle < 0) "right" else "left"
+        setDirectionInstruction("Take a $direction turn for ${formatDistance(distance)}")
+      } else {
+        setDirectionInstruction("Turn around and go back ${formatDistance(distance)}")
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error updating direction instruction", e)

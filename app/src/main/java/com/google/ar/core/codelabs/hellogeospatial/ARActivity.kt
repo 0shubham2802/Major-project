@@ -12,9 +12,12 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.LifecycleRegistry
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
+import com.google.ar.core.GeospatialPose
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
@@ -39,7 +42,6 @@ import android.net.NetworkCapabilities
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 
 class ARActivity : AppCompatActivity() {
     companion object {
@@ -54,6 +56,7 @@ class ARActivity : AppCompatActivity() {
     private var arInitializationTimeoutHandler = Handler(Looper.getMainLooper())
     private var trackingQualityIndicator: TextView? = null
     private var directionTextView: TextView? = null
+    private var distanceIndicator: TextView? = null
     private var isNavigating = false
     private var arStatusMessage: String? = null
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -88,6 +91,7 @@ class ARActivity : AppCompatActivity() {
                 
                 if (lat != 0.0 && lng != 0.0) {
                     destinationLatLng = LatLng(lat, lng)
+                    Log.d(TAG, "Destination received: $lat, $lng")
                 }
             }
 
@@ -99,10 +103,21 @@ class ARActivity : AppCompatActivity() {
             
             // Add directions text view
             directionTextView = findViewById(R.id.direction_text)
+            directionTextView?.visibility = View.VISIBLE
+            directionTextView?.text = "Preparing navigation..."
+            
+            // Add distance indicator
+            distanceIndicator = findViewById(R.id.distance_indicator)
+            distanceIndicator?.visibility = View.VISIBLE
             
             // Add button to return to map view
             findViewById<Button>(R.id.return_to_map_button).setOnClickListener {
                 returnToMapMode()
+            }
+            
+            // Add help button to show navigation tips
+            findViewById<Button>(R.id.help_button)?.setOnClickListener {
+                showNavigationHelp()
             }
             
             // Get the surface view
@@ -372,11 +387,98 @@ class ARActivity : AppCompatActivity() {
             trackingQualityIndicator?.setBackgroundResource(colorRes)
             trackingQualityIndicator?.visibility = View.VISIBLE
             
+            // Update distance indicator if destination is set
+            updateDistanceIndicator(pose)
+            
         } catch (e: Exception) {
             Log.e(TAG, "Error updating tracking quality", e)
             trackingQualityIndicator?.text = "Tracking: ERROR"
             trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
         }
+    }
+    
+    private fun updateDistanceIndicator(pose: GeospatialPose) {
+        try {
+            destinationLatLng?.let { destination ->
+                val currentLocation = LatLng(pose.latitude, pose.longitude)
+                val distance = calculateDistance(
+                    currentLocation.latitude, currentLocation.longitude,
+                    destination.latitude, destination.longitude
+                )
+                
+                val distanceText = when {
+                    distance < 1000 -> "${distance.toInt()} meters"
+                    else -> String.format("%.1f km", distance / 1000)
+                }
+                
+                val heading = pose.heading
+                val bearing = calculateBearing(
+                    currentLocation.latitude, currentLocation.longitude,
+                    destination.latitude, destination.longitude
+                )
+                
+                // Calculate the angle between heading and bearing (relative direction)
+                var angle = bearing - heading
+                if (angle < 0) angle += 360.0
+                if (angle > 180) angle = 360.0 - angle
+                
+                val directionSymbol = getDirectionSymbol(bearing, heading)
+                
+                // Create and set the formatted text with distance and direction
+                val distanceString = "Destination: $distanceText $directionSymbol"
+                distanceIndicator?.text = distanceString
+                
+                // Change color based on distance
+                val backgroundColor = when {
+                    distance < 50 -> ContextCompat.getColor(this, android.R.color.holo_green_dark)
+                    distance < 200 -> ContextCompat.getColor(this, android.R.color.holo_blue_dark)
+                    else -> ContextCompat.getColor(this, android.R.color.darker_gray)
+                }
+                
+                distanceIndicator?.setBackgroundColor(ColorUtils.setAlphaComponent(backgroundColor, 200))
+            } ?: run {
+                distanceIndicator?.text = "No destination set"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating distance indicator", e)
+            distanceIndicator?.text = "Distance: Unknown"
+        }
+    }
+    
+    private fun getDirectionSymbol(bearing: Double, heading: Double): String {
+        // Calculate relative angle
+        var angle = bearing - heading
+        // Normalize to 0-360
+        while (angle < 0) angle += 360.0
+        while (angle >= 360) angle -= 360.0
+        
+        // Choose appropriate arrow symbol based on angle
+        return when {
+            angle >= 337.5 || angle < 22.5 -> "↑" // North/Forward
+            angle >= 22.5 && angle < 67.5 -> "↗" // Northeast
+            angle >= 67.5 && angle < 112.5 -> "→" // East/Right
+            angle >= 112.5 && angle < 157.5 -> "↘" // Southeast
+            angle >= 157.5 && angle < 202.5 -> "↓" // South/Back
+            angle >= 202.5 && angle < 247.5 -> "↙" // Southwest
+            angle >= 247.5 && angle < 292.5 -> "←" // West/Left
+            angle >= 292.5 && angle < 337.5 -> "↖" // Northwest
+            else -> "?" // Should never happen
+        }
+    }
+    
+    private fun calculateBearing(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val lat1Rad = Math.toRadians(lat1)
+        val lat2Rad = Math.toRadians(lat2)
+        val lngDiffRad = Math.toRadians(lng2 - lng1)
+        
+        val y = Math.sin(lngDiffRad) * Math.cos(lat2Rad)
+        val x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+                Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(lngDiffRad)
+        
+        var bearing = Math.toDegrees(Math.atan2(y, x))
+        if (bearing < 0) bearing += 360.0
+        
+        return bearing
     }
     
     private fun setARDestination(destination: LatLng) {
@@ -665,5 +767,28 @@ class ARActivity : AppCompatActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus)
+    }
+
+    // Show helpful guidance for using AR navigation
+    private fun showNavigationHelp() {
+        val helpText = """
+            AR Navigation Tips:
+            
+            • Follow the colored arrows to reach your destination
+            • Blue arrows: Regular path segments
+            • Yellow arrows: Turn points
+            • Orange/Red: Approaching destination
+            • A red marker will appear at your destination
+            
+            • For best results, hold your phone up as if taking a photo
+            • Stay outdoors with clear view of the sky
+            • Move slowly and steadily
+        """.trimIndent()
+        
+        AlertDialog.Builder(this)
+            .setTitle("How to Use AR Navigation")
+            .setMessage(helpText)
+            .setPositiveButton("Got it") { dialog, _ -> dialog.dismiss() }
+            .show()
     }
 } 
