@@ -30,6 +30,16 @@ import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
 import com.google.android.gms.maps.model.LatLng
 import android.graphics.Color
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.provider.Settings
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class ARActivity : AppCompatActivity() {
     companion object {
@@ -177,10 +187,21 @@ class ARActivity : AppCompatActivity() {
     private fun startARInitializationTimeout() {
         arInitializationTimeoutHandler.postDelayed({
             if (!isEarthTrackingStable()) {
-                // Show dialog to user
+                // Clear existing timeout handler
+                arInitializationTimeoutHandler.removeCallbacksAndMessages(null)
+                
+                // Check for common issues
+                val issues = checkARIssues()
+                val issueMessage = if (issues.isNotEmpty()) {
+                    "Issues detected: ${issues.joinToString(", ")}"
+                } else {
+                    "AR tracking cannot initialize in this environment"
+                }
+                
+                // Show dialog to user with more detailed information
                 AlertDialog.Builder(this)
                     .setTitle("AR Initialization Issue")
-                    .setMessage("Could not initialize AR tracking. Would you like to continue waiting or return to map mode?")
+                    .setMessage("Could not initialize AR tracking. $issueMessage\n\nWould you like to continue waiting or return to map mode?")
                     .setPositiveButton("Wait Longer") { _, _ ->
                         // Give more time
                         startARInitializationTimeout()
@@ -194,19 +215,66 @@ class ARActivity : AppCompatActivity() {
         }, AR_INITIALIZATION_TIMEOUT)
     }
     
-    private fun isEarthTrackingStable(): Boolean {
-        try {
-            val session = arCoreSessionHelper.session ?: return false
-            val earth = session.earth ?: return false
-            return earth.trackingState == TrackingState.TRACKING
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking Earth tracking", e)
-            return false
+    /**
+     * Check for common AR issues that might prevent initialization
+     */
+    private fun checkARIssues(): List<String> {
+        val issues = mutableListOf<String>()
+        
+        // Check if location permissions are granted
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+                != PackageManager.PERMISSION_GRANTED) {
+            issues.add("Location permission not granted")
+            // Request permission
+            ActivityCompat.requestPermissions(
+                this, 
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 
+                100
+            )
         }
+        
+        // Check if GPS is enabled
+        val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            issues.add("GPS is disabled")
+            
+            // Prompt user to enable GPS
+            AlertDialog.Builder(this)
+                .setTitle("GPS Required")
+                .setMessage("AR navigation requires GPS to be enabled. Would you like to enable it now?")
+                .setPositiveButton("Open Settings") { _, _ ->
+                    startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+                .setNegativeButton("Cancel") { _, _ -> }
+                .show()
+        }
+        
+        // Check network connectivity
+        val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val networkCapabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        if (networkCapabilities == null || 
+            (!networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && 
+             !networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR))) {
+            issues.add("No internet connection")
+        }
+        
+        // Check if device is likely indoors (harder to get GPS signal)
+        // This is just a heuristic based on sensor readings
+        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        val lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
+        if (lightSensor != null) {
+            // Check if light sensor readings are low (suggesting indoors)
+            // This would require registering a sensor listener, which is complex
+            // for this example we'll just add a general note
+            issues.add("You may be indoors where GPS signal is weak")
+        }
+        
+        return issues
     }
-    
+
     private fun configureSession(session: Session) {
         try {
+            Log.d(TAG, "Configuring AR session with enhanced settings")
             session.configure(
                 session.config.apply {
                     // Enable geospatial mode
@@ -217,11 +285,59 @@ class ARActivity : AppCompatActivity() {
                     lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
                     updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                     focusMode = Config.FocusMode.AUTO
+                    
+                    // Try adding some additional settings that might help with initialization
+                    try {
+                        // Check if the device supports depth
+                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                            depthMode = Config.DepthMode.AUTOMATIC
+                            Log.d(TAG, "Enabled depth mode for better tracking")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error checking depth support", e)
+                    }
+                    
+                    // Enable cloud anchors for possible network-assisted positioning
+                    cloudAnchorMode = Config.CloudAnchorMode.ENABLED
                 }
             )
+            
+            Log.d(TAG, "AR session configured successfully with enhanced settings")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring session", e)
             Toast.makeText(this, "Error configuring AR: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun isEarthTrackingStable(): Boolean {
+        try {
+            val session = arCoreSessionHelper.session ?: return false
+            val earth = session.earth ?: return false
+            
+            // Get more details about tracking state
+            val trackingState = earth.trackingState
+            val earthState = earth.earthState
+            
+            Log.d(TAG, "Earth tracking state: $trackingState, Earth state: $earthState")
+            
+            // Only consider it stable if Earth is in TRACKING state
+            if (trackingState == TrackingState.TRACKING) {
+                // Also check geospatial pose accuracy
+                val pose = earth.cameraGeospatialPose
+                val horizontalAccuracy = pose.horizontalAccuracy
+                val headingAccuracy = pose.headingAccuracy
+                
+                Log.d(TAG, "Geospatial pose - horizontal accuracy: $horizontalAccuracy m, heading accuracy: $headingAccuracy degrees")
+                
+                // Consider it stable only if accuracy is reasonable
+                val isAccuracyGood = horizontalAccuracy < 20 && headingAccuracy < 25
+                return isAccuracyGood
+            }
+            
+            return false
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking Earth tracking", e)
+            return false
         }
     }
     
@@ -467,8 +583,8 @@ class ARActivity : AppCompatActivity() {
         super.onResume()
         
         try {
-            // Note: We're not calling arCoreSessionHelper.onResume() here because 
-            // we already called it in onCreate to create the session
+            // Ensure the AR session is resumed properly
+            arCoreSessionHelper.onResume()
             view.onResume()
             
             // Start updating tracking quality indicator
@@ -479,6 +595,16 @@ class ARActivity : AppCompatActivity() {
                     handler.postDelayed(this, 1000)
                 }
             })
+            
+            // Force a quick check for any issues that might be preventing AR
+            Handler(Looper.getMainLooper()).postDelayed({
+                val issues = checkARIssues()
+                if (issues.isNotEmpty()) {
+                    Log.w(TAG, "AR issues detected: ${issues.joinToString(", ")}")
+                    directionTextView?.text = "AR issues: ${issues.joinToString(", ")}"
+                    directionTextView?.visibility = View.VISIBLE
+                }
+            }, 2000) // Check after 2 seconds
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in onResume", e)

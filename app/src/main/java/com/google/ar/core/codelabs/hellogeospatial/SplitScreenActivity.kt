@@ -47,7 +47,7 @@ import java.util.Locale
 /**
  * Split-screen activity showing both AR and Map views simultaneously
  */
-class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsHelper.DirectionsListener {
+class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     companion object {
         private const val TAG = "SplitScreenActivity"
         private const val LOCATION_PERMISSION_CODE = 100
@@ -258,17 +258,38 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsH
     }
     
     private fun configureSession(session: Session) {
-        session.configure(
-            session.config.apply {
-                // Enable geospatial mode
-                geospatialMode = Config.GeospatialMode.ENABLED
-                
-                // Basic AR settings
-                planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                focusMode = Config.FocusMode.AUTO
-            }
-        )
+        try {
+            Log.d(TAG, "Configuring AR session")
+            session.configure(
+                session.config.apply {
+                    // Enable geospatial mode
+                    geospatialMode = Config.GeospatialMode.ENABLED
+                    
+                    // Basic settings for navigation
+                    planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                    lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
+                    updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                    focusMode = Config.FocusMode.AUTO
+                    
+                    // Try to enable depth for better occlusion
+                    try {
+                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                            depthMode = Config.DepthMode.AUTOMATIC
+                            Log.d(TAG, "Depth mode enabled for better AR experience")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error checking depth support", e)
+                    }
+                    
+                    // Enable cloud anchors for possible sharing features
+                    cloudAnchorMode = Config.CloudAnchorMode.ENABLED
+                }
+            )
+            Log.d(TAG, "AR session configured successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configuring AR session", e)
+            Toast.makeText(this, "AR configuration error: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     
     private fun startTrackingQualityUpdates() {
@@ -349,9 +370,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsH
         // Setup navigation button
         val navigateButton = findViewById<Button>(R.id.navigateButton)
         navigateButton.setOnClickListener {
-            destinationLatLng?.let { destination ->
-                startNavigation(destination)
-            }
+            startNavigation()
         }
         
         // Setup mode toggle buttons
@@ -364,6 +383,108 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsH
         mapModeButton.setOnClickListener {
             switchToMapOnlyMode()
         }
+        
+        // Set up periodic AR status updates
+        val handler = Handler(Looper.getMainLooper())
+        handler.post(object : Runnable {
+            override fun run() {
+                updateARStatus()
+                handler.postDelayed(this, 1000)
+            }
+        })
+    }
+    
+    private fun updateARStatus() {
+        try {
+            val session = arCoreSessionHelper.session ?: return
+            val earth = session.earth ?: return
+            
+            // Update tracking quality indicator based on Earth state
+            val trackingState = earth.trackingState
+            val earthState = earth.earthState
+            
+            if (trackingState == TrackingState.TRACKING) {
+                val pose = earth.cameraGeospatialPose
+                val horizontalAccuracy = pose.horizontalAccuracy
+                
+                val qualityText = when {
+                    horizontalAccuracy <= 1.0 -> "HIGH"
+                    horizontalAccuracy <= 3.0 -> "MEDIUM"
+                    else -> "LOW"
+                }
+                
+                trackingQualityIndicator?.text = "Tracking: $qualityText (±${horizontalAccuracy.toInt()}m)"
+                
+                val backgroundColor = when {
+                    horizontalAccuracy <= 1.0 -> ContextCompat.getColor(this, android.R.color.holo_green_dark)
+                    horizontalAccuracy <= 3.0 -> ContextCompat.getColor(this, android.R.color.holo_orange_light)
+                    else -> ContextCompat.getColor(this, android.R.color.holo_red_light)
+                }
+                
+                trackingQualityIndicator?.setBackgroundColor(backgroundColor)
+                
+                // If we're navigating, ensure route is showing in AR
+                if (isNavigating && routePoints != null && routePoints!!.isNotEmpty()) {
+                    renderer.createPathAnchors(routePoints!!)
+                }
+            } else {
+                // Not tracking
+                trackingQualityIndicator?.text = "Tracking: ${trackingState.name} / ${earthState.name}"
+                trackingQualityIndicator?.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+                
+                // Check for common issues if not tracking
+                if (trackingState != TrackingState.TRACKING) {
+                    val issues = checkARIssues()
+                    if (issues.isNotEmpty()) {
+                        Log.w(TAG, "AR issues detected: ${issues.joinToString(", ")}")
+                        // Update status with issues
+                        val issuesText = if (issues.size > 2) {
+                            issues.take(2).joinToString(", ") + "..."
+                        } else {
+                            issues.joinToString(", ")
+                        }
+                        trackingQualityIndicator?.text = "Issues: $issuesText"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating AR status", e)
+            trackingQualityIndicator?.text = "AR Status Error"
+        }
+    }
+    
+    /**
+     * Check for common issues that might prevent AR from working correctly
+     */
+    private fun checkARIssues(): List<String> {
+        val issues = mutableListOf<String>()
+        
+        // Check location permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+                != PackageManager.PERMISSION_GRANTED) {
+            issues.add("Location permission denied")
+        }
+        
+        // Check if GPS is enabled
+        val locationManager = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+        if (!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+            issues.add("GPS disabled")
+        }
+        
+        // Check if we're indoors (harder to get GPS)
+        val sensorManager = getSystemService(SENSOR_SERVICE) as android.hardware.SensorManager
+        val lightSensor = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)
+        if (lightSensor != null) {
+            // Just add a general warning about being indoors
+            issues.add("May be indoors")
+        }
+        
+        // Check if we have a current location
+        if (currentLocation == null) {
+            issues.add("No location fix")
+        }
+        
+        return issues
     }
     
     private fun searchLocation(query: String) {
@@ -408,82 +529,143 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, DirectionsH
         }
     }
     
-    private fun startNavigation(destination: LatLng) {
+    private fun startNavigation() {
+        if (currentLocation == null || destinationLatLng == null) {
+            Toast.makeText(this, "Cannot start navigation: location or destination not set", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
         isNavigating = true
         
-        // Get current location (either from AR or location services)
-        val origin = currentLocation ?: return
+        // Update UI
+        findViewById<Button>(R.id.navigateButton).visibility = View.GONE
+        val stopButton = findViewById<Button>(R.id.navigateButton)
+        stopButton?.visibility = View.VISIBLE
         
-        // Fetch directions between current location and destination
-        fetchAndDisplayDirections(origin, destination)
+        // Fetch and display directions
+        fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+        
+        // Start AR mode
+        try {
+            val session = arCoreSessionHelper.session
+            val earth = session?.earth
+            
+            if (earth?.trackingState == TrackingState.TRACKING) {
+                trackingQualityIndicator?.text = "AR navigation started"
+                trackingQualityIndicator?.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_dark))
+            } else {
+                Log.d(TAG, "Earth not yet tracking, navigation will start when tracking begins")
+                trackingQualityIndicator?.text = "Waiting for AR tracking..."
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting AR navigation", e)
+        }
     }
     
     private fun fetchAndDisplayDirections(origin: LatLng, destination: LatLng) {
         try {
             // Show loading indicator
-            findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
+            val loadingIndicator = findViewById<TextView>(R.id.directionsText)
+            loadingIndicator?.text = "Loading directions..."
+            loadingIndicator?.visibility = View.VISIBLE
             
-            // Fetch directions using our helper
-            directionsHelper.getDirections(origin, destination, this)
+            // Get directions with turn-by-turn instructions
+            directionsHelper.getDirectionsWithInstructions(
+                origin, 
+                destination,
+                object : DirectionsHelper.DirectionsWithInstructionsListener {
+                    override fun onDirectionsReady(
+                        pathPoints: List<LatLng>,
+                        instructions: List<String>,
+                        steps: List<DirectionsHelper.DirectionStep>
+                    ) {
+                        runOnUiThread {
+                            loadingIndicator?.visibility = View.GONE
+                            
+                            // Store the route points for AR
+                            routePoints = pathPoints
+                            
+                            // Update AR view with the path
+                            updateARPathVisualization(pathPoints)
+                            
+                            // Draw route on the map
+                            drawRouteOnMap(pathPoints)
+                            
+                            // Display the first instruction
+                            if (instructions.isNotEmpty()) {
+                                val directionsTextView = findViewById<TextView>(R.id.directionsText)
+                                directionsTextView?.apply {
+                                    text = instructions[0]
+                                    visibility = View.VISIBLE
+                                }
+                            }
+                            
+                            Toast.makeText(this@SplitScreenActivity, "Navigation started", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    
+                    override fun onDirectionsError(errorMessage: String) {
+                        runOnUiThread {
+                            loadingIndicator?.visibility = View.GONE
+                            
+                            Log.e(TAG, "Error getting directions: $errorMessage")
+                            Toast.makeText(this@SplitScreenActivity, "Error getting directions: $errorMessage", Toast.LENGTH_SHORT).show()
+                            
+                            // Fallback to direct line
+                            val simplePath = listOf(origin, destination)
+                            
+                            // Store the route points for AR
+                            routePoints = simplePath
+                            
+                            // Update AR with direct path
+                            updateARPathVisualization(simplePath)
+                            
+                            // Draw direct line on map
+                            drawRouteOnMap(simplePath)
+                            
+                            findViewById<TextView>(R.id.directionsText)?.apply {
+                                text = "Follow the direct path to destination"
+                                visibility = View.VISIBLE
+                            }
+                        }
+                    }
+                }
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching directions", e)
-            findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
             Toast.makeText(this, "Error fetching directions: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun updateARPathVisualization(pathPoints: List<LatLng>) {
+        try {
+            val session = arCoreSessionHelper.session
+            val earth = session?.earth
             
-            // Fall back to Google Maps navigation as a last resort
-            openGoogleMapsNavigation(destination)
-        }
-    }
-    
-    override fun onDirectionsReady(pathPoints: List<LatLng>) {
-        // Hide loading indicator
-        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-        
-        // Store the route points
-        routePoints = pathPoints
-        
-        // Draw the route on the map
-        directionsHelper.drawRouteOnMap(googleMap!!, pathPoints)
-        
-        // Create AR anchors for the path
-        renderer.updatePathAnchors(pathPoints)
-        
-        Toast.makeText(this, "Navigation started", Toast.LENGTH_SHORT).show()
-    }
-    
-    override fun onDirectionsError(errorMessage: String) {
-        // Hide loading indicator
-        findViewById<View>(R.id.map_loading_container)?.visibility = View.GONE
-        
-        Log.e(TAG, "Directions error: $errorMessage")
-        Toast.makeText(this, "Error getting directions: $errorMessage", Toast.LENGTH_SHORT).show()
-        
-        // Fall back to a direct line between points
-        destinationLatLng?.let { destination ->
-            currentLocation?.let { origin ->
-                val simplePath = listOf(origin, destination)
-                
-                // Still show a simple path on the map
-                googleMap?.clear()
-                directionsHelper.drawRouteOnMap(googleMap!!, simplePath)
-                
-                // Update AR with simple path
-                renderer.updatePathAnchors(simplePath)
-                
-                Toast.makeText(this, "Using simplified navigation route", Toast.LENGTH_SHORT).show()
+            if (earth?.trackingState == TrackingState.TRACKING) {
+                // If Earth is tracking, create anchors immediately
+                renderer.createPathAnchors(pathPoints)
+            } else {
+                // If not tracking yet, store the path - we'll create anchors when Earth starts tracking
+                // This is handled in the updateARStatus method
+                Log.d(TAG, "Earth not tracking yet, will create path anchors when tracking begins")
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating AR path visualization", e)
         }
     }
     
-    private fun openGoogleMapsNavigation(destination: LatLng) {
-        val uri = Uri.parse("google.navigation:q=${destination.latitude},${destination.longitude}&mode=w")
-        val mapIntent = Intent(Intent.ACTION_VIEW, uri)
-        mapIntent.setPackage("com.google.android.apps.maps")
-        
-        if (mapIntent.resolveActivity(packageManager) != null) {
-            startActivity(mapIntent)
-        } else {
-            Toast.makeText(this, "Google Maps app is not installed", Toast.LENGTH_SHORT).show()
+    private fun drawRouteOnMap(pathPoints: List<LatLng>) {
+        googleMap?.let { map ->
+            map.clear()
+            
+            // Add polyline - using the available method
+            val options = com.google.android.gms.maps.model.PolylineOptions()
+                .addAll(pathPoints)
+                .width(5f)
+                .color(android.graphics.Color.BLUE)
+                
+            map.addPolyline(options)
         }
     }
     

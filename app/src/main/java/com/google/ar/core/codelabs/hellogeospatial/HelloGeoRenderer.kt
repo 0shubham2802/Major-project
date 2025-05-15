@@ -968,12 +968,14 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Create destination anchor at the end of the path
       if (path.isNotEmpty()) {
+        Log.d(TAG, "Creating path anchors for ${path.size} points")
         // Add start point
         val start = path.first()
         val startAnchor = createAnchorAtLocation(start.latitude, start.longitude)
         startAnchor?.let {
           anchors.add(it)
           anchorData[it] = AnchorType.START
+          Log.d(TAG, "Created START anchor at ${start.latitude}, ${start.longitude}")
         }
         
         // Add destination anchor at the end of the path
@@ -982,6 +984,7 @@ class HelloGeoRenderer(val context: Context) :
         destAnchor?.let {
           destinationAnchor = it
           anchorData[it] = AnchorType.DESTINATION
+          Log.d(TAG, "Created DESTINATION anchor at ${destination.latitude}, ${destination.longitude}")
         }
         
         // Create path waypoints with smarter spacing
@@ -992,7 +995,7 @@ class HelloGeoRenderer(val context: Context) :
           Log.d(TAG, "Path has ${significantPoints.size} significant points")
           
           // Create anchors with more density for better visual guidance
-          val maxSpacing = 30.0 // Maximum 30 meters between anchors for better visibility
+          val maxSpacing = 25.0 // Maximum 25 meters between anchors for better visibility
           
           // Track last anchor position to ensure proper spacing
           var lastAnchorPos = start
@@ -1022,6 +1025,7 @@ class HelloGeoRenderer(val context: Context) :
                 intermediateAnchor?.let {
                   anchors.add(it)
                   anchorData[it] = AnchorType.WAYPOINT
+                  Log.d(TAG, "Created intermediate WAYPOINT anchor at $intermediateLat, $intermediateLng")
                 }
               }
             }
@@ -1034,7 +1038,9 @@ class HelloGeoRenderer(val context: Context) :
               
               // If it's a turn, log the angle for debugging
               if (point.isTurn) {
-                Log.d(TAG, "Created turn anchor with angle: ${point.angle} degrees")
+                Log.d(TAG, "Created TURN anchor at ${pointPos.latitude}, ${pointPos.longitude} with angle: ${point.angle} degrees")
+              } else {
+                Log.d(TAG, "Created WAYPOINT anchor at ${pointPos.latitude}, ${pointPos.longitude}")
               }
             }
             
@@ -1045,6 +1051,30 @@ class HelloGeoRenderer(val context: Context) :
         
         isNavigating = true
         Log.d(TAG, "Created ${anchors.size} path anchors and 1 destination anchor")
+        
+        // When done creating anchors, print the list of all anchors created
+        if (anchors.size > 0) {
+          Log.d(TAG, "Anchor summary:")
+          var turnCount = 0
+          var waypointCount = 0
+          var startCount = 0
+          var destCount = 0
+          
+          for (anchor in anchors) {
+            when (anchorData[anchor]) {
+              AnchorType.START -> startCount++
+              AnchorType.TURN -> turnCount++
+              AnchorType.WAYPOINT -> waypointCount++
+              AnchorType.DESTINATION -> destCount++
+              null -> Log.d(TAG, "Anchor with no type data")
+            }
+          }
+          
+          Log.d(TAG, "- $startCount start anchor(s)")
+          Log.d(TAG, "- $turnCount turn anchors")
+          Log.d(TAG, "- $waypointCount waypoint anchors") 
+          Log.d(TAG, "- $destCount destination anchor(s)")
+        }
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error creating path anchors", e)
