@@ -19,131 +19,226 @@
         android:textStyle="bold"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Main Navigation Card (Google Maps Style) -->
+    <!-- Large Direction Arrows in the middle of the screen -->
+    <LinearLayout
+        android:id="@+id/ar_direction_arrows"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/ar_direction_arrow1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="›"
+            android:textColor="#FFFFFF"
+            android:textSize="70sp"
+            android:textStyle="bold"
+            android:background="@drawable/arrow_background" />
+
+        <TextView
+            android:id="@+id/ar_direction_arrow2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="›"
+            android:textColor="#FFFFFF"
+            android:textSize="70sp"
+            android:textStyle="bold"
+            android:background="@drawable/arrow_background" />
+
+        <TextView
+            android:id="@+id/ar_direction_arrow3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="›"
+            android:textColor="#FFFFFF"
+            android:textSize="70sp"
+            android:textStyle="bold"
+            android:background="@drawable/arrow_background" />
+
+        <TextView
+            android:id="@+id/ar_direction_arrow4"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="›"
+            android:textColor="#FFFFFF"
+            android:textSize="70sp"
+            android:textStyle="bold"
+            android:background="@drawable/arrow_background" />
+    </LinearLayout>
+
+    <!-- Turn Instruction Card (Google Maps Style) -->
     <androidx.cardview.widget.CardView
         android:id="@+id/nav_instruction_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
-        app:cardBackgroundColor="#AA000000"
+        app:cardBackgroundColor="#FFFFFF"
         app:cardCornerRadius="12dp"
         app:cardElevation="4dp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/return_to_map_button"
-        android:layout_marginBottom="16dp">
+        android:layout_marginTop="70dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:padding="16dp">
 
-            <!-- Direction Arrow and Distance Row -->
+            <!-- Direction Icon -->
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:layout_marginEnd="16dp">
 
-                <!-- Direction Arrow -->
+                <ImageView
+                    android:id="@+id/direction_icon"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@android:drawable/ic_menu_directions"
+                    app:tint="#000000" />
+            </LinearLayout>
+
+            <!-- Turn Direction Text -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
                 <TextView
-                    android:id="@+id/direction_arrow"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/direction_text"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="16dp"
-                    android:text="↑"
-                    android:textColor="#FFFFFF"
-                    android:textSize="36sp"
+                    android:text="Turn right"
+                    android:textColor="#000000"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
-                <!-- Current Distance & Time Info -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:id="@+id/distance_remaining"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="300m"
-                        android:textColor="#FFFFFF"
-                        android:textSize="20sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/time_remaining"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="4 min"
-                        android:textColor="#AAFFFFFF"
-                        android:textSize="14sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Divider -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="8dp"
-                android:background="#44FFFFFF" />
-
-            <!-- Direction Text -->
-            <TextView
-                android:id="@+id/direction_text"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Continue straight on Main Street"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp" />
-
-            <!-- Progress Bar -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <ProgressBar
-                    android:id="@+id/navigation_progress"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="0dp"
-                    android:layout_height="4dp"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
-                    android:max="100"
-                    android:progress="30"
-                    android:progressDrawable="@drawable/progress_drawable" />
-
                 <TextView
-                    android:id="@+id/total_distance"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/street_name"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="1.2km"
-                    android:textColor="#AAFFFFFF"
-                    android:textSize="12sp" />
+                    android:text="on W 6th St"
+                    android:textColor="#666666"
+                    android:textSize="16sp" />
             </LinearLayout>
+
+            <!-- Microphone Button -->
+            <ImageView
+                android:id="@+id/voice_command_button"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center_vertical"
+                android:background="@android:drawable/ic_btn_speak_now"
+                app:tint="#666666" />
+        </LinearLayout>
+
+        <!-- "Then" Section for Next Direction -->
+        <LinearLayout
+            android:id="@+id/next_direction_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:background="#F1F1F1"
+            android:layout_marginTop="65dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Then"
+                android:textColor="#000000"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="8dp"
+                android:layout_marginStart="8dp" />
+
+            <ImageView
+                android:id="@+id/next_direction_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:background="@android:drawable/ic_menu_directions"
+                app:tint="#000000"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/next_direction_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Turn left"
+                android:textColor="#000000"
+                android:textSize="14sp" />
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Return to Map Button at Bottom -->
-    <Button
-        android:id="@+id/return_to_map_button"
-        android:layout_width="wrap_content"
+    <!-- Bottom Nav Info Panel -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/bottom_nav_panel"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        android:backgroundTint="#2196F3"
-        android:padding="12dp"
-        android:text="Return to Map"
-        android:textColor="#FFFFFF"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:cardBackgroundColor="#FFFFFF"
+        app:cardElevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp">
+
+            <!-- Close Button -->
+            <ImageView
+                android:id="@+id/close_button"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <!-- Time and Distance -->
+            <TextView
+                android:id="@+id/time_remaining"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="8 min"
+                android:textColor="#4CAF50"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <TextView
+                android:id="@+id/distance_remaining"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0.4 mi · 8:08 AM"
+                android:textColor="#666666"
+                android:textSize="12sp"
+                app:layout_constraintStart_toStartOf="@id/time_remaining"
+                app:layout_constraintEnd_toEndOf="@id/time_remaining"
+                app:layout_constraintTop_toBottomOf="@id/time_remaining" />
+
+            <!-- Settings Button -->
+            <ImageView
+                android:id="@+id/settings_button"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/ic_menu_preferences"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.cardview.widget.CardView>
 
     <!-- Help Button in Top-Right -->
     <Button

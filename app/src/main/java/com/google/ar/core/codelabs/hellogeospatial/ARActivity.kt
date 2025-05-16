@@ -59,11 +59,11 @@ class ARActivity : AppCompatActivity() {
     private var arInitializationTimeoutHandler = Handler(Looper.getMainLooper())
     private var trackingQualityIndicator: TextView? = null
     private var directionTextView: TextView? = null
-    private var directionArrowView: TextView? = null
+    private var streetNameView: TextView? = null
+    private var directionArrows: List<TextView>? = null
     private var distanceRemainingView: TextView? = null
     private var timeRemainingView: TextView? = null
-    private var totalDistanceView: TextView? = null
-    private var navigationProgressBar: ProgressBar? = null
+    private var nextDirectionTextView: TextView? = null
     private var navInstructionCard: CardView? = null
     private var isNavigating = false
     private var arStatusMessage: String? = null
@@ -214,24 +214,33 @@ class ARActivity : AppCompatActivity() {
     
     private fun initNavigationUI() {
         try {
-            // Find all UI components from the included layout
-            val navigationOverlay = findViewById<View>(R.id.navigation_overlay)
+            // Find all UI components for AR navigation
+            trackingQualityIndicator = findViewById(R.id.tracking_quality)
+            directionTextView = findViewById(R.id.direction_text)
+            streetNameView = findViewById(R.id.street_name)
+            navInstructionCard = findViewById(R.id.nav_instruction_card)
+            distanceRemainingView = findViewById(R.id.distance_remaining)
+            timeRemainingView = findViewById(R.id.time_remaining)
+            nextDirectionTextView = findViewById(R.id.next_direction_text)
             
-            trackingQualityIndicator = navigationOverlay.findViewById(R.id.tracking_quality)
-            directionTextView = navigationOverlay.findViewById(R.id.direction_text)
-            directionArrowView = navigationOverlay.findViewById(R.id.direction_arrow)
-            distanceRemainingView = navigationOverlay.findViewById(R.id.distance_remaining)
-            timeRemainingView = navigationOverlay.findViewById(R.id.time_remaining)
-            totalDistanceView = navigationOverlay.findViewById(R.id.total_distance)
-            navigationProgressBar = navigationOverlay.findViewById(R.id.navigation_progress)
-            navInstructionCard = navigationOverlay.findViewById(R.id.nav_instruction_card)
+            // Setup AR direction arrows
+            directionArrows = listOf(
+                findViewById(R.id.ar_direction_arrow1),
+                findViewById(R.id.ar_direction_arrow2),
+                findViewById(R.id.ar_direction_arrow3),
+                findViewById(R.id.ar_direction_arrow4)
+            )
             
-            // Initially hide the navigation card until navigation starts
-            navInstructionCard?.visibility = View.GONE
+            // Set close button click listener
+            findViewById<View>(R.id.close_button)?.setOnClickListener {
+                returnToMapMode()
+            }
             
+            // Initial state setup
+            trackingQualityIndicator?.text = "Tracking: INITIALIZING"
+            updateNavigationUI("Turn right", "on W 6th St", "Turn left")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing navigation UI", e)
-            Toast.makeText(this, "Error setting up UI: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -412,367 +421,96 @@ class ARActivity : AppCompatActivity() {
     }
     
     private fun setARDestination(destination: LatLng) {
-        try {
-            isNavigating = true
-            
-            // Show loading state
-            directionTextView?.text = "Preparing navigation..."
-            directionArrowView?.text = "↑"
-            distanceRemainingView?.text = "..."
-            timeRemainingView?.text = "Calculating..."
-            navInstructionCard?.visibility = View.VISIBLE
-            
-            // Wait for Earth to start tracking
-            val earthTrackingHandler = Handler(Looper.getMainLooper())
-            val earthTrackingRunnable = object : Runnable {
-                override fun run() {
-                    val session = arCoreSessionHelper.session
-                    val earth = session?.earth
-                    
-                    if (earth?.trackingState == TrackingState.TRACKING) {
-                        // Earth is tracking, create anchor
-                        val cameraGeospatialPose = earth.cameraGeospatialPose
-                        val currentLatLng = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
-                        
-                        // Use DirectionsHelper to get real directions instead of just a direct line
-                        val directionsHelper = DirectionsHelper(this@ARActivity)
-                        
-                        // Show loading indicator
-                        runOnUiThread {
-                            trackingQualityIndicator?.text = "Getting directions..."
-                        }
-                        
-                        directionsHelper.getDirectionsWithInstructions(
-                            currentLatLng, 
-                            destination,
-                            object : DirectionsHelper.DirectionsWithInstructionsListener {
-                                override fun onDirectionsReady(
-                                    pathPoints: List<LatLng>,
-                                    instructions: List<String>,
-                                    steps: List<DirectionsHelper.DirectionStep>
-                                ) {
-                                    // Create anchors for the real path
-                                    renderer.createPathAnchors(pathPoints)
-                                    
-                                    // Store navigation data
-                                    navigationInstructions.clear()
-                                    navigationInstructions.addAll(instructions)
-                                    navigationSteps.clear()
-                                    navigationSteps.addAll(steps)
-                                    currentStepIndex = 0
-                                    
-                                    // Calculate total distance and time
-                                    totalRouteDistance = steps.sumBy { it.distance }
-                                    totalTimeSeconds = (totalRouteDistance / 1.4).toInt() // Estimate walking speed at 1.4 m/s
-                                    timeRemaining = totalTimeSeconds
-                                    
-                                    // Display the navigation information
-                                    updateNavigationUI(0, totalRouteDistance, totalTimeSeconds, 0)
-                                    
-                                    // Make the navigation card visible
-                                    runOnUiThread {
-                                        navInstructionCard?.visibility = View.VISIBLE
-                                        Toast.makeText(this@ARActivity, "AR navigation started with turn-by-turn directions", Toast.LENGTH_SHORT).show()
-                                        
-                                        // Start navigation updates
-                                        startNavigationUpdates()
-                                    }
-                                }
-                                
-                                override fun onDirectionsError(errorMessage: String) {
-                                    Log.e(TAG, "Directions error: $errorMessage")
-                                    
-                                    // Fall back to direct path
-                                    val simplePath = listOf(currentLatLng, destination)
-                                    renderer.createPathAnchors(simplePath)
-                                    
-                                    // Calculate direct distance
-                                    val directDistance = calculateDistance(
-                                        currentLatLng.latitude, currentLatLng.longitude,
-                                        destination.latitude, destination.longitude
-                                    ).toInt()
-                                    
-                                    // Create simple instruction
-                                    navigationInstructions.clear()
-                                    navigationInstructions.add("Follow the direct path to destination")
-                                    
-                                    // Create a single step for the direct path
-                                    navigationSteps.clear()
-                                    navigationSteps.add(
-                                        DirectionsHelper.DirectionStep(
-                                            currentLatLng,
-                                            destination,
-                                            "Follow the direct path",
-                                            directDistance,
-                                            simplePath
-                                        )
-                                    )
-                                    
-                                    // Set navigation metrics
-                                    totalRouteDistance = directDistance
-                                    totalTimeSeconds = (directDistance / 1.4).toInt() // Walking speed ~1.4 m/s
-                                    timeRemaining = totalTimeSeconds
-                                    
-                                    // Update UI
-                                    updateNavigationUI(0, totalRouteDistance, totalTimeSeconds, 0)
-                                    
-                                    runOnUiThread {
-                                        Toast.makeText(this@ARActivity, "Using direct route: $errorMessage", Toast.LENGTH_SHORT).show()
-                                        navInstructionCard?.visibility = View.VISIBLE
-                                        
-                                        // Start navigation updates
-                                        startNavigationUpdates()
-                                    }
-                                }
-                            }
-                        )
-                    } else {
-                        // Not tracking yet, check again in a second
-                        earthTrackingHandler.postDelayed(this, 1000)
-                    }
-                }
-            }
-            
-            // Start checking for Earth tracking
-            earthTrackingHandler.post(earthTrackingRunnable)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error setting AR destination", e)
-            Toast.makeText(this, "Error starting AR navigation: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+        Log.d(TAG, "Setting AR destination: $destination")
+        destinationLatLng = destination
+        isNavigating = true
+        
+        // Start the AR navigation
+        startARNavigation(destination)
+        
+        // Pulse the direction arrows to attract attention
+        pulseArrows()
     }
     
-    private fun updateNavigationUI(stepDistance: Int, totalDistance: Int, totalTimeSeconds: Int, distanceTraveled: Int) {
+    private fun startARNavigation(destination: LatLng) {
+        // For demo purposes, simulate a fixed navigation route
+        // In a real app, this would use real navigation data
+        
+        // Simulate street name based on direction
+        val streetName = "on W 6th St"
+        
+        // Update UI with demo instructions
+        updateNavigationUI("Turn right", streetName, "Turn left")
+        
+        // Update navigation time and distance (simulated values)
         runOnUiThread {
-            // Calculate remaining values
-            val distanceRemaining = totalDistance - distanceTraveled
-            
-            // Format distance
-            val distanceText = when {
-                distanceRemaining >= 1000 -> String.format("%.1f km", distanceRemaining / 1000.0)
-                else -> "$distanceRemaining m"
-            }
-            
-            // Calculate remaining time
-            val remainingTimeSeconds = (totalTimeSeconds * (distanceRemaining.toFloat() / totalDistance.toFloat())).toInt()
-            val timeText = when {
-                remainingTimeSeconds >= 3600 -> String.format("%d hr %d min", remainingTimeSeconds / 3600, (remainingTimeSeconds % 3600) / 60)
-                remainingTimeSeconds >= 60 -> String.format("%d min", remainingTimeSeconds / 60)
-                else -> "$remainingTimeSeconds sec"
-            }
-            
-            // Format total distance
-            val totalDistanceText = when {
-                totalDistance >= 1000 -> String.format("%.1f km", totalDistance / 1000.0)
-                else -> "$totalDistance m"
-            }
-            
-            // Calculate progress percentage
-            val progressPercent = ((distanceTraveled.toFloat() / totalDistance.toFloat()) * 100).toInt()
-            
-            // Update UI components
-            distanceRemainingView?.text = distanceText
-            timeRemainingView?.text = timeText
-            totalDistanceView?.text = totalDistanceText
-            navigationProgressBar?.progress = progressPercent
-            
-            // Get the next instruction
-            if (navigationInstructions.isNotEmpty() && currentStepIndex < navigationInstructions.size) {
-                directionTextView?.text = navigationInstructions[currentStepIndex]
-                
-                // Calculate and set direction arrow
-                if (currentStepIndex < navigationSteps.size && navigationSteps.isNotEmpty()) {
-                    updateDirectionArrow()
-                }
-            }
+            timeRemainingView?.text = "8 min"
+            distanceRemainingView?.text = "0.4 mi · 8:08 AM"
         }
-    }
-    
-    private fun updateDirectionArrow() {
-        try {
-            val session = arCoreSessionHelper.session ?: return
-            val earth = session.earth ?: return
-            
-            if (earth.trackingState != TrackingState.TRACKING) return
-            if (navigationSteps.isEmpty() || currentStepIndex >= navigationSteps.size) return
-            
-            // Get current position and orientation
-            val cameraGeospatialPose = earth.cameraGeospatialPose
-            val currentHeading = cameraGeospatialPose.heading
-            val currentLatLng = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
-            
-            // Get current step
-            val currentStep = navigationSteps[currentStepIndex]
-            
-            // Calculate bearing to next point
-            val targetLatLng = if (currentStepIndex < navigationSteps.size - 1) {
-                navigationSteps[currentStepIndex + 1].startLocation
-            } else {
-                currentStep.endLocation
-            }
-            
-            val bearingToTarget = calculateBearing(
-                currentLatLng.latitude, currentLatLng.longitude,
-                targetLatLng.latitude, targetLatLng.longitude
-            )
-            
-            // Calculate relative angle (between heading and bearing)
-            var relativeAngle = bearingToTarget - currentHeading
-            // Normalize to -180 to 180
-            if (relativeAngle > 180) relativeAngle -= 360
-            if (relativeAngle < -180) relativeAngle += 360
-            
-            // Select appropriate arrow direction
-            val directionArrow = getDirectionArrow(relativeAngle.toFloat())
-            
-            // Update the UI
-            runOnUiThread {
-                directionArrowView?.text = directionArrow
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating direction arrow", e)
-        }
-    }
-    
-    private fun startNavigationUpdates() {
-        // Cancel any existing handler
-        navigationUpdateHandler?.removeCallbacksAndMessages(null)
         
-        // Create new handler
-        navigationUpdateHandler = Handler(Looper.getMainLooper())
-        
-        // Create runnable that updates the current instruction based on user's location
-        val navigationUpdateRunnable = object : Runnable {
+        // Start a repeating task to pulse arrows every few seconds
+        val handler = Handler(Looper.getMainLooper())
+        handler.postDelayed(object : Runnable {
             override fun run() {
-                updateNavigationInstruction()
-                updateTrackingQualityIndicator()
-                navigationUpdateHandler?.postDelayed(this, 1000) // Update every second for smoother updates
+                if (isNavigating) {
+                    pulseArrows()
+                    handler.postDelayed(this, 5000) // Pulse every 5 seconds
+                }
             }
-        }
-        
-        // Start the updates
-        navigationUpdateHandler?.post(navigationUpdateRunnable)
+        }, 3000) // Start first pulse after 3 seconds
     }
     
-    private fun updateNavigationInstruction() {
-        try {
-            val session = arCoreSessionHelper.session ?: return
-            val earth = session.earth ?: return
-            
-            if (earth.trackingState != TrackingState.TRACKING) return
-            if (navigationSteps.isEmpty()) return
-            
-            // Get current position
-            val pose = earth.cameraGeospatialPose
-            val currentLatLng = LatLng(pose.latitude, pose.longitude)
-            
-            // Find the closest step
-            var closestStepIndex = 0
-            var minDistance = Double.MAX_VALUE
-            var distanceTraveled = 0
-            
-            for (i in navigationSteps.indices) {
-                val step = navigationSteps[i]
-                val stepStart = step.startLocation
+    private fun updateNavigationUI(direction: String, streetName: String, nextDirection: String) {
+        runOnUiThread {
+            try {
+                directionTextView?.text = direction
+                streetNameView?.text = streetName
+                nextDirectionTextView?.text = nextDirection
                 
-                // Calculate distance to step start
-                val distance = calculateDistance(
-                    currentLatLng.latitude, currentLatLng.longitude,
-                    stepStart.latitude, stepStart.longitude
-                )
-                
-                if (distance < minDistance) {
-                    minDistance = distance
-                    closestStepIndex = i
+                // Make arrows visible
+                directionArrows?.forEach { arrow ->
+                    arrow.visibility = View.VISIBLE
                 }
-                
-                // Add up distances of completed steps
-                if (i < closestStepIndex) {
-                    distanceTraveled += step.distance
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating navigation UI", e)
             }
-            
-            // If we're on a step, calculate how far along we are
-            if (closestStepIndex < navigationSteps.size) {
-                val currentStep = navigationSteps[closestStepIndex]
-                val stepStart = currentStep.startLocation
-                val stepEnd = currentStep.endLocation
-                
-                // Calculate total step distance
-                val totalStepDistance = calculateDistance(
-                    stepStart.latitude, stepStart.longitude,
-                    stepEnd.latitude, stepEnd.longitude
-                )
-                
-                // Calculate distance from start of step
-                val distanceFromStart = calculateDistance(
-                    currentLatLng.latitude, currentLatLng.longitude,
-                    stepStart.latitude, stepStart.longitude
-                )
-                
-                // Calculate distance from end of step
-                val distanceFromEnd = calculateDistance(
-                    currentLatLng.latitude, currentLatLng.longitude,
-                    stepEnd.latitude, stepEnd.longitude
-                )
-                
-                // If we're closer to the end than the start, and the triangle inequality roughly holds,
-                // we've made progress along the step
-                if (distanceFromEnd < distanceFromStart && 
-                    (distanceFromStart + distanceFromEnd < totalStepDistance * 1.3)) { // Allow some wiggle room
-                    // Calculate how far along the step we are (as a percentage)
-                    val stepProgress = 1.0 - (distanceFromEnd / totalStepDistance)
-                    // Add the appropriate portion of the current step's distance
-                    distanceTraveled += (currentStep.distance * stepProgress).toInt()
-                }
-            }
-            
-            // If we've moved to a new step, update the instruction
-            if (closestStepIndex != currentStepIndex && closestStepIndex < navigationInstructions.size) {
-                currentStepIndex = closestStepIndex
-            }
-            
-            // Update navigation UI with current status
-            this.distanceTraveled = distanceTraveled
-            updateNavigationUI(0, totalRouteDistance, totalTimeSeconds, distanceTraveled)
-            
-            // If we're close to destination, show arrival message
-            val destination = destinationLatLng ?: return
-            val distanceToDestination = calculateDistance(
-                currentLatLng.latitude, currentLatLng.longitude,
-                destination.latitude, destination.longitude
-            )
-            
-            if (distanceToDestination < 20) { // Within 20 meters
+        }
+    }
+    
+    private fun pulseArrows() {
+        val handler = Handler(Looper.getMainLooper())
+        val arrowCount = directionArrows?.size ?: 0
+        
+        for (i in 0 until arrowCount) {
+            handler.postDelayed({
                 runOnUiThread {
-                    directionTextView?.text = "You have arrived at your destination"
-                    navInstructionCard?.setCardBackgroundColor(Color.parseColor("#AA006400")) // Dark green
-                    
-                    // Show toast only once when arriving
-                    if (!isArrived) {
-                        Toast.makeText(this@ARActivity, "You have arrived at your destination!", Toast.LENGTH_LONG).show()
-                        isArrived = true
+                    directionArrows?.get(i)?.apply {
+                        alpha = 0f
+                        visibility = View.VISIBLE
+                        animate().alpha(1f).setDuration(300).start()
                     }
                 }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating navigation", e)
+            }, (i * 150).toLong())
         }
     }
     
-    private fun calculateDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
-        val earthRadius = 6371000.0 // meters
-        
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLng = Math.toRadians(lng2 - lng1)
-        
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLng / 2) * Math.sin(dLng / 2)
-        
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-        
-        return earthRadius * c // Distance in meters
+    private fun updateTrackingStatus(status: TrackingState) {
+        runOnUiThread {
+            trackingQualityIndicator?.text = when (status) {
+                TrackingState.TRACKING -> "Tracking: GOOD"
+                TrackingState.PAUSED -> "Tracking: PAUSED"
+                else -> "Tracking: STOPPED"
+            }
+            
+            // Also update the color
+            trackingQualityIndicator?.setBackgroundColor(
+                when (status) {
+                    TrackingState.TRACKING -> Color.parseColor("#AA006400") // Dark Green
+                    TrackingState.PAUSED -> Color.parseColor("#AAFF8C00") // Dark Orange
+                    else -> Color.parseColor("#AAA00000") // Dark Red
+                }
+            )
+        }
     }
     
     override fun onResume() {
@@ -824,26 +562,13 @@ class ARActivity : AppCompatActivity() {
     }
     
     fun returnToMapMode() {
-        try {
-            // If we had any destination, pass it back
-            val resultIntent = Intent()
-            destinationLatLng?.let { dest ->
-                resultIntent.putExtra("DESTINATION_LAT", dest.latitude)
-                resultIntent.putExtra("DESTINATION_LNG", dest.longitude)
-            }
-            
-            // Pass back error message if there was one
-            arStatusMessage?.let {
-                resultIntent.putExtra("AR_ERROR", it)
-            }
-            
-            setResult(RESULT_OK, resultIntent)
-            finish()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error returning to map mode", e)
-            setResult(RESULT_CANCELED)
-            finish()
-        }
+        Log.d(TAG, "Returning to map mode")
+        
+        // Clean up any navigation resources
+        navigationUpdateHandler?.removeCallbacksAndMessages(null)
+        
+        // Return to previous activity
+        finish()
     }
     
     override fun onWindowFocusChanged(hasFocus: Boolean) {
