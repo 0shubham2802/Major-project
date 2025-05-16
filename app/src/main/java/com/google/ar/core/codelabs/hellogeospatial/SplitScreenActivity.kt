@@ -51,6 +51,7 @@ import androidx.recyclerview.widget.RecyclerView
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
+import androidx.appcompat.app.AlertDialog
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -945,44 +946,206 @@ private fun retryMapLoading() {
     
     private fun startNavigation(origin: LatLng, destination: LatLng) {
         try {
-            isNavigating = true
-            currentStepIndex = 0 // Reset step index when starting navigation
-            
-            // Move camera to show both origin and destination
-            val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
-                .include(origin)
-                .include(destination)
-                .build()
-            googleMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
-            
-            // Show navigation UI
-            mapNavigationOverlay?.visibility = View.VISIBLE
-            
-            // Hide the search bar and buttons during navigation
-            findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
-            findViewById<EditText>(R.id.searchBar).visibility = View.GONE
-            findViewById<Button>(R.id.navigateButton).visibility = View.GONE
-            
-            // Fetch directions
-            fetchAndDisplayDirections(origin, destination)
-            
-            // Add to recent places
-            val geocoder = Geocoder(this, Locale.getDefault())
-            val addresses = geocoder.getFromLocation(destination.latitude, destination.longitude, 1)
-            val address = addresses?.firstOrNull()
-            val placeName = address?.featureName ?: "Selected Location"
-            
-            recentPlacesManager.addRecentPlace(destination, placeName)
-            
-            // Start continuous navigation updates
-            startNavigationUpdates()
-            
-            // Log the navigation start
-            Log.d(TAG, "Navigation started from $origin to $destination")
+            // Show transport mode selection dialog before starting navigation
+            showTransportModeDialog(origin, destination)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting navigation", e)
             Toast.makeText(this, "Error starting navigation: ${e.message}", Toast.LENGTH_SHORT).show()
         }
+    }
+    
+    private fun showTransportModeDialog(origin: LatLng, destination: LatLng) {
+        // Create custom dialog
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("How would you like to travel?")
+            .setCancelable(true)
+            .create()
+        
+        // Create the dialog layout programmatically
+        val linearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                resources.getDimensionPixelSize(android.R.dimen.app_icon_size),
+                resources.getDimensionPixelSize(android.R.dimen.app_icon_size) / 2,
+                resources.getDimensionPixelSize(android.R.dimen.app_icon_size),
+                resources.getDimensionPixelSize(android.R.dimen.app_icon_size) / 2
+            )
+        }
+        
+        // Function to create a transport option
+        fun createTransportOption(
+            iconResId: Int,
+            title: String,
+            subtitle: String,
+            mode: DirectionsHelper.TransportMode
+        ): LinearLayout {
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(0, 16, 0, 16)
+                }
+                
+                // Add icon
+                addView(ImageView(context).apply {
+                    setImageResource(iconResId)
+                    layoutParams = LinearLayout.LayoutParams(60, 60).apply {
+                        marginEnd = 24
+                    }
+                })
+                
+                // Add text container
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, 
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                    
+                    // Title
+                    addView(TextView(context).apply { 
+                        text = title
+                        textSize = 16f
+                        setTextColor(android.graphics.Color.BLACK)
+                    })
+                    
+                    // Subtitle - estimated time
+                    addView(TextView(context).apply { 
+                        text = subtitle
+                        textSize = 12f
+                        setTextColor(android.graphics.Color.GRAY)
+                    })
+                })
+                
+                // Set click listener
+                setOnClickListener {
+                    selectedTransportMode = mode
+                    updateTransportModeUI()
+                    continueNavigation(origin, destination)
+                    dialog.dismiss()
+                }
+                
+                // Add ripple effect for modern touch feedback
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    foreground = android.content.res.ColorStateList.valueOf(
+                        android.graphics.Color.parseColor("#20000000")
+                    ).let {
+                        android.graphics.drawable.RippleDrawable(it, null, null)
+                    }
+                }
+                
+                // Add some padding
+                setPadding(16, 16, 16, 16)
+            }
+        }
+        
+        // Calculate estimated times
+        val distance = calculateDistance(origin, destination)
+        val walkTime = (distance / DirectionsHelper.TransportMode.WALKING.speedFactor).toInt() / 60
+        val twoWheelerTime = (distance / DirectionsHelper.TransportMode.TWO_WHEELER.speedFactor).toInt() / 60
+        val fourWheelerTime = (distance / DirectionsHelper.TransportMode.FOUR_WHEELER.speedFactor).toInt() / 60
+        
+        // Add transport options
+        linearLayout.addView(createTransportOption(
+            R.drawable.ic_walking, // Replace with your custom icon or use android.R.drawable.ic_menu_myplaces
+            "Walking",
+            "Estimated time: $walkTime min",
+            DirectionsHelper.TransportMode.WALKING
+        ))
+        
+        linearLayout.addView(createTransportOption(
+            R.drawable.ic_two_wheeler, // Replace with your custom icon or use android.R.drawable.ic_menu_directions
+            "Two-Wheeler",
+            "Estimated time: $twoWheelerTime min",
+            DirectionsHelper.TransportMode.TWO_WHEELER
+        ))
+        
+        linearLayout.addView(createTransportOption(
+            R.drawable.ic_four_wheeler, // Replace with your custom icon or use android.R.drawable.ic_menu_send
+            "Four-Wheeler",
+            "Estimated time: $fourWheelerTime min",
+            DirectionsHelper.TransportMode.FOUR_WHEELER
+        ))
+        
+        // Add a cancel button at the bottom
+        linearLayout.addView(TextView(this).apply {
+            text = "Cancel"
+            gravity = android.view.Gravity.CENTER
+            setTextColor(android.graphics.Color.parseColor("#2196F3"))
+            textSize = 16f
+            setPadding(0, 20, 0, 10)
+            setOnClickListener {
+                dialog.dismiss()
+            }
+        })
+        
+        // Set the layout to the dialog
+        dialog.setView(linearLayout)
+        
+        // Show the dialog
+        dialog.show()
+    }
+    
+    private fun calculateDistance(origin: LatLng, destination: LatLng): Float {
+        val results = FloatArray(1)
+        android.location.Location.distanceBetween(
+            origin.latitude, origin.longitude,
+            destination.latitude, destination.longitude,
+            results
+        )
+        return results[0]
+    }
+    
+    private fun continueNavigation(origin: LatLng, destination: LatLng) {
+        isNavigating = true
+        currentStepIndex = 0 // Reset step index when starting navigation
+        
+        // Move camera to show both origin and destination
+        val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
+            .include(origin)
+            .include(destination)
+            .build()
+        googleMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
+        
+        // Show navigation UI
+        mapNavigationOverlay?.visibility = View.VISIBLE
+        
+        // Show transport mode container and make sure it's visible
+        transportModeContainer?.visibility = View.VISIBLE
+        transportModeContainer?.bringToFront()
+        
+        // Hide the search bar and buttons during navigation
+        findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
+        findViewById<EditText>(R.id.searchBar).visibility = View.GONE
+        findViewById<Button>(R.id.navigateButton).visibility = View.GONE
+        
+        // Fetch directions
+        fetchAndDisplayDirections(origin, destination)
+        
+        // Add to recent places
+        val geocoder = Geocoder(this, Locale.getDefault())
+        val addresses = geocoder.getFromLocation(destination.latitude, destination.longitude, 1)
+        val address = addresses?.firstOrNull()
+        val placeName = address?.featureName ?: "Selected Location"
+        
+        recentPlacesManager.addRecentPlace(destination, placeName)
+        
+        // Start continuous navigation updates
+        startNavigationUpdates()
+        
+        // Show a toast with the selected transport mode
+        val modeName = when (selectedTransportMode) {
+            DirectionsHelper.TransportMode.WALKING -> "Walking"
+            DirectionsHelper.TransportMode.TWO_WHEELER -> "Two-Wheeler"
+            DirectionsHelper.TransportMode.FOUR_WHEELER -> "Four-Wheeler"
+        }
+        Toast.makeText(this, "Navigating with $modeName mode", Toast.LENGTH_SHORT).show()
+        
+        // Log the navigation start
+        Log.d(TAG, "Navigation started from $origin to $destination with mode $selectedTransportMode")
     }
     
     private fun startNavigationUpdates() {
