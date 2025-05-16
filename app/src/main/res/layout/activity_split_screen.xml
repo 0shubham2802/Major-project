@@ -117,6 +117,14 @@
 
                 </LinearLayout>
                 
+                <!-- Navigation Overlay (initially hidden) -->
+                <include
+                    android:id="@+id/map_navigation_overlay"
+                    layout="@layout/map_navigation_overlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
+                
                 <!-- Mode control buttons positioned in the bottom-left corner of map section -->
                 <LinearLayout
                     android:id="@+id/mode_controls"

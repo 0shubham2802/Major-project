@@ -83,6 +83,16 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var directionsHelper: DirectionsHelper
     private var routePoints: List<LatLng>? = null
     
+    // Map navigation UI components
+    private var mapNavigationOverlay: View? = null
+    private var mapNavDirectionText: TextView? = null
+    private var mapNavStreetName: TextView? = null
+    private var mapNavNextDirection: TextView? = null
+    private var mapNavTime: TextView? = null
+    private var mapNavDistance: TextView? = null
+    private var mapNavARButton: View? = null
+    private var mapNavCloseButton: View? = null
+    
     // Search suggestion components
     private lateinit var suggestionProvider: SearchSuggestionProvider
     private lateinit var placesAdapter: PlacesAdapter
@@ -378,120 +388,140 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     }
     
     private fun setupUIControls() {
-        // Get the search bar
-        val searchBar = findViewById<EditText>(R.id.searchBar)
-        
-        // Set up search bar
-        searchBar.setOnEditorActionListener { v, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                val query = v.text.toString()
-                if (query.isNotBlank()) {
-                    hideSuggestions()
-                    searchLocation(query)
-                    hideKeyboard()
-                }
-                true
-            } else {
-                false
-            }
-        }
-        
-        // Set up text change listener for search suggestions
-        searchBar.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        try {
+            // Find UI components
+            val searchBar = findViewById<EditText>(R.id.searchBar)
+            val navigateButton = findViewById<Button>(R.id.navigateButton)
+            trackingQualityIndicator = findViewById(R.id.tracking_quality)
+            surfaceView = findViewById(R.id.ar_surface_view)
             
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                // Cancel any pending search
-                lastSearchRunnable?.let { searchQueryHandler.removeCallbacks(it) }
-                
-                val query = s?.toString() ?: ""
-                
-                if (query.length < 3) {
-                    // Show recent places if search field has focus
-                    if (searchBar.hasFocus()) {
-                        showRecentPlacesOnly()
-                    } else {
-                        hideSuggestions()
-                    }
-                    return
-                }
-                
-                // Delay the search to avoid too many requests while typing
-                val searchRunnable = Runnable {
-                    showSuggestionsLoading()
-                    suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
-                        override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
-                            if (suggestions.isEmpty()) {
-                                showRecentPlacesOnly()
-                            } else {
-                                showSuggestions(suggestions)
-                            }
-                        }
-                        
-                        override fun onError(message: String) {
-                            showRecentPlacesOnly()
-                            Log.e(TAG, "Error getting suggestions: $message")
-                        }
-                    })
-                }
-                
-                lastSearchRunnable = searchRunnable
-                searchQueryHandler.postDelayed(searchRunnable, 300) // 300ms delay
+            // Find map navigation UI components
+            mapNavigationOverlay = findViewById(R.id.map_navigation_overlay)
+            mapNavDirectionText = findViewById(R.id.map_nav_direction_text)
+            mapNavStreetName = findViewById(R.id.map_nav_street_name)
+            mapNavNextDirection = findViewById(R.id.map_nav_next_direction_text)
+            mapNavTime = findViewById(R.id.map_nav_time)
+            mapNavDistance = findViewById(R.id.map_nav_distance)
+            mapNavARButton = findViewById(R.id.map_nav_ar_button)
+            mapNavCloseButton = findViewById(R.id.map_nav_close_button)
+            
+            // Set up mode toggle buttons
+            findViewById<Button>(R.id.ar_mode_button).setOnClickListener {
+                launchARMode()
             }
             
-            override fun afterTextChanged(s: Editable?) {}
-        })
-        
-        // Set up focus change listener
-        searchBar.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                // If query already has content, show suggestions
-                val query = searchBar.text.toString()
-                if (query.length >= 3) {
-                    // Trigger the text changed listener
-                    searchBar.setText(query)
+            findViewById<Button>(R.id.map_mode_button).setOnClickListener {
+                launchMapMode()
+            }
+            
+            // Set up navigation button
+            navigateButton.setOnClickListener {
+                if (destinationLatLng != null && currentLocation != null) {
+                    startNavigation(currentLocation!!, destinationLatLng!!)
                 } else {
-                    // Show recent places if no query
-                    showRecentPlacesOnly()
+                    Toast.makeText(this, "Please select a destination first", Toast.LENGTH_SHORT).show()
                 }
-            } else {
-                // Hide suggestions when focus is lost
-                hideSuggestions()
             }
-        }
-        
-        // Set up navigate button
-        val navigateButton = findViewById<Button>(R.id.navigateButton)
-        navigateButton.setOnClickListener {
-            startNavigation()
-        }
-        
-        // Set up stop navigate button
-        val stopNavigateButton = findViewById<Button>(R.id.stopNavigateButton)
-        stopNavigateButton.setOnClickListener {
-            stopNavigation()
-        }
-        
-        // Set up AR mode button
-        val arModeButton = findViewById<Button>(R.id.ar_mode_button)
-        arModeButton.setOnClickListener {
-            launchAROnlyMode()
-        }
-        
-        // Set up map mode button
-        val mapModeButton = findViewById<Button>(R.id.map_mode_button)
-        mapModeButton.setOnClickListener {
-            launchMapOnlyMode()
-        }
-        
-        // Set up periodic AR status updates
-        val handler = Handler(Looper.getMainLooper())
-        handler.post(object : Runnable {
-            override fun run() {
-                updateARStatus()
-                handler.postDelayed(this, 1000)
+            
+            // Set up map navigation UI listeners
+            mapNavARButton?.setOnClickListener {
+                launchARNavigation()
             }
-        })
+            
+            mapNavCloseButton?.setOnClickListener {
+                stopNavigation()
+            }
+            
+            // Set up search bar
+            searchBar.setOnEditorActionListener { v, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    val query = v.text.toString()
+                    if (query.isNotBlank()) {
+                        hideSuggestions()
+                        searchLocation(query)
+                        hideKeyboard()
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            
+            // Set up text change listener for search suggestions
+            searchBar.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    // Cancel any pending search
+                    lastSearchRunnable?.let { searchQueryHandler.removeCallbacks(it) }
+                    
+                    val query = s?.toString() ?: ""
+                    
+                    if (query.length < 3) {
+                        // Show recent places if search field has focus
+                        if (searchBar.hasFocus()) {
+                            showRecentPlacesOnly()
+                        } else {
+                            hideSuggestions()
+                        }
+                        return
+                    }
+                    
+                    // Delay the search to avoid too many requests while typing
+                    val searchRunnable = Runnable {
+                        showSuggestionsLoading()
+                        suggestionProvider.getSuggestions(query, object : SearchSuggestionProvider.SuggestionListener {
+                            override fun onSuggestionsReady(suggestions: List<SearchSuggestion>) {
+                                if (suggestions.isEmpty()) {
+                                    showRecentPlacesOnly()
+                                } else {
+                                    showSuggestions(suggestions)
+                                }
+                            }
+                            
+                            override fun onError(message: String) {
+                                showRecentPlacesOnly()
+                                Log.e(TAG, "Error getting suggestions: $message")
+                            }
+                        })
+                    }
+                    
+                    lastSearchRunnable = searchRunnable
+                    searchQueryHandler.postDelayed(searchRunnable, 300) // 300ms delay
+                }
+                
+                override fun afterTextChanged(s: Editable?) {}
+            })
+            
+            // Set up focus change listener
+            searchBar.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    // If query already has content, show suggestions
+                    val query = searchBar.text.toString()
+                    if (query.length >= 3) {
+                        // Trigger the text changed listener
+                        searchBar.setText(query)
+                    } else {
+                        // Show recent places if no query
+                        showRecentPlacesOnly()
+                    }
+                } else {
+                    // Hide suggestions when focus is lost
+                    hideSuggestions()
+                }
+            }
+            
+            // Set up periodic AR status updates
+            val handler = Handler(Looper.getMainLooper())
+            handler.post(object : Runnable {
+                override fun run() {
+                    updateARStatus()
+                    handler.postDelayed(this, 1000)
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up UI controls", e)
+        }
     }
     
     private fun setupSearchSuggestions() {
@@ -750,133 +780,99 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
-    private fun startNavigation() {
-        if (currentLocation == null || destinationLatLng == null) {
-            Toast.makeText(this, "Cannot start navigation: location or destination not set", Toast.LENGTH_SHORT).show()
-            return
-        }
-        
-        isNavigating = true
-        
-        // Update UI
-        findViewById<Button>(R.id.navigateButton).visibility = View.GONE
-        val stopButton = findViewById<Button>(R.id.navigateButton)
-        stopButton?.visibility = View.VISIBLE
-        
-        // Fetch and display directions
-        fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
-        
-        // Start AR mode
+    private fun startNavigation(origin: LatLng, destination: LatLng) {
         try {
-            val session = arCoreSessionHelper.session
-            val earth = session?.earth
+            isNavigating = true
             
-            if (earth?.trackingState == TrackingState.TRACKING) {
-                trackingQualityIndicator?.text = "AR navigation started"
-                trackingQualityIndicator?.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_dark))
-            } else {
-                Log.d(TAG, "Earth not yet tracking, navigation will start when tracking begins")
-                trackingQualityIndicator?.text = "Waiting for AR tracking..."
-            }
+            // Move camera to show both origin and destination
+            val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
+                .include(origin)
+                .include(destination)
+                .build()
+            googleMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
+            
+            // Show navigation UI
+            mapNavigationOverlay?.visibility = View.VISIBLE
+            
+            // Hide the search bar and buttons during navigation
+            findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
+            findViewById<EditText>(R.id.searchBar).visibility = View.GONE
+            findViewById<Button>(R.id.navigateButton).visibility = View.GONE
+            
+            // Fetch directions
+            fetchAndDisplayDirections(origin, destination)
+            
+            // Add to recent places
+            val geocoder = Geocoder(this, Locale.getDefault())
+            val addresses = geocoder.getFromLocation(destination.latitude, destination.longitude, 1)
+            val address = addresses?.firstOrNull()
+            val placeName = address?.featureName ?: "Selected Location"
+            
+            recentPlacesManager.addRecentPlace(destination, placeName)
+            
+            // Log the navigation start
+            Log.d(TAG, "Navigation started from $origin to $destination")
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting AR navigation", e)
+            Log.e(TAG, "Error starting navigation", e)
+            Toast.makeText(this, "Error starting navigation: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
     
     private fun fetchAndDisplayDirections(origin: LatLng, destination: LatLng) {
-        try {
-            // Show loading indicator
-            val loadingIndicator = findViewById<TextView>(R.id.directionsText)
-            loadingIndicator?.text = "Loading directions..."
-            loadingIndicator?.visibility = View.VISIBLE
-            
-            // Get directions with turn-by-turn instructions
-            directionsHelper.getDirectionsWithInstructions(
-                origin, 
-                destination,
-                object : DirectionsHelper.DirectionsWithInstructionsListener {
-                    override fun onDirectionsReady(
-                        pathPoints: List<LatLng>,
-                        instructions: List<String>,
-                        steps: List<DirectionsHelper.DirectionStep>
-                    ) {
-                        runOnUiThread {
-                            loadingIndicator?.visibility = View.GONE
-                            
-                            // Store the route points for AR
-                            routePoints = pathPoints
-                            
-                            // Update AR view with the path
-                            updateARPathVisualization(pathPoints)
-                            
-                            // Draw route on the map
-                            drawRouteOnMap(pathPoints)
-                            
-                            // Display the first instruction
-                            if (instructions.isNotEmpty()) {
-                                val directionsTextView = findViewById<TextView>(R.id.directionsText)
-                                directionsTextView?.apply {
-                                    text = instructions[0]
-                                    visibility = View.VISIBLE
-                                }
-                            }
-                            
-                            Toast.makeText(this@SplitScreenActivity, "Navigation started", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+        // Show loading indicator
+        findViewById<LinearLayout>(R.id.map_loading_container).visibility = View.VISIBLE
+        
+        // Get directions
+        directionsHelper.getDirectionsWithInstructions(
+            origin, destination,
+            object : DirectionsHelper.DirectionsWithInstructionsListener {
+                override fun onDirectionsReady(
+                    pathPoints: List<LatLng>,
+                    instructions: List<String>,
+                    steps: List<DirectionsHelper.DirectionStep>
+                ) {
+                    // Store route points
+                    routePoints = pathPoints
                     
-                    override fun onDirectionsError(errorMessage: String) {
-                        runOnUiThread {
-                            loadingIndicator?.visibility = View.GONE
-                            
-                            Log.e(TAG, "Error getting directions: $errorMessage")
-                            Toast.makeText(this@SplitScreenActivity, "Error getting directions: $errorMessage", Toast.LENGTH_SHORT).show()
-                            
-                            // Fallback to direct line
-                            val simplePath = listOf(origin, destination)
-                            
-                            // Store the route points for AR
-                            routePoints = simplePath
-                            
-                            // Update AR with direct path
-                            updateARPathVisualization(simplePath)
-                            
-                            // Draw direct line on map
-                            drawRouteOnMap(simplePath)
-                            
-                            findViewById<TextView>(R.id.directionsText)?.apply {
-                                text = "Follow the direct path to destination"
-                                visibility = View.VISIBLE
-                            }
-                        }
-                    }
+                    // Hide loading indicator
+                    findViewById<LinearLayout>(R.id.map_loading_container).visibility = View.GONE
+                    
+                    // Draw the route on the map
+                    drawRoute(pathPoints)
+                    
+                    // Update the map navigation UI
+                    updateMapNavigationUI(steps, instructions)
+                    
+                    // Show the map navigation overlay
+                    mapNavigationOverlay?.visibility = View.VISIBLE
+                    
+                    // Hide the bottom controls during navigation
+                    findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
+                    
+                    Log.d(TAG, "Directions fetched successfully. Path points: ${pathPoints.size}")
                 }
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error fetching directions", e)
-            Toast.makeText(this, "Error fetching directions: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-    
-    private fun updateARPathVisualization(pathPoints: List<LatLng>) {
-        try {
-            val session = arCoreSessionHelper.session
-            val earth = session?.earth
-            
-            if (earth?.trackingState == TrackingState.TRACKING) {
-                // If Earth is tracking, create anchors immediately
-                renderer.createPathAnchors(pathPoints)
-            } else {
-                // If not tracking yet, store the path - we'll create anchors when Earth starts tracking
-                // This is handled in the updateARStatus method
-                Log.d(TAG, "Earth not tracking yet, will create path anchors when tracking begins")
+                
+                override fun onDirectionsError(errorMessage: String) {
+                    // Hide loading indicator
+                    findViewById<LinearLayout>(R.id.map_loading_container).visibility = View.GONE
+                    
+                    // Show error message
+                    Toast.makeText(
+                        this@SplitScreenActivity,
+                        "Error getting directions: $errorMessage",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    
+                    // Draw direct line instead
+                    drawDirectLine(origin, destination)
+                    
+                    Log.e(TAG, "Error getting directions: $errorMessage")
+                }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating AR path visualization", e)
-        }
+        )
     }
     
-    private fun drawRouteOnMap(pathPoints: List<LatLng>) {
+    private fun drawRoute(pathPoints: List<LatLng>) {
         googleMap?.let { map ->
             map.clear()
             
@@ -890,7 +886,22 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
     
-    private fun launchAROnlyMode() {
+    private fun drawDirectLine(origin: LatLng, destination: LatLng) {
+        googleMap?.let { map ->
+            map.clear()
+            
+            // Add polyline - using the available method
+            val options = com.google.android.gms.maps.model.PolylineOptions()
+                .add(origin)
+                .add(destination)
+                .width(5f)
+                .color(android.graphics.Color.RED)
+                
+            map.addPolyline(options)
+        }
+    }
+    
+    private fun launchARMode() {
         val intent = Intent(this, ARActivity::class.java)
         
         // Pass destination data if we have it
@@ -903,7 +914,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         finish()
     }
     
-    private fun launchMapOnlyMode() {
+    private fun launchMapMode() {
         fallbackToMapOnlyMode()
     }
     
@@ -918,6 +929,83 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         
         startActivity(intent)
         finish()
+    }
+    
+    private fun launchARNavigation() {
+        // Launch AR activity with navigation info
+        val intent = Intent(this, ARActivity::class.java)
+        destinationLatLng?.let {
+            intent.putExtra("DESTINATION_LAT", it.latitude)
+            intent.putExtra("DESTINATION_LNG", it.longitude)
+        }
+        startActivity(intent)
+    }
+    
+    private fun stopNavigation() {
+        isNavigating = false
+        
+        // Hide the navigation UI
+        mapNavigationOverlay?.visibility = View.GONE
+        
+        // Show the controls again
+        findViewById<LinearLayout>(R.id.mode_controls).visibility = View.VISIBLE
+        findViewById<EditText>(R.id.searchBar).visibility = View.VISIBLE
+        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+        
+        // Remove the route from the map
+        mapPolyline?.remove()
+        
+        // Log the navigation end
+        Log.d(TAG, "Navigation stopped")
+    }
+    
+    private fun updateMapNavigationUI(steps: List<DirectionsHelper.DirectionStep>, instructions: List<String>) {
+        if (steps.isEmpty() || instructions.isEmpty()) return
+        
+        // Calculate total distance and time
+        val totalDistanceMeters = steps.sumOf { it.distance }
+        val totalTimeSeconds = (totalDistanceMeters / 1.4).toInt() // Estimate walking speed at 1.4 m/s
+        
+        // Format time
+        val timeMinutes = totalTimeSeconds / 60
+        val timeText = "$timeMinutes min"
+        
+        // Format distance and ETA
+        val distanceText = if (totalDistanceMeters < 1000) {
+            "${totalDistanceMeters}m"
+        } else {
+            String.format("%.1f km", totalDistanceMeters / 1000.0)
+        }
+        
+        // Get current time and add the estimated duration
+        val currentTime = System.currentTimeMillis()
+        val etaTime = currentTime + (totalTimeSeconds * 1000)
+        val etaFormat = android.text.format.DateFormat.getTimeFormat(this)
+        val etaString = etaFormat.format(etaTime)
+        
+        // Format US mile distance for the bottom panel
+        val distanceMiles = totalDistanceMeters * 0.000621371 // Convert meters to miles
+        val distanceMilesText = String.format("%.1f mi · %s", distanceMiles, etaString)
+        
+        // Get the first instruction for main direction
+        val firstInstruction = instructions.firstOrNull() ?: "Proceed to destination"
+        
+        // Parse the instruction to separate direction from street name
+        val directionParts = firstInstruction.split(" on ", limit = 2)
+        val direction = directionParts[0]
+        val streetName = if (directionParts.size > 1) "on ${directionParts[1]}" else ""
+        
+        // Get next instruction if available
+        val nextDirection = if (instructions.size > 1) instructions[1] else "Arrive at destination"
+        
+        // Update UI
+        runOnUiThread {
+            mapNavDirectionText?.text = direction
+            mapNavStreetName?.text = streetName
+            mapNavNextDirection?.text = nextDirection
+            mapNavTime?.text = timeText
+            mapNavDistance?.text = distanceMilesText
+        }
     }
     
     private fun checkAndRequestPermissions() {
@@ -965,7 +1053,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(this, "Camera permission required for AR", Toast.LENGTH_LONG).show()
                     // Switch to map-only mode if camera permission denied
-                    launchMapOnlyMode()
+                    launchMapMode()
                 }
             }
         }
@@ -1052,24 +1140,5 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus)
-    }
-    
-    private fun stopNavigation() {
-        isNavigating = false
-        
-        // Update UI
-        findViewById<Button>(R.id.stopNavigateButton).visibility = View.GONE
-        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
-        
-        // Clear route visualization
-        googleMap?.clear()
-        
-        // Reset AR visualization
-        renderer.clearAnchors()
-        
-        // Hide directions text
-        findViewById<TextView>(R.id.directionsText)?.visibility = View.GONE
-        
-        Toast.makeText(this, "Navigation stopped", Toast.LENGTH_SHORT).show()
     }
 } 
