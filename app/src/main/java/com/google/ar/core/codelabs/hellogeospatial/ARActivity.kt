@@ -116,11 +116,6 @@ class ARActivity : AppCompatActivity() {
             // Set up navigation UI components
             initNavigationUI()
             
-            // Set return button listener
-            findViewById<Button>(R.id.return_to_map_button)?.setOnClickListener {
-                returnToMapMode()
-            }
-            
             // Add help button to show navigation tips
             findViewById<Button>(R.id.help_button)?.setOnClickListener {
                 showNavigationHelp()
