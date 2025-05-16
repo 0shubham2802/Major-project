@@ -415,6 +415,24 @@ class ARActivity : AppCompatActivity() {
         return bearing
     }
     
+    /**
+     * Calculates distance between two geographic coordinates in meters using the Haversine formula
+     */
+    private fun calculateDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val earthRadius = 6371000.0 // meters
+        
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLng = Math.toRadians(lng2 - lng1)
+        
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2)
+        
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        
+        return earthRadius * c // Distance in meters
+    }
+    
     private fun setARDestination(destination: LatLng) {
         Log.d(TAG, "Setting AR destination: $destination")
         destinationLatLng = destination
@@ -487,6 +505,40 @@ class ARActivity : AppCompatActivity() {
                 }
             }, (i * 150).toLong())
         }
+    }
+    
+    /**
+     * Starts periodic updates for navigation status
+     */
+    private fun startNavigationUpdates() {
+        // Clear any existing handler
+        navigationUpdateHandler?.removeCallbacksAndMessages(null)
+        
+        // Create a new handler
+        navigationUpdateHandler = Handler(Looper.getMainLooper())
+        
+        // Set up a periodic task to update navigation information
+        navigationUpdateHandler?.postDelayed(object : Runnable {
+            override fun run() {
+                // Update navigation information
+                updateTrackingQualityIndicator()
+                
+                // Check if AR session is available
+                val session = arCoreSessionHelper.session
+                if (session != null && isNavigating) {
+                    val earth = session.earth
+                    if (earth != null && earth.trackingState == TrackingState.TRACKING) {
+                        // Update distance information using current position
+                        updateDistanceIndicator(earth.cameraGeospatialPose)
+                    }
+                }
+                
+                // Schedule the next update
+                if (isNavigating) {
+                    navigationUpdateHandler?.postDelayed(this, 1000) // Update every second
+                }
+            }
+        }, 1000) // Start after 1 second
     }
     
     private fun updateTrackingStatus(status: TrackingState) {
