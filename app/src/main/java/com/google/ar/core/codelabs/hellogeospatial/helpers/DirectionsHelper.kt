@@ -266,13 +266,16 @@ class DirectionsHelper(private val context: Context) {
                 val legs = route.getJSONArray("legs")
                 val leg = legs.getJSONObject(0)
                 
-                // Add summary instruction
+                // Add a simplified summary instruction instead of full addresses
                 val startAddress = leg.getString("start_address")
                 val endAddress = leg.getString("end_address")
                 val totalDistance = leg.getJSONObject("distance").getString("text")
-                val totalDuration = leg.getJSONObject("duration").getString("text")
                 
-                instructions.add("Navigate from $startAddress to $endAddress ($totalDistance, about $totalDuration)")
+                // Extract just the area/locality names from addresses for brevity
+                val startArea = extractLocalityFromAddress(startAddress)
+                val endArea = extractLocalityFromAddress(endAddress)
+                
+                instructions.add("Navigate from $startArea to $endArea ($totalDistance)")
                 
                 // Process each step for detailed instructions
                 val stepsJson = leg.getJSONArray("steps")
@@ -304,9 +307,10 @@ class DirectionsHelper(private val context: Context) {
                     // Add the step to our list
                     steps.add(DirectionStep(startLatLng, endLatLng, instruction, distance, stepPoints))
                     
-                    // Format a user-friendly instruction with distance
+                    // Format a concise instruction - just include distance without too much detail
                     val distanceText = step.getJSONObject("distance").getString("text")
-                    instructions.add("$instruction ($distanceText)")
+                    val conciseInstruction = simplifyInstruction(instruction)
+                    instructions.add("$conciseInstruction ($distanceText)")
                     
                     // Add all polyline points to the main path
                     pathPoints.addAll(stepPoints)
@@ -325,6 +329,48 @@ class DirectionsHelper(private val context: Context) {
             }
             
             return Triple(pathPoints, instructions, steps)
+        }
+        
+        /**
+         * Extract just the locality/area name from a full address
+         */
+        private fun extractLocalityFromAddress(address: String): String {
+            // Try to find the most relevant part of the address
+            return when {
+                // For addresses with commas, take the most significant parts
+                address.contains(",") -> {
+                    val parts = address.split(",")
+                    if (parts.size > 2) {
+                        // Usually format is "Building/number, Street, Area, City, State, Country"
+                        // Take Area or City - should be towards the middle
+                        val midIndex = parts.size / 2
+                        parts[midIndex].trim()
+                    } else {
+                        // If just two parts, take the first part
+                        parts[0].trim()
+                    }
+                }
+                // For long addresses without commas, just take a portion
+                address.length > 25 -> address.substring(0, 22) + "..."
+                // For short addresses, use as is
+                else -> address
+            }
+        }
+        
+        /**
+         * Simplify a direction instruction to make it more concise
+         */
+        private fun simplifyInstruction(instruction: String): String {
+            // Remove unnecessary words and phrases
+            return instruction
+                .replace("Destination will be", "")
+                .replace("the destination", "destination")
+                .replace("Continue onto", "Continue on")
+                .replace("Slight", "")
+                .replace("toward", "to")
+                // If still too long, truncate
+                .let { if (it.length > 30) it.substring(0, 27) + "..." else it }
+                .trim()
         }
         
         /**

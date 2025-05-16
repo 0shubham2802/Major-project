@@ -76,100 +76,93 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- Top Direction Card -->
+    <!-- Top Direction Card - Made more compact -->
     <androidx.cardview.widget.CardView
         android:id="@+id/map_nav_top_card"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
         app:cardBackgroundColor="#FFFFFF"
         app:cardCornerRadius="12dp"
         app:cardElevation="4dp"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="16dp">
+            android:padding="12dp">
 
             <!-- Direction Icon -->
+            <ImageView
+                android:id="@+id/map_nav_direction_icon"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@android:drawable/ic_menu_directions"
+                app:tint="#000000"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Current Turn Direction Text -->
             <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:gravity="center"
-                android:layout_marginEnd="16dp">
-
-                <ImageView
-                    android:id="@+id/map_nav_direction_icon"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:background="@android:drawable/ic_menu_directions"
-                    app:tint="#000000" />
-            </LinearLayout>
-
-            <!-- Turn Direction Text -->
-            <LinearLayout
-                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/map_nav_direction_text"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Turn right"
                     android:textColor="#000000"
-                    android:textSize="20sp"
-                    android:textStyle="bold" />
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
 
                 <TextView
                     android:id="@+id/map_nav_street_name"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="on W 6th St"
                     android:textColor="#666666"
-                    android:textSize="16sp" />
+                    android:textSize="14sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
             </LinearLayout>
-
-            <!-- Microphone Button -->
-            <ImageView
-                android:id="@+id/map_nav_voice_button"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_gravity="center_vertical"
-                android:background="@android:drawable/ic_btn_speak_now"
-                app:tint="#666666" />
         </LinearLayout>
+    </androidx.cardview.widget.CardView>
 
-        <!-- "Then" Section for Next Direction -->
+    <!-- Next Direction Pill - Positioned below the current direction -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/map_nav_next_direction_card"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        app:cardBackgroundColor="#F1F1F1"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="2dp"
+        app:layout_constraintTop_toBottomOf="@id/map_nav_top_card"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
         <LinearLayout
             android:id="@+id/map_nav_next_direction_container"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="8dp"
-            android:background="#F1F1F1"
-            android:layout_marginTop="65dp">
+            android:padding="8dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Then"
                 android:textColor="#000000"
-                android:textSize="14sp"
+                android:textSize="12sp"
                 android:textStyle="bold"
-                android:layout_marginEnd="8dp"
-                android:layout_marginStart="8dp" />
-
-            <ImageView
-                android:id="@+id/map_nav_next_direction_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:background="@android:drawable/ic_menu_directions"
-                app:tint="#000000"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="4dp" />
 
             <TextView
                 android:id="@+id/map_nav_next_direction_text"
@@ -177,7 +170,10 @@
                 android:layout_height="wrap_content"
                 android:text="Turn left"
                 android:textColor="#000000"
-                android:textSize="14sp" />
+                android:textSize="12sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:maxWidth="150dp" />
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 </androidx.constraintlayout.widget.ConstraintLayout> 

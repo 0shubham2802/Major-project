@@ -1018,13 +1018,25 @@ private fun retryMapLoading() {
         // Parse the instruction to separate direction from street name
         val directionParts = currentInstruction.split(" on ", limit = 2)
         val direction = directionParts[0]
-        val streetName = if (directionParts.size > 1) "on ${directionParts[1]}" else ""
+        val streetName = if (directionParts.size > 1) {
+            // Shorten street name if too long
+            val street = directionParts[1]
+            if (street.length > 25) "on ${street.substring(0, 22)}..." else "on $street"
+        } else ""
         
         // Get next instruction if available
-        val nextDirection = if (currentStepIndex + 1 < instructions.size) 
-            instructions[currentStepIndex + 1] 
-        else 
-            "Arrive at destination"
+        val nextDirection = if (currentStepIndex + 1 < instructions.size) {
+            // Shorten next direction to just the essential part
+            val nextInst = instructions[currentStepIndex + 1]
+            when {
+                nextInst.contains(" on ") -> {
+                    val parts = nextInst.split(" on ", limit = 2)
+                    parts[0]
+                }
+                nextInst.length > 30 -> nextInst.substring(0, 27) + "..."
+                else -> nextInst
+            }
+        } else "Arrive at destination"
         
         // Calculate remaining distance and time for current and upcoming steps
         val remainingSteps = steps.drop(currentStepIndex)
