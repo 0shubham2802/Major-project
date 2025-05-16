@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.Lifecycle
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.GeospatialPose
@@ -43,7 +44,7 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import androidx.core.app.ActivityCompat
 import android.widget.ProgressBar
-import android.widget.CardView
+import androidx.cardview.widget.CardView
 
 class ARActivity : AppCompatActivity() {
     companion object {

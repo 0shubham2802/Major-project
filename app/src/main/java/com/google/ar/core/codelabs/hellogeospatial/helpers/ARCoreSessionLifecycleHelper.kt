@@ -38,6 +38,13 @@ class ARCoreSessionLifecycleHelper(
   var beforeSessionResume: ((Session) -> Unit)? = null
 
 
+  var onLifecycleOwner: LifecycleOwner? = null
+    set(value) {
+      field = value
+      field?.lifecycle?.addObserver(this)
+    }
+
+
   private fun tryCreateSession(): Session? {
     // The app must have been given the CAMERA permission. If we don't have it yet, request it.
     if (!GeoPermissionsHelper.hasGeoPermissions(activity)) {
