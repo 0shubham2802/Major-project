@@ -249,7 +249,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                                 }
                             }
                         },
-                        null
+                        Looper.getMainLooper() // Use main thread looper instead of null
                     )
                 }
             } catch (e: Exception) {
@@ -1294,12 +1294,12 @@ private fun retryMapLoading() {
             Log.d(TAG, "Launching AR Navigation with destination: ${it.latitude}, ${it.longitude}")
             
             // Add current step information if available
-            if (routePoints.isNotEmpty()) {
+            if (routePoints?.isNotEmpty() == true) {
                 // Pass the first few waypoints - ARCore can handle these
-                val waypointsToPass = minOf(5, routePoints.size)
+                val waypointsToPass = minOf(5, routePoints!!.size)
                 for (i in 0 until waypointsToPass) {
-                    intent.putExtra("WAYPOINT_LAT_$i", routePoints[i].latitude)
-                    intent.putExtra("WAYPOINT_LNG_$i", routePoints[i].longitude)
+                    intent.putExtra("WAYPOINT_LAT_$i", routePoints!![i].latitude)
+                    intent.putExtra("WAYPOINT_LNG_$i", routePoints!![i].longitude)
                 }
                 intent.putExtra("WAYPOINT_COUNT", waypointsToPass)
                 
