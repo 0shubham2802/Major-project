@@ -101,7 +101,7 @@ class ARActivity : AppCompatActivity() {
             lifecycleRegistry.currentState = Lifecycle.State.CREATED
             setContentView(R.layout.activity_ar)
             
-            // Extract destination if provided
+            // Extract destination and waypoints if provided
             val extras = intent.extras
             if (extras != null) {
                 val lat = extras.getDouble("DESTINATION_LAT", 0.0)
@@ -110,6 +110,23 @@ class ARActivity : AppCompatActivity() {
                 if (lat != 0.0 && lng != 0.0) {
                     destinationLatLng = LatLng(lat, lng)
                     Log.d(TAG, "Destination set from intent: $destinationLatLng")
+                    
+                    // Extract waypoints if available
+                    val waypointCount = extras.getInt("WAYPOINT_COUNT", 0)
+                    if (waypointCount > 0) {
+                        val waypoints = mutableListOf<LatLng>()
+                        for (i in 0 until waypointCount) {
+                            val wpLat = extras.getDouble("WAYPOINT_LAT_$i", 0.0)
+                            val wpLng = extras.getDouble("WAYPOINT_LNG_$i", 0.0)
+                            if (wpLat != 0.0 && wpLng != 0.0) {
+                                waypoints.add(LatLng(wpLat, wpLng))
+                            }
+                        }
+                        
+                        if (waypoints.isNotEmpty()) {
+                            Log.d(TAG, "Loaded ${waypoints.size} waypoints for navigation")
+                        }
+                    }
                 }
             }
             
@@ -226,6 +243,12 @@ class ARActivity : AppCompatActivity() {
                 findViewById(R.id.ar_direction_arrow4)
             )
             
+            // Ensure arrows are visible and properly configured
+            directionArrows?.forEach { arrow ->
+                arrow.visibility = View.VISIBLE
+                arrow.alpha = 1.0f
+            }
+            
             // Set close button click listener
             findViewById<View>(R.id.close_button)?.setOnClickListener {
                 returnToMapMode()
@@ -234,6 +257,12 @@ class ARActivity : AppCompatActivity() {
             // Initial state setup
             trackingQualityIndicator?.text = "Tracking: INITIALIZING"
             updateNavigationUI("Turn right", "on W 6th St", "Turn left")
+            
+            // Start navigation updates immediately
+            startNavigationUpdates()
+            
+            // Debug logging
+            Log.d(TAG, "Navigation UI initialized: arrows=${directionArrows?.size}, directionText=${directionTextView?.text}")
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing navigation UI", e)
         }
@@ -441,6 +470,11 @@ class ARActivity : AppCompatActivity() {
         // Start the AR navigation
         startARNavigation(destination)
         
+        // Make sure arrows are visible
+        directionArrows?.forEach { arrow ->
+            arrow.visibility = View.VISIBLE
+        }
+        
         // Pulse the direction arrows to attract attention
         pulseArrows()
     }
@@ -461,6 +495,11 @@ class ARActivity : AppCompatActivity() {
             distanceRemainingView?.text = "0.4 mi · 8:08 AM"
         }
         
+        // Make sure the entire navigation card is visible
+        runOnUiThread {
+            navInstructionCard?.visibility = View.VISIBLE
+        }
+        
         // Start a repeating task to pulse arrows every few seconds
         val handler = Handler(Looper.getMainLooper())
         handler.postDelayed(object : Runnable {
@@ -470,7 +509,7 @@ class ARActivity : AppCompatActivity() {
                     handler.postDelayed(this, 5000) // Pulse every 5 seconds
                 }
             }
-        }, 3000) // Start first pulse after 3 seconds
+        }, 1000) // Start first pulse after 1 second instead of 3
     }
     
     private fun updateNavigationUI(direction: String, streetName: String, nextDirection: String) {
@@ -480,10 +519,16 @@ class ARActivity : AppCompatActivity() {
                 streetNameView?.text = streetName
                 nextDirectionTextView?.text = nextDirection
                 
+                // Ensure navigation card is visible
+                navInstructionCard?.visibility = View.VISIBLE
+                
                 // Make arrows visible
                 directionArrows?.forEach { arrow ->
                     arrow.visibility = View.VISIBLE
+                    arrow.alpha = 1.0f
                 }
+                
+                Log.d(TAG, "Updated navigation UI: direction=$direction, street=$streetName, nextDirection=$nextDirection")
             } catch (e: Exception) {
                 Log.e(TAG, "Error updating navigation UI", e)
             }
@@ -494,13 +539,19 @@ class ARActivity : AppCompatActivity() {
         val handler = Handler(Looper.getMainLooper())
         val arrowCount = directionArrows?.size ?: 0
         
+        Log.d(TAG, "Pulsing $arrowCount arrows")
+        
         for (i in 0 until arrowCount) {
             handler.postDelayed({
                 runOnUiThread {
-                    directionArrows?.get(i)?.apply {
-                        alpha = 0f
-                        visibility = View.VISIBLE
-                        animate().alpha(1f).setDuration(300).start()
+                    try {
+                        directionArrows?.get(i)?.apply {
+                            visibility = View.VISIBLE
+                            alpha = 0f
+                            animate().alpha(1f).setDuration(300).start()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error pulsing arrow $i", e)
                     }
                 }
             }, (i * 150).toLong())

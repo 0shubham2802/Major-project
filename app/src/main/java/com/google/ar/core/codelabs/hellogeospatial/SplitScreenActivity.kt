@@ -937,8 +937,27 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         destinationLatLng?.let {
             intent.putExtra("DESTINATION_LAT", it.latitude)
             intent.putExtra("DESTINATION_LNG", it.longitude)
+            
+            // Log the data being passed
+            Log.d(TAG, "Launching AR Navigation with destination: ${it.latitude}, ${it.longitude}")
+            
+            // Add current step information if available
+            if (routePoints.isNotEmpty()) {
+                // Pass the first few waypoints - ARCore can handle these
+                val waypointsToPass = minOf(5, routePoints.size)
+                for (i in 0 until waypointsToPass) {
+                    intent.putExtra("WAYPOINT_LAT_$i", routePoints[i].latitude)
+                    intent.putExtra("WAYPOINT_LNG_$i", routePoints[i].longitude)
+                }
+                intent.putExtra("WAYPOINT_COUNT", waypointsToPass)
+                
+                Log.d(TAG, "Added $waypointsToPass waypoints to AR navigation intent")
+            }
+            
+            startActivity(intent)
+        } ?: run {
+            Toast.makeText(this, "No destination set for AR navigation", Toast.LENGTH_SHORT).show()
         }
-        startActivity(intent)
     }
     
     private fun stopNavigation() {

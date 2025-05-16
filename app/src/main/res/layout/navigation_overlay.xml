@@ -24,8 +24,10 @@
         android:id="@+id/ar_direction_arrows"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="16dp"
         android:orientation="horizontal"
+        android:gravity="center"
+        android:background="#33000000"
+        android:padding="16dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -35,41 +37,57 @@
             android:id="@+id/ar_direction_arrow1"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="›"
-            android:textColor="#FFFFFF"
-            android:textSize="70sp"
+            android:text="⟩"
+            android:textColor="#4CAF50"
+            android:textSize="90sp"
             android:textStyle="bold"
-            android:background="@drawable/arrow_background" />
+            android:shadowColor="#000000"
+            android:shadowDx="2"
+            android:shadowDy="2"
+            android:shadowRadius="3"
+            android:visibility="visible" />
 
         <TextView
             android:id="@+id/ar_direction_arrow2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="›"
-            android:textColor="#FFFFFF"
-            android:textSize="70sp"
+            android:text="⟩"
+            android:textColor="#4CAF50"
+            android:textSize="90sp"
             android:textStyle="bold"
-            android:background="@drawable/arrow_background" />
+            android:shadowColor="#000000"
+            android:shadowDx="2"
+            android:shadowDy="2"
+            android:shadowRadius="3"
+            android:visibility="visible" />
 
         <TextView
             android:id="@+id/ar_direction_arrow3"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="›"
-            android:textColor="#FFFFFF"
-            android:textSize="70sp"
+            android:text="⟩"
+            android:textColor="#4CAF50"
+            android:textSize="90sp"
             android:textStyle="bold"
-            android:background="@drawable/arrow_background" />
+            android:shadowColor="#000000"
+            android:shadowDx="2"
+            android:shadowDy="2"
+            android:shadowRadius="3"
+            android:visibility="visible" />
 
         <TextView
             android:id="@+id/ar_direction_arrow4"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="›"
-            android:textColor="#FFFFFF"
-            android:textSize="70sp"
+            android:text="⟩"
+            android:textColor="#4CAF50"
+            android:textSize="90sp"
             android:textStyle="bold"
-            android:background="@drawable/arrow_background" />
+            android:shadowColor="#000000"
+            android:shadowDx="2"
+            android:shadowDy="2"
+            android:shadowRadius="3"
+            android:visibility="visible" />
     </LinearLayout>
 
     <!-- Turn Instruction Card (Google Maps Style) -->
