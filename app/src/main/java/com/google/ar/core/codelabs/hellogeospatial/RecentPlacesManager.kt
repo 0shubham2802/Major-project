@@ -44,6 +44,22 @@ class RecentPlacesManager(private val context: Context) {
     }
     
     /**
+     * Add a place to the recent places list using LatLng and place name
+     */
+    fun addRecentPlace(latLng: LatLng, placeName: String) {
+        // Create a SearchSuggestion from the LatLng and name
+        val suggestion = SearchSuggestion(
+            title = placeName,
+            address = "",
+            latLng = latLng,
+            originalAddress = null
+        )
+        
+        // Call the original method
+        addRecentPlace(suggestion)
+    }
+    
+    /**
      * Get the list of recent places
      */
     fun getRecentPlaces(): List<SearchSuggestion> {
