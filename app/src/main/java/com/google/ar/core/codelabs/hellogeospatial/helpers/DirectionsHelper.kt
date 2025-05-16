@@ -26,6 +26,13 @@ class DirectionsHelper(private val context: Context) {
         private const val DIRECTIONS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
     }
     
+    // Store last fetched instructions and steps for continuous updates
+    var lastInstructions: List<String> = emptyList()
+        private set
+    
+    var lastSteps: List<DirectionStep> = emptyList()
+        private set
+    
     // Data class for direction steps with instructions
     data class DirectionStep(
         val startLocation: LatLng,
@@ -220,6 +227,10 @@ class DirectionsHelper(private val context: Context) {
                 if (directionResult.first.isEmpty()) {
                     listener.onDirectionsError("No route found")
                 } else {
+                    // Store the instructions and steps for future use
+                    lastInstructions = directionResult.second
+                    lastSteps = directionResult.third
+                    
                     // Pass path points and the textual instructions
                     listener.onDirectionsReady(directionResult.first, directionResult.second, directionResult.third)
                 }

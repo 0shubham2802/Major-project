@@ -50,6 +50,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
+import android.widget.ImageView
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -82,6 +83,8 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var trackingQualityIndicator: TextView? = null
     private lateinit var directionsHelper: DirectionsHelper
     private var routePoints: List<LatLng>? = null
+    private var currentStepIndex = 0 // Track which navigation step the user is on
+    private var navigationUpdateHandler: Handler? = null // Handler for periodic updates
     
     // Map navigation UI components
     private var mapNavigationOverlay: View? = null
@@ -187,13 +190,70 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     currentLocation = LatLng(it.latitude, it.longitude)
                     Log.d(TAG, "Current location: ${it.latitude}, ${it.longitude}")
                     
-                    // If we already have a destination, we can calculate the route
-                    destinationLatLng?.let { destination ->
-                        if (isNavigating) {
+                    // Update navigation if active
+                    if (isNavigating) {
+                        // Update current step if navigating
+                        updateCurrentNavigationStep()
+                        
+                        // If we already have a destination, we can calculate/update the route
+                        destinationLatLng?.let { destination ->
+                                                    // Only recalculate route if needed
+                        // Calculate route frequently at first until we have a good route
+                        if (directionsHelper.lastSteps.isEmpty()) {
                             fetchAndDisplayDirections(currentLocation!!, destination)
+                        } else {
+                            // Recalculate if we've moved significantly from route start
+                            val distanceThresholdMeters = 50 // Only recalculate if moved 50+ meters
+                            val steps = directionsHelper.lastSteps
+                            if (steps.isNotEmpty()) {
+                                val results = FloatArray(1)
+                                android.location.Location.distanceBetween(
+                                    currentLocation!!.latitude, currentLocation!!.longitude,
+                                    steps[0].startLocation.latitude, steps[0].startLocation.longitude,
+                                    results
+                                )
+                                
+                                if (results[0] > distanceThresholdMeters) {
+                                    fetchAndDisplayDirections(currentLocation!!, destination)
+                                }
+                            } else {
+                                // No steps yet, calculate route
+                                fetchAndDisplayDirections(currentLocation!!, destination)
+                            }
+                        }
                         }
                     }
                 }
+            }
+            
+            // Request location updates for continuous navigation
+            try {
+                if (isNavigating) {
+                    val locationRequest = com.google.android.gms.location.LocationRequest.create().apply {
+                        interval = 5000 // Update every 5 seconds
+                        fastestInterval = 2000 // Fastest update interval
+                        priority = com.google.android.gms.location.LocationRequest.PRIORITY_HIGH_ACCURACY
+                    }
+                    
+                    fusedLocationClient.requestLocationUpdates(
+                        locationRequest,
+                        object : com.google.android.gms.location.LocationCallback() {
+                            override fun onLocationResult(locationResult: com.google.android.gms.location.LocationResult) {
+                                locationResult.lastLocation?.let {
+                                    currentLocation = LatLng(it.latitude, it.longitude)
+                                    
+                                    // Update navigation if active
+                                    if (isNavigating) {
+                                        updateCurrentNavigationStep()
+                                    }
+                                }
+                            }
+                        },
+                        null
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error requesting location updates", e)
             }
         }
     }
@@ -210,23 +270,72 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         try {
             mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
             
-            // Set a timeout for map loading
+            // Set a timeout for map loading - increased to 30 seconds
             val mapLoadingTimeout = Handler(Looper.getMainLooper())
             val timeoutRunnable = Runnable {
                 Log.e(TAG, "Map loading timed out")
+                
+                // Don't just show a Toast and error out, try to recover
                 findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.GONE
-                Toast.makeText(this, "Map loading timed out. Please check your internet connection.", Toast.LENGTH_LONG).show()
+                
+                // Display a retry button instead of just showing error
+                val loadingText = findViewById<TextView>(R.id.map_loading_text)
+                loadingText?.text = "Map loading timed out. Tap to retry."
+                loadingText?.setOnClickListener {
+                    // Retry map loading
+                    retryMapLoading()
+                }
+                
+                // Try to continue with limited functionality
+                if (googleMap == null) {
+                    Toast.makeText(this, "Continuing with limited map functionality", Toast.LENGTH_LONG).show()
+                }
             }
             
-            mapLoadingTimeout.postDelayed(timeoutRunnable, 20000)
+            mapLoadingTimeout.postDelayed(timeoutRunnable, 30000) // 30 second timeout
             
-            // Initialize the map asynchronously
-            mapFragment.getMapAsync(this)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing map", e)
-            Toast.makeText(this, "Error initializing map", Toast.LENGTH_SHORT).show()
+            // Initialize the map asynchronously with timeout handling
+val mapTimeoutHandler = Handler(Looper.getMainLooper())
+val mapLoadRunnable = object : Runnable {
+    private var attempts = 0
+    private val maxAttempts = 3
+    
+    override fun run() {
+        if (googleMap == null && attempts < maxAttempts) {
+            Log.d(TAG, "Attempt ${attempts + 1} to load map")
+            attempts++
+            mapFragment.getMapAsync(this@SplitScreenActivity)
+            mapTimeoutHandler.postDelayed(this, 10000)  // Try again in 10 seconds
+        } else if (googleMap == null) {
+            Log.e(TAG, "Failed to load map after $maxAttempts attempts")
+            // Show error message and allow retry
+            findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.GONE
+            Toast.makeText(
+                this@SplitScreenActivity, 
+                "Failed to load map. Please check your internet connection and try again.", 
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
+}
+mapLoadRunnable.run()
+            } catch (e: Exception) {
+        Log.e(TAG, "Error initializing map", e)
+        Toast.makeText(this, "Error initializing map", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun retryMapLoading() {
+    // Show loading indicator again
+    findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.VISIBLE
+    findViewById<TextView>(R.id.map_loading_text)?.text = "Loading map..."
+    
+    // Reset any click listeners
+    findViewById<TextView>(R.id.map_loading_text)?.setOnClickListener(null)
+    
+    // Try to initialize map again
+    mapFragment.getMapAsync(this)
+}
     
     private fun initializeAR() {
         try {
@@ -783,6 +892,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun startNavigation(origin: LatLng, destination: LatLng) {
         try {
             isNavigating = true
+            currentStepIndex = 0 // Reset step index when starting navigation
             
             // Move camera to show both origin and destination
             val bounds = com.google.android.gms.maps.model.LatLngBounds.Builder()
@@ -810,11 +920,253 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             recentPlacesManager.addRecentPlace(destination, placeName)
             
+            // Start continuous navigation updates
+            startNavigationUpdates()
+            
             // Log the navigation start
             Log.d(TAG, "Navigation started from $origin to $destination")
         } catch (e: Exception) {
             Log.e(TAG, "Error starting navigation", e)
             Toast.makeText(this, "Error starting navigation: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun startNavigationUpdates() {
+        // Stop any existing updates
+        navigationUpdateHandler?.removeCallbacksAndMessages(null)
+        
+        // Create a new handler for updates
+        navigationUpdateHandler = Handler(Looper.getMainLooper())
+        
+        // Create update runnable
+        val updateRunnable = object : Runnable {
+            override fun run() {
+                if (isNavigating) {
+                    // Update current step based on user's location
+                    updateCurrentNavigationStep()
+                    
+                    // Schedule next update
+                    navigationUpdateHandler?.postDelayed(this, 3000) // Update every 3 seconds
+                }
+            }
+        }
+        
+        // Start updates
+        navigationUpdateHandler?.post(updateRunnable)
+    }
+    
+    private fun updateCurrentNavigationStep() {
+        try {
+            val currentLocation = currentLocation ?: return
+            // Get directions steps from helper
+            val steps = directionsHelper.lastSteps
+            
+            if (steps.isEmpty()) return
+            
+            // Find the closest next step based on user location
+            var closestStepIndex = 0
+            var minDistance = Float.MAX_VALUE
+            
+            for (i in currentStepIndex until steps.size) {
+                val step = steps[i]
+                val results = FloatArray(1)
+                android.location.Location.distanceBetween(
+                    currentLocation.latitude, currentLocation.longitude,
+                    step.startLocation.latitude, step.startLocation.longitude,
+                    results
+                )
+                
+                val distance = results[0]
+                
+                // If user is very close to a step, consider it the current one
+                if (distance < 20) { // Within 20 meters
+                    closestStepIndex = i
+                    break
+                }
+                
+                // Otherwise track the closest upcoming step
+                if (distance < minDistance) {
+                    minDistance = distance
+                    closestStepIndex = i
+                }
+            }
+            
+            // Update if the step has changed
+            if (closestStepIndex != currentStepIndex) {
+                currentStepIndex = closestStepIndex
+                updateMapNavigationUIForCurrentStep()
+                // Also update the route drawing to show progress
+                if (currentStepIndex > 0 && currentStepIndex < steps.size) {
+                    highlightCurrentRouteSegment(steps, currentStepIndex)
+                }
+                Log.d(TAG, "Navigation step updated to: $currentStepIndex")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating current navigation step", e)
+        }
+    }
+    
+    private fun updateMapNavigationUIForCurrentStep() {
+        val instructions = directionsHelper.lastInstructions
+        val steps = directionsHelper.lastSteps
+        
+        if (instructions.isEmpty() || steps.isEmpty() || currentStepIndex >= instructions.size) return
+        
+        // Get the current instruction
+        val currentInstruction = instructions[currentStepIndex]
+        
+        // Parse the instruction to separate direction from street name
+        val directionParts = currentInstruction.split(" on ", limit = 2)
+        val direction = directionParts[0]
+        val streetName = if (directionParts.size > 1) "on ${directionParts[1]}" else ""
+        
+        // Get next instruction if available
+        val nextDirection = if (currentStepIndex + 1 < instructions.size) 
+            instructions[currentStepIndex + 1] 
+        else 
+            "Arrive at destination"
+        
+        // Calculate remaining distance and time for current and upcoming steps
+        val remainingSteps = steps.drop(currentStepIndex)
+        val remainingDistanceMeters = remainingSteps.sumOf { it.distance }
+        val remainingTimeSeconds = (remainingDistanceMeters / 1.4).toInt() // Walking speed
+        
+        // Format time
+        val timeMinutes = remainingTimeSeconds / 60
+        val timeText = "$timeMinutes min"
+        
+        // Format US mile distance for the bottom panel
+        val distanceMiles = remainingDistanceMeters * 0.000621371 // Convert meters to miles
+        
+        // Get current time and add the estimated duration
+        val currentTime = System.currentTimeMillis()
+        val etaTime = currentTime + (remainingTimeSeconds * 1000)
+        val etaFormat = android.text.format.DateFormat.getTimeFormat(this)
+        val etaString = etaFormat.format(etaTime)
+        
+        // Format distance with ETA
+        val distanceMilesText = String.format("%.1f mi · %s", distanceMiles, etaString)
+        
+        // Update direction icon based on maneuver type
+        val directionIcon = findViewById<ImageView>(R.id.map_nav_direction_icon)
+        val directionType = when {
+            direction.contains("Turn right") -> android.R.drawable.ic_menu_directions
+            direction.contains("Turn left") -> android.R.drawable.ic_menu_directions
+            direction.contains("Continue") -> android.R.drawable.ic_menu_directions
+            direction.contains("Arrive") -> android.R.drawable.ic_menu_directions
+            else -> android.R.drawable.ic_menu_directions
+        }
+        directionIcon?.setImageResource(directionType)
+        
+        // Update UI
+        runOnUiThread {
+            mapNavDirectionText?.text = direction
+            mapNavStreetName?.text = streetName
+            mapNavNextDirection?.text = nextDirection
+            mapNavTime?.text = timeText
+            mapNavDistance?.text = distanceMilesText
+            
+            // Update progress on map - highlight current segment
+            highlightCurrentRouteSegment(steps, currentStepIndex)
+        }
+    }
+    
+    private fun highlightCurrentRouteSegment(steps: List<DirectionsHelper.DirectionStep>, currentStepIndex: Int) {
+        googleMap?.let { map ->
+            // Clear previous route
+            map.clear()
+            
+            // Redraw destination marker
+            destinationLatLng?.let { 
+                map.addMarker(MarkerOptions().position(it).title("Destination"))
+            }
+            
+            // Extract all points for the route
+            val allPoints = mutableListOf<LatLng>()
+            
+            // Add completed steps in gray
+            if (currentStepIndex > 0) {
+                val completedPoints = mutableListOf<LatLng>()
+                for (i in 0 until currentStepIndex) {
+                    completedPoints.addAll(steps[i].points)
+                }
+                
+                // Draw completed route in gray
+                if (completedPoints.isNotEmpty()) {
+                    map.addPolyline(
+                        com.google.android.gms.maps.model.PolylineOptions()
+                            .addAll(completedPoints)
+                            .width(5f)
+                            .color(android.graphics.Color.GRAY)
+                    )
+                }
+                
+                allPoints.addAll(completedPoints)
+            }
+            
+            // Add current step in blue/highlighted
+            if (currentStepIndex < steps.size) {
+                val currentStepPoints = steps[currentStepIndex].points
+                
+                // Draw current route segment in bright blue
+                if (currentStepPoints.isNotEmpty()) {
+                    map.addPolyline(
+                        com.google.android.gms.maps.model.PolylineOptions()
+                            .addAll(currentStepPoints)
+                            .width(8f) // Thicker line
+                            .color(android.graphics.Color.BLUE)
+                    )
+                }
+                
+                allPoints.addAll(currentStepPoints)
+            }
+            
+            // Add future steps in light blue
+            val futurePoints = mutableListOf<LatLng>()
+            for (i in (currentStepIndex + 1) until steps.size) {
+                futurePoints.addAll(steps[i].points)
+            }
+            
+            // Draw future route in light blue
+            if (futurePoints.isNotEmpty()) {
+                map.addPolyline(
+                    com.google.android.gms.maps.model.PolylineOptions()
+                        .addAll(futurePoints)
+                        .width(5f)
+                        .color(android.graphics.Color.CYAN)
+                )
+            }
+            
+            allPoints.addAll(futurePoints)
+            
+            // Ensure the map camera shows the relevant part of the route
+            if (allPoints.isNotEmpty()) {
+                // Create a bounds that includes both current location and next maneuver
+                val boundsBuilder = com.google.android.gms.maps.model.LatLngBounds.Builder()
+                currentLocation?.let { boundsBuilder.include(it) }
+                
+                // Add the maneuver point (start of current step)
+                if (currentStepIndex < steps.size) {
+                    boundsBuilder.include(steps[currentStepIndex].startLocation)
+                    
+                    // Also include end location if close to completing step
+                    if (currentStepIndex == steps.size - 1) {
+                        boundsBuilder.include(steps[currentStepIndex].endLocation)
+                    }
+                }
+                
+                // Move camera to show current segment with padding
+                try {
+                    val bounds = boundsBuilder.build()
+                    val cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, 100)
+                    map.animateCamera(cameraUpdate)
+                } catch (e: Exception) {
+                    // In case of invalid bounds, fallback to current location
+                    currentLocation?.let {
+                        map.animateCamera(CameraUpdateFactory.newLatLngZoom(it, 16f))
+                    }
+                }
+            }
         }
     }
     
@@ -963,6 +1315,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun stopNavigation() {
         isNavigating = false
         
+        // Stop the navigation updates
+        navigationUpdateHandler?.removeCallbacksAndMessages(null)
+        navigationUpdateHandler = null
+        
         // Hide the navigation UI
         mapNavigationOverlay?.visibility = View.GONE
         
@@ -1092,6 +1448,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 isMyLocationButtonEnabled = true
             }
             
+            // Set map loading timeout settings
+            map.setMaxZoomPreference(20f) // Limit max zoom to improve performance
+            map.setMinZoomPreference(5f)  // Set min zoom to ensure we don't zoom too far out
+            
             // Enable my location if we have permission
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
                     == PackageManager.PERMISSION_GRANTED) {
@@ -1114,8 +1474,8 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             currentLocation?.let {
                 map.moveCamera(CameraUpdateFactory.newLatLngZoom(it, 15f))
             } ?: run {
-                // Default to San Francisco if no location
-                map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(37.7749, -122.4194), 10f))
+                // Default to a more reasonable default location - central coordinates of India
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(20.5937, 78.9629), 5f))
             }
             
             // If we already have a destination, show it
@@ -1123,6 +1483,14 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 map.addMarker(MarkerOptions().position(destination).title("Destination"))
                 map.moveCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
             }
+            
+            // If we're navigating, make sure to show the route
+            if (isNavigating && routePoints != null && routePoints!!.isNotEmpty()) {
+                drawRoute(routePoints!!)
+                mapNavigationOverlay?.visibility = View.VISIBLE
+            }
+            
+            Log.d(TAG, "Map initialized successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring map", e)
             Toast.makeText(this, "Error configuring map: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -1160,4 +1528,6 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         super.onWindowFocusChanged(hasFocus)
         FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus)
     }
+
+    // We now have direct access to lastInstructions and lastSteps in DirectionsHelper class
 } 
