@@ -26,6 +26,17 @@ class DirectionsHelper(private val context: Context) {
         private const val DIRECTIONS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
     }
     
+    // Define transportation modes
+    enum class TransportMode(val apiValue: String, val speedFactor: Double) {
+        WALKING("walking", 1.4),              // ~5 km/h or 1.4 m/s average walking speed
+        TWO_WHEELER("driving", 8.3),          // ~30 km/h or 8.3 m/s for 2-wheeler
+        FOUR_WHEELER("driving", 13.9)         // ~50 km/h or 13.9 m/s for 4-wheeler
+    }
+    
+    // Current transport mode
+    var currentTransportMode = TransportMode.WALKING
+        private set
+    
     // Store last fetched instructions and steps for continuous updates
     var lastInstructions: List<String> = emptyList()
         private set
@@ -65,14 +76,28 @@ class DirectionsHelper(private val context: Context) {
             override fun onDirectionsError(errorMessage: String) {
                 listener.onDirectionsError(errorMessage)
             }
-        }).execute(origin, destination)
+        }, currentTransportMode).execute(origin, destination)
     }
     
     /**
      * Fetch directions with turn-by-turn instructions
      */
-    fun getDirectionsWithInstructions(origin: LatLng, destination: LatLng, listener: DirectionsWithInstructionsListener) {
-        FetchDirectionsTask(listener).execute(origin, destination)
+    fun getDirectionsWithInstructions(
+        origin: LatLng, 
+        destination: LatLng, 
+        listener: DirectionsWithInstructionsListener,
+        transportMode: TransportMode = TransportMode.WALKING
+    ) {
+        // Set the current transport mode
+        currentTransportMode = transportMode
+        FetchDirectionsTask(listener, transportMode).execute(origin, destination)
+    }
+    
+    /**
+     * Set transportation mode
+     */
+    fun setTransportMode(mode: TransportMode) {
+        currentTransportMode = mode
     }
     
     /**
@@ -99,7 +124,10 @@ class DirectionsHelper(private val context: Context) {
     /**
      * AsyncTask to fetch directions in background
      */
-    private inner class FetchDirectionsTask(private val listener: DirectionsWithInstructionsListener) : 
+    private inner class FetchDirectionsTask(
+        private val listener: DirectionsWithInstructionsListener,
+        private val transportMode: TransportMode
+    ) : 
             AsyncTask<LatLng, Void, String>() {
         
         private var errorMessage: String? = null
@@ -117,7 +145,7 @@ class DirectionsHelper(private val context: Context) {
                 val apiKey = getApiKey()
                 val urlString = "$DIRECTIONS_API_URL?origin=${origin.latitude},${origin.longitude}" +
                         "&destination=${destination.latitude},${destination.longitude}" +
-                        "&mode=walking" +
+                        "&mode=${transportMode.apiValue}" +
                         "&key=$apiKey"
                 
                 Log.d(TAG, "Making directions request to: ${urlString.replace(apiKey, "API_KEY_REDACTED")}")
@@ -275,7 +303,13 @@ class DirectionsHelper(private val context: Context) {
                 val startArea = extractLocalityFromAddress(startAddress)
                 val endArea = extractLocalityFromAddress(endAddress)
                 
-                instructions.add("Navigate from $startArea to $endArea ($totalDistance)")
+                // Add transport mode indicator to the first instruction
+                val transportModeName = when(transportMode) {
+                    TransportMode.WALKING -> "Walk"
+                    TransportMode.TWO_WHEELER -> "Ride"
+                    TransportMode.FOUR_WHEELER -> "Drive"
+                }
+                instructions.add("$transportModeName from $startArea to $endArea ($totalDistance)")
                 
                 // Process each step for detailed instructions
                 val stepsJson = leg.getJSONArray("steps")

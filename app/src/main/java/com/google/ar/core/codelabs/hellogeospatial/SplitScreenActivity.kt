@@ -85,6 +85,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var routePoints: List<LatLng>? = null
     private var currentStepIndex = 0 // Track which navigation step the user is on
     private var navigationUpdateHandler: Handler? = null // Handler for periodic updates
+    private var selectedTransportMode = DirectionsHelper.TransportMode.WALKING // Default to walking mode
     
     // Map navigation UI components
     private var mapNavigationOverlay: View? = null
@@ -95,6 +96,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var mapNavDistance: TextView? = null
     private var mapNavARButton: View? = null
     private var mapNavCloseButton: View? = null
+    private var transportModeContainer: View? = null
+    private var walkingModeButton: View? = null
+    private var twoWheelerModeButton: View? = null
+    private var fourWheelerModeButton: View? = null
     
     // Search suggestion components
     private lateinit var suggestionProvider: SearchSuggestionProvider
@@ -514,6 +519,15 @@ private fun retryMapLoading() {
             mapNavARButton = findViewById(R.id.map_nav_ar_button)
             mapNavCloseButton = findViewById(R.id.map_nav_close_button)
             
+            // Find transport mode selection components
+            transportModeContainer = findViewById(R.id.transport_mode_container)
+            walkingModeButton = findViewById(R.id.walking_mode_button)
+            twoWheelerModeButton = findViewById(R.id.two_wheeler_mode_button)
+            fourWheelerModeButton = findViewById(R.id.four_wheeler_mode_button)
+            
+            // Set up transport mode buttons
+            setupTransportModeButtons()
+            
             // Set up mode toggle buttons
             findViewById<Button>(R.id.ar_mode_button).setOnClickListener {
                 launchARMode()
@@ -631,6 +645,46 @@ private fun retryMapLoading() {
         } catch (e: Exception) {
             Log.e(TAG, "Error setting up UI controls", e)
         }
+    }
+    
+    private fun setupTransportModeButtons() {
+        // If the buttons don't exist yet, return (we'll add them to the layout)
+        walkingModeButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.WALKING
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
+        twoWheelerModeButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.TWO_WHEELER
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
+        fourWheelerModeButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.FOUR_WHEELER
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
+        // Set initial UI state
+        updateTransportModeUI()
+    }
+    
+    private fun updateTransportModeUI() {
+        // Set selected state for buttons
+        walkingModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.WALKING) 1.0f else 0.5f
+        twoWheelerModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.TWO_WHEELER) 1.0f else 0.5f
+        fourWheelerModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.FOUR_WHEELER) 1.0f else 0.5f
     }
     
     private fun setupSearchSuggestions() {
@@ -1041,7 +1095,10 @@ private fun retryMapLoading() {
         // Calculate remaining distance and time for current and upcoming steps
         val remainingSteps = steps.drop(currentStepIndex)
         val remainingDistanceMeters = remainingSteps.sumOf { it.distance }
-        val remainingTimeSeconds = (remainingDistanceMeters / 1.4).toInt() // Walking speed
+        
+        // Use the speed factor from the selected transport mode to calculate time
+        val speedFactor = selectedTransportMode.speedFactor
+        val remainingTimeSeconds = (remainingDistanceMeters / speedFactor).toInt()
         
         // Format time
         val timeMinutes = remainingTimeSeconds / 60
@@ -1186,7 +1243,7 @@ private fun retryMapLoading() {
         // Show loading indicator
         findViewById<LinearLayout>(R.id.map_loading_container).visibility = View.VISIBLE
         
-        // Get directions
+        // Get directions with the selected transport mode
         directionsHelper.getDirectionsWithInstructions(
             origin, destination,
             object : DirectionsHelper.DirectionsWithInstructionsListener {
@@ -1213,6 +1270,9 @@ private fun retryMapLoading() {
                     // Hide the bottom controls during navigation
                     findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
                     
+                    // Show transport mode selection
+                    transportModeContainer?.visibility = View.VISIBLE
+                    
                     Log.d(TAG, "Directions fetched successfully. Path points: ${pathPoints.size}")
                 }
                 
@@ -1232,7 +1292,8 @@ private fun retryMapLoading() {
                     
                     Log.e(TAG, "Error getting directions: $errorMessage")
                 }
-            }
+            },
+            selectedTransportMode
         )
     }
     
@@ -1334,6 +1395,9 @@ private fun retryMapLoading() {
         // Hide the navigation UI
         mapNavigationOverlay?.visibility = View.GONE
         
+        // Hide transport mode container
+        transportModeContainer?.visibility = View.GONE
+        
         // Show the controls again
         findViewById<LinearLayout>(R.id.mode_controls).visibility = View.VISIBLE
         findViewById<EditText>(R.id.searchBar).visibility = View.VISIBLE
@@ -1351,7 +1415,10 @@ private fun retryMapLoading() {
         
         // Calculate total distance and time
         val totalDistanceMeters = steps.sumOf { it.distance }
-        val totalTimeSeconds = (totalDistanceMeters / 1.4).toInt() // Estimate walking speed at 1.4 m/s
+        
+        // Use the speed factor from the selected transport mode to calculate time
+        val speedFactor = selectedTransportMode.speedFactor
+        val totalTimeSeconds = (totalDistanceMeters / speedFactor).toInt()
         
         // Format time
         val timeMinutes = totalTimeSeconds / 60
