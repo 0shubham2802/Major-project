@@ -1174,11 +1174,11 @@ private fun retryMapLoading() {
         // Show navigation UI
         mapNavigationOverlay?.visibility = View.VISIBLE
         
-        // Show transport mode containers and make sure they're visible
+        // Show only the transport mode container inside the navigation overlay, not the split screen one
         transportModeContainer?.visibility = View.VISIBLE
         transportModeContainer?.bringToFront()
-        splitTransportContainer?.visibility = View.VISIBLE
-        splitTransportContainer?.bringToFront()
+        // Hide the split screen transport container to avoid duplication
+        splitTransportContainer?.visibility = View.GONE
         
         // Hide the search bar and buttons during navigation
         findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
