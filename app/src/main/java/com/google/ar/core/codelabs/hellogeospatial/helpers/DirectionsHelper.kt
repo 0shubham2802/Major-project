@@ -101,6 +101,14 @@ class DirectionsHelper(private val context: Context) {
     }
     
     /**
+     * Clear directions data
+     */
+    fun clearDirections() {
+        lastInstructions = emptyList()
+        lastSteps = emptyList()
+    }
+    
+    /**
      * Draw the route on the map
      */
     fun drawRouteOnMap(map: GoogleMap, pathPoints: List<LatLng>) {
