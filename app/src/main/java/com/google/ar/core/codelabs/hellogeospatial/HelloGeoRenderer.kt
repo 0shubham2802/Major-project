@@ -567,8 +567,9 @@ class HelloGeoRenderer(val context: Context) :
             val angleXZ = toDegrees(angleRadians).toFloat()
             
             // Determine if the anchor is to the left or right of the camera
+            // Fix: corrected the sign of the angle calculation to match visual appearance
             val crossProduct = forwardXZ[0] * directionXZ[2] - forwardXZ[2] * directionXZ[0]
-            currentRotationAngle = if (crossProduct >= 0) -angleXZ else angleXZ
+            currentRotationAngle = if (crossProduct >= 0) angleXZ else -angleXZ
             
             // Rotate the arrow to point toward the anchor
             Matrix.rotateM(arrowMatrix, 0, currentRotationAngle, 0f, 1f, 0f)
@@ -613,6 +614,9 @@ class HelloGeoRenderer(val context: Context) :
           if (anchorType == AnchorType.DESTINATION && distance < 50) {
             drawHoveringDestinationMarker(render, anchorPose, distance, cameraGeospatialPose)
           }
+          
+          // Log the angle for debugging purposes
+          Log.d(TAG, "Navigation angle: $currentRotationAngle degrees, distance: $distance meters")
           
           // Update direction instruction based on angle
           updateDirectionInstruction(currentRotationAngle, distance, anchorType == AnchorType.DESTINATION)
@@ -722,13 +726,15 @@ class HelloGeoRenderer(val context: Context) :
         setDirectionInstruction("You have arrived at your destination!")
       } else if (isDestination && distance < 15f) {
         setDirectionInstruction("Your destination is ${formatDistance(distance)} ahead")
-      } else if (abs(angle) < 15f) {
+      } else if (abs(angle) < 30f) {  // Increased threshold for "straight ahead"
         setDirectionInstruction("Continue straight ahead for ${formatDistance(distance)}")
-      } else if (abs(angle) < 60f) {
-        val direction = if (angle < 0) "right" else "left" 
+      } else if (abs(angle) < 75f) {  // Adjusted threshold for slight turns
+        // Fix: Swapped left/right directions to match real-world perspective
+        val direction = if (angle > 0) "right" else "left" 
         setDirectionInstruction("Turn slightly $direction and go ${formatDistance(distance)}")
       } else if (abs(angle) < 120f) {
-        val direction = if (angle < 0) "right" else "left"
+        // Fix: Swapped left/right directions to match real-world perspective
+        val direction = if (angle > 0) "right" else "left"
         setDirectionInstruction("Take a $direction turn for ${formatDistance(distance)}")
       } else {
         setDirectionInstruction("Turn around and go back ${formatDistance(distance)}")
