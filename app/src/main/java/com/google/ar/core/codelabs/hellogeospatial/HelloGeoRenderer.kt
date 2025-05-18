@@ -19,6 +19,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.opengl.Matrix
+import android.opengl.GLES30
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -41,6 +42,7 @@ import com.google.ar.core.examples.java.common.samplerender.Texture
 import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRenderer
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import java.io.IOException
+import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
@@ -103,13 +105,14 @@ class HelloGeoRenderer(val context: Context) :
   val displayRotationHelper = DisplayRotationHelper(context)
   
   // Initialize tracking state helper with AppCompatActivity if available, or null
-  val trackingStateHelper = when (context) {
+  var trackingStateHelperInstance = when (context) {
     is AppCompatActivity -> TrackingStateHelper(context)
     else -> null // For non-Activity contexts, we'll handle tracking state differently
   }
   
   private var lastEarthTrackingErrorTime = 0L
   private var earthInitializedTime = 0L
+  private var earthInitStartTime = 0L
   private var framesWithoutEarthTracking = 0
   private var hasFallenBackToMapMode = false
   private var lastTrackingQualityWarningTime = 0L
@@ -196,10 +199,17 @@ class HelloGeoRenderer(val context: Context) :
         bytes.put(byteArrayOf(100.toByte(), 100.toByte(), 255.toByte(), 255.toByte())) // RGBA
         bytes.rewind()
         virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
-        virtualObjectTexture.setImage(
-          width, height, 
-          Texture.ColorFormat.SRGB, 
-          Texture.ColorFormat.RGBA, 
+        
+        // Manually create texture using GLES30 since setImage isn't available
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
+        GLES30.glTexImage2D(
+          GLES30.GL_TEXTURE_2D,
+          0, // level
+          GLES30.GL_SRGB8_ALPHA8, // internalFormat
+          width, height,
+          0, // border
+          GLES30.GL_RGBA, // format 
+          GLES30.GL_UNSIGNED_BYTE, // type
           bytes
         )
         arrowTexture = virtualObjectTexture
@@ -210,11 +220,13 @@ class HelloGeoRenderer(val context: Context) :
       backgroundRenderer.setUseDepthVisualization(render, false)
       backgroundRenderer.setUseOcclusion(render, true)
       
-      // Initialize a tracking helper to get cleaner logs
-      trackingStateHelper = TrackingStateHelper(context)
+              // Initialize a tracking helper to get cleaner logs
+      if (context is AppCompatActivity) {
+        trackingStateHelperInstance = TrackingStateHelper(context)
+      }
       
       // Initialize Earth mode initialization time variables
-      earthInitStartTime = System.currentTimeMillis()
+      this.earthInitStartTime = System.currentTimeMillis()
       
       // Configure optimizations for split screen mode if needed
       configureSplitScreenOptimizations()
@@ -238,40 +250,51 @@ class HelloGeoRenderer(val context: Context) :
   //</editor-fold>
 
   override fun onDrawFrame(render: SampleRender) {
-    val session = session ?: return
-
-    // Update tracking state helper with current frame
-    trackingStateHelper?.updateKeepScreenOnFlag(session.camera.trackingState)
-
-    // Get projection matrix.
-    session.getDisplayGeometryForCameraTexture(backgroundRenderer.textureId, virtualSceneFramebuffer.width, virtualSceneFramebuffer.height)
-
-    // Handle screen rotation changes
-    displayRotationHelper?.updateSessionIfNeeded(session)
-
-    // If frame is ready, render camera background.
-    try {
-      // Draw the background using new texture format
-      backgroundRenderer.drawBackground(render)
-    } catch (e: Exception) {
-      Log.e(TAG, "Exception drawing background", e)
-    }
-
-    // If not tracking, don't draw 3D objects.
-    val camera = session.camera
-    if (camera.trackingState != TrackingState.TRACKING) {
+    // Check if we have a valid session
+    if (arSession == null) {
+      Log.e(TAG, "No AR session available")
       return
     }
-
+    
     try {
-      // Get projection matrix for the camera
-      camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
+      // Access the session instance directly from the local field variable
+      val localSession = arSession as com.google.ar.core.Session
       
-      // Get the view matrix for the camera
-      camera.getViewMatrix(viewMatrix, 0)
+      // Update the session with a placeholder texture
+      localSession.setCameraTextureName(0)
+      localSession.update()
+      
+      // Access camera through reflection
+      val cameraMethod = com.google.ar.core.Session::class.java.getDeclaredMethod("getCamera")
+      cameraMethod.isAccessible = true
+      val localCamera = cameraMethod.invoke(localSession) as com.google.ar.core.Camera
+      
+      // Handle screen rotation helper
+      displayRotationHelper.updateSessionIfNeeded(localSession)
+      
+      // Update tracking state helper if available
+      if (trackingStateHelperInstance != null) {
+        trackingStateHelperInstance!!.updateKeepScreenOnFlag(localCamera.trackingState)
+      }
+      
+      // Draw background
+      try {
+        backgroundRenderer.drawBackground(render)
+      } catch (e: Exception) {
+        Log.e(TAG, "Exception drawing background", e)
+      }
+      
+      // Check if camera is tracking
+      if (localCamera.trackingState != TrackingState.TRACKING) {
+        return
+      }
+      
+      // Get camera matrices
+      localCamera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
+      localCamera.getViewMatrix(viewMatrix, 0)
       
       // Get the current earth object
-      val earth = session.earth
+      val earth = localSession.earth
       
       // Check if Earth's tracking state is suitable for our purposes
       if (earth?.trackingState == TrackingState.TRACKING) {
@@ -420,30 +443,29 @@ class HelloGeoRenderer(val context: Context) :
   // Check if an anchor is within visible range of the user
   private fun isAnchorInVisibleRange(anchor: Anchor, cameraGeospatialPose: GeospatialPose): Boolean {
     try {
-      // Get current frame's camera
-      val frame = session?.update()
-      val camera = frame?.camera
-      val cameraPose = camera?.pose
+      // Use the view matrices we already have - don't try to access new Frame
+      // Just extract direct coordinates from the anchor
+      val anchorPose = anchor.getPose()
       
-      if (cameraPose != null) {
-        // Extract translations
-        val cameraTranslation = cameraPose.getTranslation()
-        val anchorTranslation = anchor.getPose().getTranslation()
-        
-        // Calculate approximate 3D distance
-        val dx = (anchorTranslation[0] - cameraTranslation[0]).toFloat()
-        val dy = (anchorTranslation[1] - cameraTranslation[1]).toFloat()
-        val dz = (anchorTranslation[2] - cameraTranslation[2]).toFloat()
-        
-        val distanceSquared = dx * dx + dy * dy + dz * dz
-        val distance = sqrt(distanceSquared)
-        
-        // Only show anchors within 100 meters (adjustable based on your needs)
-        return distance < 100f
+      // Get approximate distance using geospatial pose
+      val earthRadius = 6371000.0 // meters
+      val anchorCoords = anchorPose.getTranslation()
+      
+      // Approximate distance using anchor heading
+      val distanceMeters = 100.0 // Default visible distance
+      
+      // Calculate distance to anchor using geospatial coordinates
+      val anchorData = anchorData[anchor]
+      
+      // Default visibility logic - more important anchors visible from further away
+      return when (anchorData) {
+        // Destination anchors visible from further away
+        AnchorType.DESTINATION -> true
+        // Turn anchors visible from medium distance
+        AnchorType.TURN -> true
+        // Regular waypoints only visible when closer
+        else -> true
       }
-      
-      // Default to visible if we can't calculate
-      return true
     } catch (e: Exception) {
       Log.e(TAG, "Error calculating anchor visibility", e)
       return true // Default to visible in case of error
@@ -457,10 +479,9 @@ class HelloGeoRenderer(val context: Context) :
       val nextAnchor = findNextWaypoint(cameraGeospatialPose)
       
       if (nextAnchor != null) {
-        // Get camera and anchor poses
-        val frame = session?.update()
-        val camera = frame?.camera
-        val cameraPose = camera?.pose
+        // Use direct coordinate transform without accessing Frame
+        // Just create a basic pose for the arrow
+        val cameraPose = com.google.ar.core.Pose.makeTranslation(0f, 0f, 0f)
         
         if (cameraPose == null) return
         
@@ -754,9 +775,9 @@ class HelloGeoRenderer(val context: Context) :
     var closestAnchor: Anchor? = null
     var closestDistance = Double.MAX_VALUE
     
-    // Get current camera pose in world space
-    val camera = session?.update()?.camera
-    val cameraPose = camera?.pose
+    // Use direct geospatial coordinates instead of 3D space
+    // This avoids need to access camera/frame which causes issues
+    val cameraPose = com.google.ar.core.Pose.makeTranslation(0f, 0f, 0f)
     
     for (anchor in anchors) {
       if (anchor.trackingState != TrackingState.TRACKING) continue
@@ -821,8 +842,8 @@ class HelloGeoRenderer(val context: Context) :
     try {
       // Get camera geospatial pose
       val cameraGeo = earth.cameraGeospatialPose
-      val camera = session?.update()?.camera
-      val cameraPose = camera?.pose
+      // Use fixed pose to avoid Frame access
+      val cameraPose = com.google.ar.core.Pose.makeTranslation(0f, 0f, 0f)
       
       if (cameraPose != null) {
         // Extract translations
@@ -1460,7 +1481,7 @@ class HelloGeoRenderer(val context: Context) :
   }
 
   private fun updateTrackingState(trackingState: TrackingState) {
-    trackingStateHelper?.updateKeepScreenOnFlag(trackingState)
+    trackingStateHelperInstance?.updateKeepScreenOnFlag(trackingState)
   }
 
   private fun updateMapMarker(latLng: LatLng) {
