@@ -1594,15 +1594,49 @@ private fun retryMapLoading() {
             
             // Add current step information if available
             if (routePoints?.isNotEmpty() == true) {
-                // Pass the first few waypoints - ARCore can handle these
-                val waypointsToPass = minOf(5, routePoints!!.size)
+                // Identify significant points (turns) to pass to AR
+                val steps = directionsHelper.lastSteps
+                val significantPoints = mutableListOf<LatLng>()
+                
+                // Always include the start point (current location)
+                currentLocation?.let { currentLoc ->
+                    significantPoints.add(currentLoc)
+                }
+                
+                // Add turn points (these are more important than regular waypoints)
+                if (steps.isNotEmpty()) {
+                    for (i in 0 until steps.size) {
+                        val step = steps[i]
+                        if (i < steps.size - 1) {
+                            // Add all turn points
+                            significantPoints.add(step.endLocation)
+                        }
+                    }
+                } else {
+                    // If no detailed steps, use route points directly
+                    // Limit to reasonable number of points
+                    val pointsToCopy = minOf(15, routePoints!!.size)
+                    for (i in 0 until pointsToCopy) {
+                        // Sample points evenly throughout route
+                        val index = (i * routePoints!!.size) / pointsToCopy
+                        if (index < routePoints!!.size) {
+                            significantPoints.add(routePoints!![index])
+                        }
+                    }
+                }
+                
+                // Always include destination 
+                significantPoints.add(it)
+                
+                // Pass significant waypoints
+                val waypointsToPass = minOf(15, significantPoints.size)
                 for (i in 0 until waypointsToPass) {
-                    intent.putExtra("WAYPOINT_LAT_$i", routePoints!![i].latitude)
-                    intent.putExtra("WAYPOINT_LNG_$i", routePoints!![i].longitude)
+                    intent.putExtra("WAYPOINT_LAT_$i", significantPoints[i].latitude)
+                    intent.putExtra("WAYPOINT_LNG_$i", significantPoints[i].longitude)
                 }
                 intent.putExtra("WAYPOINT_COUNT", waypointsToPass)
                 
-                Log.d(TAG, "Added $waypointsToPass waypoints to AR navigation intent")
+                Log.d(TAG, "Added $waypointsToPass significant waypoints to AR navigation intent")
             }
             
             startActivity(intent)
@@ -1759,7 +1793,7 @@ private fun retryMapLoading() {
             map.uiSettings.apply {
                 isZoomControlsEnabled = true
                 isCompassEnabled = true
-                isMyLocationButtonEnabled = true
+                isMyLocationButtonEnabled = false  // Disable default My Location button to avoid duplication
             }
             
             // Set map loading timeout settings
