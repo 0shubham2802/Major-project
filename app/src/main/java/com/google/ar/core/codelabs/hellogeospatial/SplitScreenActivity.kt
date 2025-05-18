@@ -88,6 +88,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var currentStepIndex = 0 // Track which navigation step the user is on
     private var navigationUpdateHandler: Handler? = null // Handler for periodic updates
     private var selectedTransportMode = DirectionsHelper.TransportMode.WALKING // Default to walking mode
+    private var destinationMarker: com.google.android.gms.maps.model.Marker? = null
     
     // Map navigation UI components
     private var mapNavigationOverlay: View? = null
@@ -179,8 +180,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     destinationLatLng = LatLng(lat, lng)
                     destinationLatLng?.let { destination ->
                         // Show destination on map when ready
-                        googleMap?.addMarker(MarkerOptions().position(destination).title("Destination"))
-                        googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
+                        googleMap?.apply {
+                            clear()
+                            destinationMarker = addMarker(MarkerOptions().position(destination).title("Destination"))
+                            animateCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
+                        }
                         
                         // Make navigate button visible
                         findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
@@ -212,30 +216,39 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                         
                         // If we already have a destination, we can calculate/update the route
                         destinationLatLng?.let { destination ->
-                                                    // Only recalculate route if needed
-                        // Calculate route frequently at first until we have a good route
-                        if (directionsHelper.lastSteps.isEmpty()) {
-                            fetchAndDisplayDirections(currentLocation!!, destination)
-                        } else {
-                            // Recalculate if we've moved significantly from route start
-                            val distanceThresholdMeters = 50 // Only recalculate if moved 50+ meters
-                            val steps = directionsHelper.lastSteps
-                            if (steps.isNotEmpty()) {
-                                val results = FloatArray(1)
-                                android.location.Location.distanceBetween(
-                                    currentLocation!!.latitude, currentLocation!!.longitude,
-                                    steps[0].startLocation.latitude, steps[0].startLocation.longitude,
-                                    results
-                                )
-                                
-                                if (results[0] > distanceThresholdMeters) {
-                                    fetchAndDisplayDirections(currentLocation!!, destination)
-                                }
-                            } else {
-                                // No steps yet, calculate route
-                                fetchAndDisplayDirections(currentLocation!!, destination)
+                            googleMap?.apply {
+                                clear()
+                                destinationMarker = addMarker(MarkerOptions().position(destination).title("Destination"))
+                                animateCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
                             }
-                        }
+                            
+                            // Update navigation if active
+                            if (isNavigating) {
+                                // Only recalculate route if needed
+                                // Calculate route frequently at first until we have a good route
+                                if (directionsHelper.lastSteps.isEmpty()) {
+                                    fetchAndDisplayDirections(currentLocation!!, destination)
+                                } else {
+                                    // Recalculate if we've moved significantly from route start
+                                    val distanceThresholdMeters = 50 // Only recalculate if moved 50+ meters
+                                    val steps = directionsHelper.lastSteps
+                                    if (steps.isNotEmpty()) {
+                                        val results = FloatArray(1)
+                                        android.location.Location.distanceBetween(
+                                            currentLocation!!.latitude, currentLocation!!.longitude,
+                                            steps[0].startLocation.latitude, steps[0].startLocation.longitude,
+                                            results
+                                        )
+                                        
+                                        if (results[0] > distanceThresholdMeters) {
+                                            fetchAndDisplayDirections(currentLocation!!, destination)
+                                        }
+                                    } else {
+                                        // No steps yet, calculate route
+                                        fetchAndDisplayDirections(currentLocation!!, destination)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -826,7 +839,7 @@ private fun retryMapLoading() {
         // Update map with the selected location
         googleMap?.apply {
             clear()
-            addMarker(MarkerOptions().position(suggestion.latLng).title(suggestion.title))
+            destinationMarker = addMarker(MarkerOptions().position(suggestion.latLng).title(suggestion.title))
             animateCamera(CameraUpdateFactory.newLatLngZoom(suggestion.latLng, 15f))
         }
         
@@ -968,7 +981,7 @@ private fun retryMapLoading() {
                     // Update map
                     googleMap?.apply {
                         clear()
-                        addMarker(MarkerOptions().position(latLng).title(suggestion.title))
+                        destinationMarker = addMarker(MarkerOptions().position(latLng).title(suggestion.title))
                         animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 15f))
                     }
                     
@@ -1360,7 +1373,7 @@ private fun retryMapLoading() {
             
             // Redraw destination marker
             destinationLatLng?.let { 
-                map.addMarker(MarkerOptions().position(it).title("Destination"))
+                destinationMarker = map.addMarker(MarkerOptions().position(it).title("Destination"))
             }
             
             // Extract all points for the route
@@ -1762,7 +1775,7 @@ private fun retryMapLoading() {
             // Set click listener for selecting location
             map.setOnMapClickListener { latLng ->
                 map.clear()
-                map.addMarker(MarkerOptions().position(latLng).title("Selected Location"))
+                destinationMarker = map.addMarker(MarkerOptions().position(latLng).title("Selected Location"))
                 
                 // Store as destination
                 destinationLatLng = latLng
@@ -1781,7 +1794,7 @@ private fun retryMapLoading() {
             
             // If we already have a destination, show it
             destinationLatLng?.let { destination ->
-                map.addMarker(MarkerOptions().position(destination).title("Destination"))
+                destinationMarker = map.addMarker(MarkerOptions().position(destination).title("Destination"))
                 map.moveCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
             }
             
