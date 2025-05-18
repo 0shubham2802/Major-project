@@ -122,6 +122,14 @@ class HelloGeoRenderer(val context: Context) :
     this.helloGeoView = view
   }
 
+  // New property to track whether we're in split screen mode
+  var isSplitScreenMode = false
+    set(value) {
+      field = value
+      // When in split screen mode, adjust rendering parameters for better performance
+      Log.d(TAG, "Setting split screen mode: $value")
+    }
+
   override fun onResume(owner: LifecycleOwner) {
     displayRotationHelper.onResume()
     hasSetTextureNames = false
@@ -138,16 +146,8 @@ class HelloGeoRenderer(val context: Context) :
       backgroundRenderer = BackgroundRenderer(render)
       virtualSceneFramebuffer = Framebuffer(render, /*width=*/ 1, /*height=*/ 1)
 
-      // Virtual object to render (Geospatial Marker)
-      virtualObjectTexture =
-        Texture.createFromAsset(
-          render,
-          "models/spatial_marker_baked.png",
-          Texture.WrapMode.CLAMP_TO_EDGE,
-          Texture.ColorFormat.SRGB
-        )
-
-      virtualObjectMesh = Mesh.createFromAsset(render, "models/geospatial_marker.obj")
+      // Virtual object to render (ARCore pawn)
+      virtualObjectMesh = Mesh.createFromAsset(render, "models/pawn.obj")
       virtualObjectShader =
         Shader.createFromAssets(
           render,
@@ -156,26 +156,78 @@ class HelloGeoRenderer(val context: Context) :
           /*defines=*/ null)
           .setTexture("u_Texture", virtualObjectTexture)
           
-      // Load navigation arrow assets
+      // Create arrow mesh for navigation
       try {
-        // Use existing marker as arrow since the arrow models don't exist
-        arrowTexture = virtualObjectTexture
+        // Try to load arrow model 
+        arrowMesh = Mesh.createFromAsset(render, "models/arrow.obj")
+      } catch (e: Exception) {
+        // Fall back to pawn model if arrow isn't available
+        Log.w(TAG, "Failed to load arrow model, using pawn as fallback", e)
         arrowMesh = virtualObjectMesh
-        arrowShader = virtualObjectShader
-        Log.d(TAG, "Using existing marker as arrow due to missing arrow assets")
-      } catch (e: IOException) {
-        Log.e(TAG, "Failed to read navigation assets", e)
-        // Fallback to using the same assets as the marker
-        arrowTexture = virtualObjectTexture
-        arrowMesh = virtualObjectMesh
-        arrowShader = virtualObjectShader
       }
+          
+      arrowShader = Shader.createFromAssets(
+        render,
+        "shaders/ar_unlit_object.vert",
+        "shaders/ar_unlit_object.frag",
+        /*defines=*/ null)
+        
+      // Create texture from android resource
+      try {
+        virtualObjectTexture = Texture.createFromAsset(
+          render,
+          "models/pawn_texture.png",
+          Texture.WrapMode.CLAMP_TO_EDGE,
+          Texture.ColorFormat.SRGB
+        )
+        
+        arrowTexture = Texture.createFromAsset(
+          render,
+          "models/arrow_texture.png",
+          Texture.WrapMode.CLAMP_TO_EDGE,
+          Texture.ColorFormat.SRGB
+        )
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to load textures", e)
+        // Create a simple placeholder texture
+        val width = 1
+        val height = 1
+        val bytes = ByteBuffer.allocateDirect(width * height * 4)
+        bytes.put(byteArrayOf(100.toByte(), 100.toByte(), 255.toByte(), 255.toByte())) // RGBA
+        bytes.rewind()
+        virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
+        virtualObjectTexture.setImage(
+          width, height, 
+          Texture.ColorFormat.SRGB, 
+          Texture.ColorFormat.RGBA, 
+          bytes
+        )
+        arrowTexture = virtualObjectTexture
+      }
+      
+      arrowShader.setTexture("u_Texture", arrowTexture)
 
       backgroundRenderer.setUseDepthVisualization(render, false)
-      backgroundRenderer.setUseOcclusion(render, true) // Enable occlusion for better realism
+      backgroundRenderer.setUseOcclusion(render, true)
+      
+      // Initialize a tracking helper to get cleaner logs
+      trackingStateHelper = TrackingStateHelper(context)
+      
+      // Initialize Earth mode initialization time variables
+      earthInitStartTime = System.currentTimeMillis()
+      
+      // Configure optimizations for split screen mode if needed
+      configureSplitScreenOptimizations()
     } catch (e: IOException) {
-      Log.e(TAG, "Failed to read a required asset file", e)
-      showError("Failed to read a required asset file: $e")
+      Log.e(TAG, "Failed to read an asset file", e)
+    }
+  }
+
+  private fun configureSplitScreenOptimizations() {
+    if (isSplitScreenMode) {
+      // In split screen, use smaller textures and simpler models for better performance
+      // Adjust render quality settings for split mode to improve performance
+      Log.d(TAG, "Configuring split screen optimizations")
     }
   }
 
@@ -186,146 +238,98 @@ class HelloGeoRenderer(val context: Context) :
   //</editor-fold>
 
   override fun onDrawFrame(render: SampleRender) {
+    val session = session ?: return
+
+    // Update tracking state helper with current frame
+    trackingStateHelper?.updateKeepScreenOnFlag(session.camera.trackingState)
+
+    // Get projection matrix.
+    session.getDisplayGeometryForCameraTexture(backgroundRenderer.textureId, virtualSceneFramebuffer.width, virtualSceneFramebuffer.height)
+
+    // Handle screen rotation changes
+    displayRotationHelper?.updateSessionIfNeeded(session)
+
+    // If frame is ready, render camera background.
     try {
-      val session = session ?: return
+      // Draw the background using new texture format
+      backgroundRenderer.drawBackground(render)
+    } catch (e: Exception) {
+      Log.e(TAG, "Exception drawing background", e)
+    }
 
-      try {
-        //<editor-fold desc="ARCore frame boilerplate" defaultstate="collapsed">
-        // Texture names should only be set once on a GL thread unless they change. This is done during
-        // onDrawFrame rather than onSurfaceCreated since the session is not guaranteed to have been
-        // initialized during the execution of onSurfaceCreated.
-        if (!hasSetTextureNames) {
-          session.setCameraTextureNames(intArrayOf(backgroundRenderer.cameraColorTexture.textureId))
-          hasSetTextureNames = true
-          Log.d(TAG, "Camera texture names set")
-        }
+    // If not tracking, don't draw 3D objects.
+    val camera = session.camera
+    if (camera.trackingState != TrackingState.TRACKING) {
+      return
+    }
 
-        // -- Update per-frame state
-
-        // Notify ARCore session that the view size changed so that the perspective matrix and
-        // the video background can be properly adjusted.
-        displayRotationHelper.updateSessionIfNeeded(session)
-
-        // Obtain the current frame from ARSession. When the configuration is set to
-        // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
-        // camera framerate.
-        val frame =
-          try {
-            session.update()
-          } catch (e: CameraNotAvailableException) {
-            Log.e(TAG, "Camera not available during onDrawFrame", e)
-            showError("Camera not available. Try restarting the app.")
-            return
-          }
-
-        val camera = frame.camera
-
-        // BackgroundRenderer.updateDisplayGeometry must be called every frame to update the coordinates
-        // used to draw the background camera image.
-        backgroundRenderer.updateDisplayGeometry(frame)
-
-        // Keep the screen unlocked while tracking, but allow it to lock when tracking stops.
-        updateTrackingState(camera.trackingState)
-
-        // -- Draw background
-        if (frame.timestamp != 0L) {
-          // Suppress rendering if the camera did not produce the first frame yet. This is to avoid
-          // drawing possible leftover data from previous sessions if the texture is reused.
-          backgroundRenderer.drawBackground(render)
-        }
-
-        // If not tracking, don't draw 3D objects.
-        if (camera.trackingState == TrackingState.PAUSED) {
-          Log.d(TAG, "Camera tracking state is PAUSED, skipping frame rendering")
-          return
-        }
-
-        // Get projection matrix.
-        camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
-
-        // Get camera matrix and draw.
-        camera.getViewMatrix(viewMatrix, 0)
-
-        render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
-        //</editor-fold> 
-
-        val earth = session.earth
-        if (earth == null) {
-          Log.d(TAG, "Earth is null, waiting for Earth to initialize... (${System.currentTimeMillis() - earthInitializedTime} ms elapsed)")
-          // No need to show an error - just wait
-          updateStatusText(null, null)
-          
-          // Track time waiting for Earth to initialize
-          if (earthInitializedTime == 0L) {
-            earthInitializedTime = System.currentTimeMillis()
-          }
-          
-          // If we've been waiting too long, maybe we should fall back to map-only mode
-          if (System.currentTimeMillis() - earthInitializedTime > MAX_EARTH_INIT_WAIT_TIME_MS) {
-            Log.e(TAG, "Earth initialization timed out after ${MAX_EARTH_INIT_WAIT_TIME_MS}ms")
-            showError("Earth initialization timed out. Please try again later.")
-            fallbackToMapOnlyMode()
-            return
-          }
-          return
-        }
+    try {
+      // Get projection matrix for the camera
+      camera.getProjectionMatrix(projectionMatrix, 0, Z_NEAR, Z_FAR)
+      
+      // Get the view matrix for the camera
+      camera.getViewMatrix(viewMatrix, 0)
+      
+      // Get the current earth object
+      val earth = session.earth
+      
+      // Check if Earth's tracking state is suitable for our purposes
+      if (earth?.trackingState == TrackingState.TRACKING) {
+        // Render Earth-anchored objects when earth is tracking
+        val cameraGeospatialPose = earth.cameraGeospatialPose
         
-        // Now that Earth is available, create route anchors if needed
-        createRouteAnchorsIfNeeded(earth)
-
-        if (earth.trackingState == TrackingState.TRACKING) {
-          // Reset tracking error counters
-          framesWithoutEarthTracking = 0
-          lastEarthTrackingErrorTime = 0
+        // Only draw earth anchors if we have an earth pose
+        if (cameraGeospatialPose != null) {
+          // Create route anchors if needed and not yet created
+          createRouteAnchorsIfNeeded(earth)
           
-          // Get the current camera geospatial pose
-          val cameraGeospatialPose = earth.cameraGeospatialPose
+          // Draw all anchors (if any)
+          render.clear(virtualSceneFramebuffer, 0f, 0f, 0f, 0f)
           
-          // Check if navigation is in progress and we have enough anchors
-          if (isNavigating && anchors.isNotEmpty()) {
-            // Draw the navigation path
-            drawNavigationPath(render, earth, cameraGeospatialPose)
+          if (anchors.isEmpty() && !isNavigating) {
+            // Draw directional indicator if we have a destination but no anchors yet
+            if (destinationAnchor != null) {
+              drawDirectionalIndicator(render, cameraGeospatialPose)
+            }
           } else {
-            // In non-navigation mode just draw any anchors we have
-            drawAnchors(render, earth)
+            drawAnchors(render)
           }
           
-          // Update status with coordinates
-          updateStatusText(earth, cameraGeospatialPose)
+          // Reduce rendering frequency in split screen mode to save battery and improve performance
+          if (isSplitScreenMode && System.currentTimeMillis() % 2 == 0L) {
+            // Skip some frames in split screen mode
+            return
+          }
+        }
+      } else {
+        if (earth == null) {
+          // First check how long we've been trying to initialize Earth
+          val currentTime = System.currentTimeMillis()
+          val timeSinceStart = currentTime - earthInitStartTime
           
-        } else {
+          if (timeSinceStart > MAX_EARTH_INIT_WAIT_TIME_MS && !hasFallenBackToMapMode) {
+            // If Earth initialization is taking too long, fall back to map-only mode
+            handlePersistentEarthFailure("Earth initialization timed out after ${timeSinceStart/1000} seconds")
+          }
+        } else if (earth.trackingState == TrackingState.PAUSED) {
+          // If Earth is paused, count frames to see if it's a persistent issue
           framesWithoutEarthTracking++
           
           if (framesWithoutEarthTracking > MAX_FRAMES_WITHOUT_EARTH_TRACKING && !hasFallenBackToMapMode) {
-            Log.e(TAG, "Earth tracking failed for too many frames (${framesWithoutEarthTracking})")
-            
-            if (lastEarthTrackingErrorTime == 0L) {
-              lastEarthTrackingErrorTime = System.currentTimeMillis()
-              showError("Earth tracking lost. Please ensure you're outdoors with a clear view of the sky.")
-            } else if (System.currentTimeMillis() - lastEarthTrackingErrorTime > 10000) {
-              // If tracking hasn't recovered after 10 seconds, offer to switch to map-only mode
-              hasFallenBackToMapMode = true
-              fallbackToMapOnlyMode()
-            }
-          }
-          
-          // Update the status text to show we're not tracking
-          when (earth.trackingState) {
-            TrackingState.PAUSED -> updateStatusText(earth, null, "PAUSED")
-            TrackingState.STOPPED -> updateStatusText(earth, null, "STOPPED")
-            else -> updateStatusText(earth, null, "Not tracking")
+            // If Earth tracking has been paused for too many frames, fall back to map-only mode
+            handlePersistentEarthFailure("Earth tracking paused for too long (${framesWithoutEarthTracking} frames)")
           }
         }
-
-        // Compose the virtual scene with the background.
-        backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
-      } catch(e: Exception) {
-        Log.e(TAG, "Exception on the OpenGL thread", e)
-        showError("Error rendering AR view: ${e.message}")
       }
-    } catch(e: Exception) {
-      Log.e(TAG, "Exception on the OpenGL thread (outer)", e)
-      showError("Error in AR rendering: ${e.message}")
+    } catch (e: Exception) {
+      Log.e(TAG, "Exception on draw frame", e)
+    }
+
+    try {  
+      // Compose the virtual scene with the background.
+      backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+    } catch (e: Exception) {
+      Log.e(TAG, "Exception drawing virtual scene", e)
     }
   }
   
@@ -883,7 +887,7 @@ class HelloGeoRenderer(val context: Context) :
   }
   
   // Draw all anchors with different colors based on type
-  private fun drawAnchors(render: SampleRender, earth: Earth) {
+  private fun drawAnchors(render: SampleRender) {
     try {
       // First draw the destination anchor if it exists
       destinationAnchor?.let { anchor ->

@@ -162,8 +162,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Initialize the map portion
             initializeMap()
             
-            // Initialize the AR portion
-            initializeAR()
+            // Initialize the AR portion - delay AR initialization to improve loading performance
+            Handler(Looper.getMainLooper()).postDelayed({
+                initializeAR()
+            }, 500) // 500ms delay
             
             // Set up UI controls
             setupUIControls()
@@ -373,6 +375,11 @@ private fun retryMapLoading() {
             // Get the AR surface view
             surfaceView = findViewById(R.id.ar_surface_view)
             
+            // Configure surface view for AR
+            surfaceView.preserveEGLContextOnPause = true
+            surfaceView.setEGLContextClientVersion(2)
+            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+            
             // Create and initialize HelloGeoView with SplitScreenActivity
             view = HelloGeoView(this)
             
@@ -388,6 +395,9 @@ private fun retryMapLoading() {
             // Create and initialize the renderer
             renderer = HelloGeoRenderer(this)
             renderer.setView(view)
+            
+            // Tell the renderer we're in split screen mode
+            renderer.isSplitScreenMode = true
             
             // Create and initialize ARCore session
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
@@ -425,6 +435,16 @@ private fun retryMapLoading() {
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing AR", e)
             trackingQualityIndicator?.text = "AR Error: ${e.message}"
+            
+            // Try to show a more detailed error message
+            val errorMsg = when {
+                e.message?.contains("camera") == true -> "Camera access failed. Please check permissions."
+                e.message?.contains("ARCore") == true -> "ARCore initialization failed. Please check ARCore installation."
+                e.message?.contains("OpenGL") == true -> "OpenGL error. Your device may not support AR features."
+                else -> e.message ?: "Unknown error initializing AR"
+            }
+            
+            Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
         }
     }
     
@@ -1848,7 +1868,16 @@ private fun retryMapLoading() {
     override fun onResume() {
         super.onResume()
         try {
+            // Resume AR session
             arCoreSessionHelper.onResume()
+            
+            // Resume GL surface
+            surfaceView.onResume()
+            
+            // Force redraw
+            surfaceView.requestRender()
+            
+            Log.d(TAG, "AR session resumed successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error resuming AR session", e)
         }
@@ -1857,7 +1886,13 @@ private fun retryMapLoading() {
     override fun onPause() {
         super.onPause()
         try {
+            // Pause AR session
             arCoreSessionHelper.onPause()
+            
+            // Pause GL surface 
+            surfaceView.onPause()
+            
+            Log.d(TAG, "AR session paused successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error pausing AR session", e)
         }
