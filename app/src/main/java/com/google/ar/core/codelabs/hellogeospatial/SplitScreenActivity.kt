@@ -52,6 +52,7 @@ import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
+import androidx.cardview.widget.CardView
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -97,10 +98,18 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var mapNavDistance: TextView? = null
     private var mapNavARButton: View? = null
     private var mapNavCloseButton: View? = null
-    private var transportModeContainer: View? = null
-    private var walkingModeButton: View? = null
-    private var twoWheelerModeButton: View? = null
-    private var fourWheelerModeButton: View? = null
+    
+    // Transport mode UI elements
+    private var transportModeContainer: CardView? = null
+    private var walkingModeButton: ImageView? = null
+    private var twoWheelerModeButton: ImageView? = null
+    private var fourWheelerModeButton: ImageView? = null
+    
+    // Split screen transport mode UI elements
+    private var splitTransportContainer: CardView? = null
+    private var splitWalkingButton: ImageView? = null
+    private var splitTwoWheelerButton: ImageView? = null
+    private var splitFourWheelerButton: ImageView? = null
     
     // Search suggestion components
     private lateinit var suggestionProvider: SearchSuggestionProvider
@@ -526,6 +535,12 @@ private fun retryMapLoading() {
             twoWheelerModeButton = findViewById(R.id.two_wheeler_mode_button)
             fourWheelerModeButton = findViewById(R.id.four_wheeler_mode_button)
             
+            // Find split screen transport components
+            splitTransportContainer = findViewById(R.id.split_screen_transport_container)
+            splitWalkingButton = findViewById(R.id.split_walking_button)
+            splitTwoWheelerButton = findViewById(R.id.split_two_wheeler_button)
+            splitFourWheelerButton = findViewById(R.id.split_four_wheeler_button)
+            
             // Set up transport mode buttons
             setupTransportModeButtons()
             
@@ -649,7 +664,7 @@ private fun retryMapLoading() {
     }
     
     private fun setupTransportModeButtons() {
-        // If the buttons don't exist yet, return (we'll add them to the layout)
+        // Setup regular mode buttons
         walkingModeButton?.setOnClickListener {
             selectedTransportMode = DirectionsHelper.TransportMode.WALKING
             updateTransportModeUI()
@@ -677,15 +692,48 @@ private fun retryMapLoading() {
             }
         }
         
+        // Setup split screen mode buttons
+        splitWalkingButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.WALKING
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
+        splitTwoWheelerButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.TWO_WHEELER
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
+        splitFourWheelerButton?.setOnClickListener {
+            selectedTransportMode = DirectionsHelper.TransportMode.FOUR_WHEELER
+            updateTransportModeUI()
+            // Recalculate route if we're navigating
+            if (isNavigating && currentLocation != null && destinationLatLng != null) {
+                fetchAndDisplayDirections(currentLocation!!, destinationLatLng!!)
+            }
+        }
+        
         // Set initial UI state
         updateTransportModeUI()
     }
     
     private fun updateTransportModeUI() {
-        // Set selected state for buttons
+        // Set selected state for regular buttons
         walkingModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.WALKING) 1.0f else 0.5f
         twoWheelerModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.TWO_WHEELER) 1.0f else 0.5f
         fourWheelerModeButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.FOUR_WHEELER) 1.0f else 0.5f
+        
+        // Set selected state for split screen buttons
+        splitWalkingButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.WALKING) 1.0f else 0.5f
+        splitTwoWheelerButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.TWO_WHEELER) 1.0f else 0.5f
+        splitFourWheelerButton?.alpha = if (selectedTransportMode == DirectionsHelper.TransportMode.FOUR_WHEELER) 1.0f else 0.5f
     }
     
     private fun setupSearchSuggestions() {
@@ -1113,9 +1161,11 @@ private fun retryMapLoading() {
         // Show navigation UI
         mapNavigationOverlay?.visibility = View.VISIBLE
         
-        // Show transport mode container and make sure it's visible
+        // Show transport mode containers and make sure they're visible
         transportModeContainer?.visibility = View.VISIBLE
         transportModeContainer?.bringToFront()
+        splitTransportContainer?.visibility = View.VISIBLE
+        splitTransportContainer?.bringToFront()
         
         // Hide the search bar and buttons during navigation
         findViewById<LinearLayout>(R.id.mode_controls).visibility = View.GONE
@@ -1555,19 +1605,28 @@ private fun retryMapLoading() {
         navigationUpdateHandler?.removeCallbacksAndMessages(null)
         navigationUpdateHandler = null
         
-        // Hide the navigation UI
+        // Hide navigation UI
         mapNavigationOverlay?.visibility = View.GONE
         
         // Hide transport mode container
         transportModeContainer?.visibility = View.GONE
+        splitTransportContainer?.visibility = View.GONE
         
         // Show the controls again
         findViewById<LinearLayout>(R.id.mode_controls).visibility = View.VISIBLE
         findViewById<EditText>(R.id.searchBar).visibility = View.VISIBLE
         findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+        findViewById<Button>(R.id.stopNavigateButton).visibility = View.GONE
         
         // Remove the route from the map
         mapPolyline?.remove()
+        
+        // Clear directions
+        directionsHelper.clearDirections()
+        
+        // Remove destination marker
+        destinationMarker?.remove()
+        destinationMarker = null
         
         // Log the navigation end
         Log.d(TAG, "Navigation stopped")

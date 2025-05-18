@@ -258,6 +258,60 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.cardview.widget.CardView>
 
+    <!-- Transport Mode Selection Container -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/transport_mode_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardBackgroundColor="#FFFFFF"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="4dp"
+        app:layout_constraintBottom_toTopOf="@id/bottom_nav_panel"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp">
+
+            <!-- Walking Mode Button -->
+            <ImageView
+                android:id="@+id/walking_mode_button"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_walking"
+                android:contentDescription="Walking"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Two Wheeler Mode Button -->
+            <ImageView
+                android:id="@+id/two_wheeler_mode_button"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_two_wheeler"
+                android:contentDescription="Two Wheeler"
+                android:layout_marginEnd="8dp"
+                android:alpha="0.5" />
+
+            <!-- Four Wheeler Mode Button -->
+            <ImageView
+                android:id="@+id/four_wheeler_mode_button"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_four_wheeler"
+                android:contentDescription="Four Wheeler"
+                android:alpha="0.5" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
     <!-- Help Button in Top-Right -->
     <Button
         android:id="@+id/help_button"
