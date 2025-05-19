@@ -53,6 +53,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
+import com.google.ar.core.codelabs.hellogeospatial.helpers.GeoPermissionsHelper
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -136,6 +137,15 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             if (!checkARCoreSupport()) {
                 // If not supported, redirect to map-only view
                 Toast.makeText(this, "AR not supported on this device. Redirecting to map view.", Toast.LENGTH_LONG).show()
+                startActivity(Intent(this, FallbackActivity::class.java))
+                finish()
+                return
+            }
+            
+            // Check for camera availability
+            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            if (cameraManager.cameraIdList.isEmpty()) {
+                Toast.makeText(this, "No camera available on this device.", Toast.LENGTH_LONG).show()
                 startActivity(Intent(this, FallbackActivity::class.java))
                 finish()
                 return
@@ -369,10 +379,27 @@ private fun retryMapLoading() {
     
     private fun initializeAR() {
         try {
+            // Make sure permissions are granted before initializing AR
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this, 
+                    arrayOf(Manifest.permission.CAMERA),
+                    CAMERA_PERMISSION_CODE
+                )
+                Toast.makeText(this, "Camera permission required for AR", Toast.LENGTH_LONG).show()
+                return
+            }
+            
             // Initialize AR view
             view = HelloGeoView(this)
             renderer = HelloGeoRenderer(this)
             renderer.isSplitScreenMode = true
+            
+            // Initialize surface view with OpenGL ES 3.0
+            surfaceView = findViewById(R.id.ar_surface_view)
+            surfaceView.preserveEGLContextOnPause = true
+            surfaceView.setEGLContextClientVersion(3)
+            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
             
             // Create and initialize ARCore session
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
@@ -398,8 +425,14 @@ private fun retryMapLoading() {
             // Configure the session
             arCoreSessionHelper.beforeSessionResume = ::configureSession
             
-            // Initialize the session
-            arCoreSessionHelper.onResume()
+            // Initialize the session - add try-catch around this
+            try {
+                arCoreSessionHelper.onResume()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to resume ARCore session", e)
+                Toast.makeText(this, "Failed to initialize camera: ${e.message}", Toast.LENGTH_LONG).show()
+                return
+            }
             
             // Get the session
             val session = arCoreSessionHelper.session
@@ -407,8 +440,14 @@ private fun retryMapLoading() {
                 view.setupSession(session)
                 renderer.setSession(session)
                 
-                // Set up the renderer
-                SampleRender(surfaceView, renderer, assets)
+                // Set up the renderer with proper error handling
+                try {
+                    SampleRender(surfaceView, renderer, assets)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to initialize AR renderer", e)
+                    Toast.makeText(this, "Failed to initialize AR renderer: ${e.message}", Toast.LENGTH_LONG).show()
+                    return
+                }
                 
                 // Start tracking quality updates
                 startTrackingQualityUpdates()
@@ -1771,12 +1810,31 @@ private fun retryMapLoading() {
         when (requestCode) {
             LOCATION_PERMISSION_CODE -> {
                 if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                    // All permissions granted, proceed with initialization
+                    // Location permissions granted, proceed
+                    getCurrentLocation()
+                } else {
+                    Toast.makeText(this, "Location permission is required for navigation", Toast.LENGTH_LONG).show()
+                }
+            }
+            CAMERA_PERMISSION_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Camera permission granted, initialize AR
+                    initializeAR()
+                } else {
+                    Toast.makeText(this, "Camera permission is required for AR", Toast.LENGTH_LONG).show()
+                    // Fall back to map-only mode
+                    fallbackToMapOnlyMode()
+                }
+            }
+            GeoPermissionsHelper.GEO_PERMISSION_CODE -> {
+                if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                    // All geo permissions granted, proceed with initialization
                     initializeMap()
                     initializeAR()
                 } else {
                     Toast.makeText(this, "Required permissions not granted", Toast.LENGTH_LONG).show()
-                    finish()
+                    // Fall back to map-only mode if possible
+                    fallbackToMapOnlyMode()
                 }
             }
         }
