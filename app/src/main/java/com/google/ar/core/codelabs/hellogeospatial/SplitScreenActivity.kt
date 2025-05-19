@@ -369,34 +369,9 @@ private fun retryMapLoading() {
     
     private fun initializeAR() {
         try {
-            // Get the tracking quality indicator
-            trackingQualityIndicator = findViewById(R.id.tracking_quality)
-            
-            // Get the AR surface view
-            surfaceView = findViewById(R.id.ar_surface_view)
-            
-            // Configure surface view for AR
-            surfaceView.preserveEGLContextOnPause = true
-            surfaceView.setEGLContextClientVersion(2)
-            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-            
-            // Create and initialize HelloGeoView with SplitScreenActivity
+            // Initialize AR view
             view = HelloGeoView(this)
-            
-            // Need to set the surface view
-            try {
-                val field = HelloGeoView::class.java.getDeclaredField("surfaceView")
-                field.isAccessible = true
-                field.set(view, surfaceView)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error setting surface view", e)
-            }
-            
-            // Create and initialize the renderer
             renderer = HelloGeoRenderer(this)
-            renderer.setView(view)
-            
-            // Tell the renderer we're in split screen mode
             renderer.isSplitScreenMode = true
             
             // Create and initialize ARCore session
@@ -405,11 +380,19 @@ private fun retryMapLoading() {
             // Register error handler
             arCoreSessionHelper.exceptionCallback = { exception ->
                 val message = when (exception) {
-                    is CameraNotAvailableException -> "Camera not available"
-                    else -> "AR Error: ${exception.message}"
+                    is CameraNotAvailableException -> {
+                        Log.e(TAG, "Camera not available", exception)
+                        "Camera not available. Please check camera permissions and try again."
+                    }
+                    else -> {
+                        Log.e(TAG, "AR error", exception)
+                        "AR Error: ${exception.message}"
+                    }
                 }
-                Log.e(TAG, "AR error: $message", exception)
-                trackingQualityIndicator?.text = "AR Error: ${exception.javaClass.simpleName}"
+                runOnUiThread {
+                    trackingQualityIndicator?.text = message
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
             }
             
             // Configure the session
@@ -423,59 +406,67 @@ private fun retryMapLoading() {
             if (session != null) {
                 view.setupSession(session)
                 renderer.setSession(session)
+                
+                // Set up the renderer
+                SampleRender(surfaceView, renderer, assets)
+                
+                // Start tracking quality updates
+                startTrackingQualityUpdates()
             } else {
-                trackingQualityIndicator?.text = "Failed to create AR session"
+                val errorMsg = "Failed to create AR session. Please check camera permissions and ARCore installation."
+                Log.e(TAG, errorMsg)
+                runOnUiThread {
+                    trackingQualityIndicator?.text = errorMsg
+                    Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
+                }
             }
-            
-            // Set up the renderer
-            SampleRender(surfaceView, renderer, assets)
-            
-            // Start tracking quality updates
-            startTrackingQualityUpdates()
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing AR", e)
-            trackingQualityIndicator?.text = "AR Error: ${e.message}"
-            
-            // Try to show a more detailed error message
             val errorMsg = when {
                 e.message?.contains("camera") == true -> "Camera access failed. Please check permissions."
                 e.message?.contains("ARCore") == true -> "ARCore initialization failed. Please check ARCore installation."
                 e.message?.contains("OpenGL") == true -> "OpenGL error. Your device may not support AR features."
                 else -> e.message ?: "Unknown error initializing AR"
             }
-            
-            Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
+            runOnUiThread {
+                trackingQualityIndicator?.text = "AR Error: $errorMsg"
+                Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
+            }
         }
     }
     
     private fun configureSession(session: Session) {
         try {
             Log.d(TAG, "Configuring AR session")
-            session.configure(
-                session.config.apply {
-                    // Enable geospatial mode
-                    geospatialMode = Config.GeospatialMode.ENABLED
-                    
-                    // Basic settings for navigation
-                    planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                    lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                    updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                    focusMode = Config.FocusMode.AUTO
-                    
-                    // Try to enable depth for better occlusion
-                    try {
-                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                            depthMode = Config.DepthMode.AUTOMATIC
-                            Log.d(TAG, "Depth mode enabled for better AR experience")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error checking depth support", e)
-                    }
-                    
-                    // Enable cloud anchors for possible sharing features
-                    cloudAnchorMode = Config.CloudAnchorMode.ENABLED
+            
+            // Create a new config
+            val config = Config(session)
+            
+            // Enable geospatial mode
+            config.geospatialMode = Config.GeospatialMode.ENABLED
+            
+            // Basic settings for navigation
+            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+            config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
+            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+            config.focusMode = Config.FocusMode.AUTO
+            
+            // Try to enable depth for better occlusion
+            try {
+                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                    config.depthMode = Config.DepthMode.AUTOMATIC
+                    Log.d(TAG, "Depth mode enabled for better AR experience")
                 }
-            )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking depth support", e)
+            }
+            
+            // Enable cloud anchors for possible sharing features
+            config.cloudAnchorMode = Config.CloudAnchorMode.ENABLED
+            
+            // Apply the configuration
+            session.configure(config)
+            
             Log.d(TAG, "AR session configured successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring AR session", e)
@@ -1752,51 +1743,40 @@ private fun retryMapLoading() {
     }
     
     private fun checkAndRequestPermissions() {
-        // Check for location permissions
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
-                LOCATION_PERMISSION_CODE
-            )
-        }
+        val permissions = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
         
-        // Check for camera permissions
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.CAMERA),
-                CAMERA_PERMISSION_CODE
-            )
+        val permissionsToRequest = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+        
+        if (permissionsToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsToRequest, LOCATION_PERMISSION_CODE)
+        } else {
+            // All permissions granted, proceed with initialization
+            initializeMap()
+            initializeAR()
         }
     }
     
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        
         when (requestCode) {
             LOCATION_PERMISSION_CODE -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    // Permission granted, enable my location on the map
-                    try {
-                        googleMap?.isMyLocationEnabled = true
-                        
-                        // Also get current location
-                        getCurrentLocation()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Could not enable my location", e)
-                    }
+                if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                    // All permissions granted, proceed with initialization
+                    initializeMap()
+                    initializeAR()
                 } else {
-                    Toast.makeText(this, "Location permission required for navigation", Toast.LENGTH_LONG).show()
-                }
-            }
-            CAMERA_PERMISSION_CODE -> {
-                if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Camera permission required for AR", Toast.LENGTH_LONG).show()
-                    // Switch to map-only mode if camera permission denied
-                    launchMapMode()
+                    Toast.makeText(this, "Required permissions not granted", Toast.LENGTH_LONG).show()
+                    finish()
                 }
             }
         }
