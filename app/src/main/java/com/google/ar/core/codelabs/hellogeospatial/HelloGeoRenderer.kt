@@ -261,7 +261,7 @@ class HelloGeoRenderer(val context: Context) :
       val localSession = arSession as com.google.ar.core.Session
       
       // Update the session with a placeholder texture
-      localSession.setCameraTextureName(0)
+      localSession.setCameraTextureName(backgroundRenderer.getTextureId())
       localSession.update()
       
       // Access camera through reflection
