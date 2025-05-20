@@ -151,6 +151,14 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 return
             }
             
+            // Try to explicitly check camera access
+            if (!checkCameraAvailability()) {
+                Toast.makeText(this, "Camera is being used by another app. Please close it and try again.", Toast.LENGTH_LONG).show()
+                startActivity(Intent(this, FallbackActivity::class.java))
+                finish()
+                return
+            }
+            
             // Set the content view
             setContentView(R.layout.activity_split_screen)
             
@@ -379,16 +387,19 @@ private fun retryMapLoading() {
     
     private fun initializeAR() {
         try {
-            // Make sure permissions are granted before initializing AR
+            // Explicitly request camera permission before initializing AR
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Camera permission not granted, requesting now")
                 ActivityCompat.requestPermissions(
                     this, 
                     arrayOf(Manifest.permission.CAMERA),
                     CAMERA_PERMISSION_CODE
                 )
-                Toast.makeText(this, "Camera permission required for AR", Toast.LENGTH_LONG).show()
+                // Don't proceed with AR initialization until permission granted
                 return
             }
+            
+            Log.d(TAG, "Starting AR initialization with camera permission granted")
             
             // Initialize AR view
             view = HelloGeoView(this)
@@ -409,7 +420,7 @@ private fun retryMapLoading() {
                 val message = when (exception) {
                     is CameraNotAvailableException -> {
                         Log.e(TAG, "Camera not available", exception)
-                        "Camera not available. Please check camera permissions and try again."
+                        "Camera not available. Please check if another app is using the camera or restart your device."
                     }
                     else -> {
                         Log.e(TAG, "AR error", exception)
@@ -419,6 +430,17 @@ private fun retryMapLoading() {
                 runOnUiThread {
                     trackingQualityIndicator?.text = message
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    
+                    // Try to recover by restarting AR session
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            Log.d(TAG, "Attempting to restart AR session after error")
+                            arCoreSessionHelper.onPause()
+                            arCoreSessionHelper.onResume()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to restart AR session", e)
+                        }
+                    }, 2000) // Wait 2 seconds before retry
                 }
             }
             
@@ -721,6 +743,42 @@ private fun retryMapLoading() {
                     handler.postDelayed(this, 1000)
                 }
             })
+            
+            // Add debug button - long press on tracking indicator to force restart camera
+            trackingQualityIndicator?.setOnLongClickListener {
+                try {
+                    Toast.makeText(this, "Restarting camera...", Toast.LENGTH_SHORT).show()
+                    
+                    // Force restart AR session
+                    try {
+                        arCoreSessionHelper.onPause()
+                        // Release camera resources
+                        val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        for (cameraId in cameraManager.cameraIdList) {
+                            Log.d(TAG, "Attempting to reset camera: $cameraId")
+                        }
+                        
+                        // Wait briefly
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                arCoreSessionHelper.onResume()
+                                Toast.makeText(this, "Camera restarted", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to resume AR session", e)
+                                Toast.makeText(this, "Failed to restart camera: ${e.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }, 1000)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error restarting camera", e)
+                        Toast.makeText(this, "Error restarting camera: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                    
+                    true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in camera restart button", e)
+                    false
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error setting up UI controls", e)
         }
@@ -1818,9 +1876,11 @@ private fun retryMapLoading() {
             }
             CAMERA_PERMISSION_CODE -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    // Camera permission granted, initialize AR
+                    // Camera permission granted, retry AR initialization
+                    Log.d(TAG, "Camera permission granted, initializing AR")
                     initializeAR()
                 } else {
+                    Log.e(TAG, "Camera permission denied")
                     Toast.makeText(this, "Camera permission is required for AR", Toast.LENGTH_LONG).show()
                     // Fall back to map-only mode
                     fallbackToMapOnlyMode()
@@ -1930,6 +1990,18 @@ private fun retryMapLoading() {
             // Pause GL surface 
             surfaceView.onPause()
             
+            // Force release camera resources
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    for (cameraId in cameraManager.cameraIdList) {
+                        Log.d(TAG, "Releasing camera: $cameraId on pause")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing camera on pause", e)
+            }
+            
             Log.d(TAG, "AR session paused successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error pausing AR session", e)
@@ -1940,6 +2012,19 @@ private fun retryMapLoading() {
         super.onDestroy()
         try {
             // Clean up any resources
+            navigationUpdateHandler?.removeCallbacksAndMessages(null)
+            
+            // Ensure camera resources are released
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    for (cameraId in cameraManager.cameraIdList) {
+                        Log.d(TAG, "Releasing camera: $cameraId on destroy")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing camera on destroy", e)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onDestroy", e)
         }
@@ -1951,4 +2036,76 @@ private fun retryMapLoading() {
     }
 
     // We now have direct access to lastInstructions and lastSteps in DirectionsHelper class
+
+    /**
+     * Attempts to check if camera is available or in use by another app
+     */
+    private fun checkCameraAvailability(): Boolean {
+        try {
+            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            if (cameraManager.cameraIdList.isEmpty()) {
+                return false
+            }
+            
+            // Attempt to open camera to see if it's in use
+            var isAvailable = false
+            var camera: android.hardware.camera2.CameraDevice? = null
+            
+            // Create callback to receive results
+            val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+                override fun onOpened(cameraDevice: android.hardware.camera2.CameraDevice) {
+                    Log.d(TAG, "Camera successfully opened")
+                    camera = cameraDevice
+                    isAvailable = true
+                    synchronized(this) {
+                        (this as Object).notifyAll()
+                    }
+                }
+                
+                override fun onDisconnected(cameraDevice: android.hardware.camera2.CameraDevice) {
+                    Log.d(TAG, "Camera disconnected")
+                    cameraDevice.close()
+                    synchronized(this) {
+                        (this as Object).notifyAll()
+                    }
+                }
+                
+                override fun onError(cameraDevice: android.hardware.camera2.CameraDevice, error: Int) {
+                    Log.e(TAG, "Camera error: $error")
+                    cameraDevice.close()
+                    isAvailable = false
+                    synchronized(this) {
+                        (this as Object).notifyAll()
+                    }
+                }
+            }
+            
+            // Try to open camera
+            try {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    val handler = Handler(Looper.getMainLooper())
+                    synchronized(stateCallback) {
+                        cameraManager.openCamera(cameraManager.cameraIdList[0], stateCallback, handler)
+                        // Wait briefly for result
+                        try {
+                            (stateCallback as Object).wait(1000)
+                        } catch (e: InterruptedException) {
+                            Log.e(TAG, "Interrupted while waiting for camera", e)
+                        }
+                    }
+                    
+                    // Close camera if we got access
+                    camera?.close()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking camera availability", e)
+                isAvailable = false
+            }
+            
+            return isAvailable
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to check camera availability", e)
+            return false
+        }
+    }
 } 
