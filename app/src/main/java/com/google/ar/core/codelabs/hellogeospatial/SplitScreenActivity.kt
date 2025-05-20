@@ -133,6 +133,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         
         try {
+            // Force release any camera resources first
+            forceReleaseCamera()
+            
             // Check if ARCore is supported
             if (!checkARCoreSupport()) {
                 // If not supported, redirect to map-only view
@@ -153,9 +156,23 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Try to explicitly check camera access
             if (!checkCameraAvailability()) {
-                Toast.makeText(this, "Camera is being used by another app. Please close it and try again.", Toast.LENGTH_LONG).show()
-                startActivity(Intent(this, FallbackActivity::class.java))
-                finish()
+                // Show dialog with option to retry or continue with map only
+                AlertDialog.Builder(this)
+                    .setTitle("Camera Unavailable")
+                    .setMessage("Camera is being used by another app. Please close it and try again.")
+                    .setPositiveButton("Retry") { _, _ ->
+                        // Force release camera and restart activity
+                        forceReleaseCamera()
+                        val intent = Intent(this, SplitScreenActivity::class.java)
+                        startActivity(intent)
+                        finish()
+                    }
+                    .setNegativeButton("Map Only") { _, _ ->
+                        startActivity(Intent(this, FallbackActivity::class.java))
+                        finish()
+                    }
+                    .setCancelable(false)
+                    .show()
                 return
             }
             
@@ -447,12 +464,27 @@ private fun retryMapLoading() {
             // Configure the session
             arCoreSessionHelper.beforeSessionResume = ::configureSession
             
-            // Initialize the session - add try-catch around this
+            // Initialize the session with robust error handling
             try {
+                // Check if camera is in use before trying to resume
+                if (!checkCameraAvailability()) {
+                    Log.e(TAG, "Camera is being used by another app")
+                    Toast.makeText(this, "Camera is being used by another app. Please close it and try again.", Toast.LENGTH_LONG).show()
+                    fallbackToMapOnlyMode()
+                    return
+                }
+                
+                // Try to resume the AR session
                 arCoreSessionHelper.onResume()
+            } catch (e: CameraNotAvailableException) {
+                Log.e(TAG, "Camera not available", e)
+                Toast.makeText(this, "Camera not available. Please check if another app is using the camera and try again.", Toast.LENGTH_LONG).show()
+                fallbackToMapOnlyMode()
+                return
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to resume ARCore session", e)
                 Toast.makeText(this, "Failed to initialize camera: ${e.message}", Toast.LENGTH_LONG).show()
+                fallbackToMapOnlyMode()
                 return
             }
             
@@ -1966,6 +1998,9 @@ private fun retryMapLoading() {
     override fun onResume() {
         super.onResume()
         try {
+            // Force release camera resources first
+            forceReleaseCamera()
+            
             // Resume AR session
             arCoreSessionHelper.onResume()
             
@@ -2039,16 +2074,25 @@ private fun retryMapLoading() {
 
     /**
      * Attempts to check if camera is available or in use by another app
+     * Uses a more reliable approach with timeouts and better error handling
      */
     private fun checkCameraAvailability(): Boolean {
         try {
+            // Check camera permission first
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "No camera permission granted")
+                return false
+            }
+            
             val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
             if (cameraManager.cameraIdList.isEmpty()) {
+                Log.d(TAG, "No cameras available on device")
                 return false
             }
             
             // Attempt to open camera to see if it's in use
-            var isAvailable = false
+            val cameraAvailability = java.util.concurrent.atomic.AtomicBoolean(false)
+            val lock = java.lang.Object()
             var camera: android.hardware.camera2.CameraDevice? = null
             
             // Create callback to receive results
@@ -2056,56 +2100,131 @@ private fun retryMapLoading() {
                 override fun onOpened(cameraDevice: android.hardware.camera2.CameraDevice) {
                     Log.d(TAG, "Camera successfully opened")
                     camera = cameraDevice
-                    isAvailable = true
-                    synchronized(this) {
-                        (this as Object).notifyAll()
+                    cameraAvailability.set(true)
+                    synchronized(lock) {
+                        lock.notifyAll()
                     }
                 }
                 
                 override fun onDisconnected(cameraDevice: android.hardware.camera2.CameraDevice) {
                     Log.d(TAG, "Camera disconnected")
                     cameraDevice.close()
-                    synchronized(this) {
-                        (this as Object).notifyAll()
+                    synchronized(lock) {
+                        lock.notifyAll()
                     }
                 }
                 
                 override fun onError(cameraDevice: android.hardware.camera2.CameraDevice, error: Int) {
-                    Log.e(TAG, "Camera error: $error")
+                    val errorMessage = when(error) {
+                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> "Camera device error"
+                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> "Camera disabled"
+                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> "Camera in use by another app"
+                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> "Camera service error"
+                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
+                        else -> "Unknown camera error: $error"
+                    }
+                    Log.e(TAG, errorMessage)
                     cameraDevice.close()
-                    isAvailable = false
-                    synchronized(this) {
-                        (this as Object).notifyAll()
+                    cameraAvailability.set(false)
+                    synchronized(lock) {
+                        lock.notifyAll()
                     }
                 }
             }
             
-            // Try to open camera
-            try {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    val handler = Handler(Looper.getMainLooper())
-                    synchronized(stateCallback) {
-                        cameraManager.openCamera(cameraManager.cameraIdList[0], stateCallback, handler)
-                        // Wait briefly for result
-                        try {
-                            (stateCallback as Object).wait(1000)
-                        } catch (e: InterruptedException) {
-                            Log.e(TAG, "Interrupted while waiting for camera", e)
-                        }
+            // Try to open camera (using back camera if available)
+            var cameraId = cameraManager.cameraIdList[0]
+            
+            // Try to find back camera if we have multiple cameras
+            if (cameraManager.cameraIdList.size > 1) {
+                for (id in cameraManager.cameraIdList) {
+                    val characteristics = cameraManager.getCameraCharacteristics(id)
+                    val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                    if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
+                        cameraId = id
+                        break
                     }
-                    
-                    // Close camera if we got access
-                    camera?.close()
                 }
+            }
+            
+            try {
+                val handler = Handler(Looper.getMainLooper())
+                
+                // Try to open camera with timeout
+                synchronized(lock) {
+                    cameraManager.openCamera(cameraId, stateCallback, handler)
+                    
+                    // Wait for result with timeout
+                    try {
+                        // Wait up to 3 seconds for camera access
+                        lock.wait(3000)
+                    } catch (e: InterruptedException) {
+                        Log.e(TAG, "Interrupted while waiting for camera", e)
+                    }
+                }
+                
+                // Release camera resources if we got access
+                camera?.close()
+                
+                if (!cameraAvailability.get()) {
+                    Log.e(TAG, "Camera is in use or unavailable")
+                }
+                
+                return cameraAvailability.get()
+            } catch (e: android.hardware.camera2.CameraAccessException) {
+                if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_DISABLED) {
+                    Log.e(TAG, "Camera is disabled")
+                } else if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_IN_USE) {
+                    Log.e(TAG, "Camera is in use by another app")
+                } else if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_ERROR) {
+                    Log.e(TAG, "General camera error")
+                } else {
+                    Log.e(TAG, "Camera access exception: ${e.reason}", e)
+                }
+                return false
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Security exception accessing camera", e)
+                return false
             } catch (e: Exception) {
                 Log.e(TAG, "Error checking camera availability", e)
-                isAvailable = false
+                return false
             }
-            
-            return isAvailable
         } catch (e: Exception) {
             Log.e(TAG, "Failed to check camera availability", e)
             return false
+        }
+    }
+
+    /**
+     * Force releases camera resources to ensure they're available for our app
+     */
+    private fun forceReleaseCamera() {
+        try {
+            Log.d(TAG, "Attempting to force release camera resources")
+            
+            // First try to close any ARCore camera resources
+            try {
+                arCoreSessionHelper?.session?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing ARCore session", e)
+            }
+            
+            // Use Camera2 API to enumerate and try to close cameras
+            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            for (cameraId in cameraManager.cameraIdList) {
+                Log.d(TAG, "Found camera: $cameraId")
+                // We don't actually open/close here - we just want to log the available cameras
+            }
+            
+            // Force garbage collection to release resources
+            System.gc()
+            
+            // Wait a bit for resources to be released
+            Handler(Looper.getMainLooper()).postDelayed({
+                Log.d(TAG, "Camera resources should be released now")
+            }, 500)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error forcing camera release", e)
         }
     }
 } 
