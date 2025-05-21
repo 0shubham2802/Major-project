@@ -50,6 +50,7 @@ class ARActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "ARActivity"
         private const val AR_INITIALIZATION_TIMEOUT = 15000L // 15 seconds
+        private const val CAMERA_PERMISSION_CODE = 101
     }
 
     private lateinit var arCoreSessionHelper: ARCoreSessionLifecycleHelper
@@ -85,6 +86,16 @@ class ARActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Request camera permission immediately
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_CODE
+            )
+            Log.d(TAG, "Requesting camera permission at startup")
+        }
         
         // Ensure we're using NoActionBar theme
         setTheme(R.style.Theme_AppCompat_NoActionBar)
@@ -644,17 +655,46 @@ class ARActivity : AppCompatActivity() {
     
     override fun onResume() {
         super.onResume()
-        
         try {
-            // Resume AR session
-            arCoreSessionHelper.onResume()
-            
-            // Resume navigation updates if we were navigating
-            if (isNavigating) {
-                startNavigationUpdates()
+            // Make sure permissions are granted before trying to resume AR
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                // Resume AR session
+                if (::arCoreSessionHelper.isInitialized) {
+                    Log.d(TAG, "Resuming AR session")
+                    arCoreSessionHelper.onResume()
+                    
+                    // Make sure session is valid and camera texture is set
+                    val session = arCoreSessionHelper.session
+                    if (session != null) {
+                        try {
+                            // Make sure camera texture is set to ensure camera feed appears
+                            val backgroundRenderer = renderer.accessBackgroundRenderer()
+                            if (backgroundRenderer != null) {
+                                val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                session.setCameraTextureName(textureId)
+                                Log.d(TAG, "Set camera texture ID to: $textureId")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to set camera texture name", e)
+                        }
+                    }
+                }
+                
+                // Resume GL surface
+                if (::surfaceView.isInitialized) {
+                    surfaceView.onResume()
+                    
+                    // Force a render
+                    surfaceView.requestRender()
+                }
+                
+                Log.d(TAG, "AR session resumed successfully")
+            } else {
+                Log.e(TAG, "Camera permission not granted - can't resume AR")
+                requestCameraPermission()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in onResume", e)
+            Log.e(TAG, "Error resuming AR session", e)
         }
     }
     
@@ -978,5 +1018,14 @@ class ARActivity : AppCompatActivity() {
             Log.e(TAG, "Error in retryCameraAccess", e)
             returnToMapMode()
         }
+    }
+
+    // Add method to get camera permission if missing
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.CAMERA),
+            CAMERA_PERMISSION_CODE
+        )
     }
 } 

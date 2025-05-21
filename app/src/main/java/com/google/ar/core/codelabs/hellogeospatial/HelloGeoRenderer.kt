@@ -173,6 +173,14 @@ class HelloGeoRenderer(val context: Context) :
         // Configure background renderer to show camera feed, not depth visualization
         backgroundRenderer.setUseDepthVisualization(render, false)
         backgroundRenderer.setUseOcclusion(render, false) // Disable occlusion for better reliability
+        
+        // Explicitly set camera texture
+        if (arSession != null) {
+          val textureId = backgroundRenderer.getCameraColorTexture().textureId
+          arSession?.setCameraTextureName(textureId)
+          Log.d(TAG, "Initial camera texture setup with ID: $textureId")
+        }
+        
         Log.d(TAG, "Background renderer initialized with camera feed visualization")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to configure background renderer", e)
@@ -1742,4 +1750,11 @@ class HelloGeoRenderer(val context: Context) :
 
   // For storing current device location
   private var currentLocation: LatLng? = null
+
+  /**
+   * Access the background renderer for camera texture setup
+   */
+  fun accessBackgroundRenderer(): BackgroundRenderer? {
+    return if (::backgroundRenderer.isInitialized) backgroundRenderer else null
+  }
 }

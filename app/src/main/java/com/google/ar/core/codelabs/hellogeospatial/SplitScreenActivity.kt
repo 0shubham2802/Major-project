@@ -128,6 +128,16 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Request camera permission immediately
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_CODE
+            )
+            Log.d(TAG, "Requesting camera permission at startup")
+        }
+        
         // Set content view first - this way we can show UI even if camera fails
         setContentView(R.layout.activity_split_screen)
         
@@ -1678,22 +1688,55 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onResume() {
         super.onResume()
         try {
-            // Force release camera resources first
-            forceReleaseCamera()
-            
-            // Resume AR session
-            arCoreSessionHelper.onResume()
-            
-            // Resume GL surface
-            surfaceView.onResume()
-            
-            // Force redraw
-            surfaceView.requestRender()
-            
-            Log.d(TAG, "AR session resumed successfully")
+            // Make sure permissions are granted before trying to resume AR
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                // Resume AR session
+                if (::arCoreSessionHelper.isInitialized) {
+                    Log.d(TAG, "Resuming AR session")
+                    arCoreSessionHelper.onResume()
+                    
+                    // Make sure session is valid and camera texture is set
+                    val session = arCoreSessionHelper.session
+                    if (session != null) {
+                        try {
+                            // Make sure camera texture is set to ensure camera feed appears
+                            val backgroundRenderer = renderer.accessBackgroundRenderer()
+                            if (backgroundRenderer != null) {
+                                val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                session.setCameraTextureName(textureId)
+                                Log.d(TAG, "Set camera texture ID to: $textureId")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to set camera texture name", e)
+                        }
+                    }
+                }
+                
+                // Resume GL surface
+                if (::surfaceView.isInitialized) {
+                    surfaceView.onResume()
+                    
+                    // Force a render
+                    surfaceView.requestRender()
+                }
+                
+                Log.d(TAG, "AR session resumed successfully")
+            } else {
+                Log.e(TAG, "Camera permission not granted - can't resume AR")
+                requestCameraPermission()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error resuming AR session", e)
         }
+    }
+    
+    // Add method to get camera permission
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.CAMERA),
+            CAMERA_PERMISSION_CODE
+        )
     }
     
     override fun onPause() {
@@ -1901,23 +1944,31 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun configureSession(session: Session) {
-        session.configure(
-            session.config.apply {
-                // Enable Geospatial mode
-                geospatialMode = Config.GeospatialMode.ENABLED
-                
-                // Configure camera focus mode
-                depthMode = when {
-                    session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) -> Config.DepthMode.AUTOMATIC
-                    else -> Config.DepthMode.DISABLED
-                }
-                
-                // Set focus mode - use auto mode for camera stability
-                focusMode = Config.FocusMode.AUTO
-                
-                // Update rate - don't set too high to avoid camera issues
-                updateMode = Config.UpdateMode.BLOCKING
-            }
-        )
+        try {
+            Log.d(TAG, "Configuring AR session with proper camera settings")
+            // Configure the session with better camera settings
+            val config = session.config
+            
+            // Enable geospatial mode
+            config.geospatialMode = Config.GeospatialMode.ENABLED
+            
+            // Set focus mode - AUTO works better for camera feed
+            config.focusMode = Config.FocusMode.AUTO
+            
+            // IMPORTANT: Disable depth mode which can interfere with camera feed display
+            config.depthMode = Config.DepthMode.DISABLED
+            
+            // For better camera stability, disable unnecessary features
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+            
+            // Use BLOCKING update mode for more reliable rendering
+            config.updateMode = Config.UpdateMode.BLOCKING
+            
+            // Apply the configuration
+            session.configure(config)
+            Log.d(TAG, "AR session configured successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configuring session", e)
+        }
     }
 } 
