@@ -535,8 +535,20 @@ private fun retryMapLoading() {
             // Create a new config
             val config = Config(session)
             
-            // Enable geospatial mode
-            config.geospatialMode = Config.GeospatialMode.ENABLED
+            // Check GPS signal before enabling geospatial
+            if (!hasGoodGpsSignal()) {
+                // Show dialog warning about poor GPS
+                showGpsWarningDialog()
+            }
+            
+            // Enable geospatial mode with error handling
+            try {
+                config.geospatialMode = Config.GeospatialMode.ENABLED
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to enable geospatial mode", e)
+                showGeospatialErrorDialog("Failed to enable geospatial tracking: ${e.message}")
+                return
+            }
             
             // Basic settings for navigation
             config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
@@ -560,10 +572,199 @@ private fun retryMapLoading() {
             // Apply the configuration
             session.configure(config)
             
+            // Add tracking state listener
+            session.addOnGeospatialStateChangedListener { geospatialState ->
+                runOnUiThread {
+                    handleGeospatialStateChange(geospatialState)
+                }
+            }
+            
             Log.d(TAG, "AR session configured successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring AR session", e)
             Toast.makeText(this, "AR configuration error: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Check if the device has good GPS signal
+     */
+    private fun hasGoodGpsSignal(): Boolean {
+        val locationManager = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+        
+        // Check if GPS is enabled at all
+        if (!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+            Log.d(TAG, "GPS is disabled")
+            return false
+        }
+        
+        // Check last known location and its accuracy
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == 
+                    PackageManager.PERMISSION_GRANTED) {
+                val location = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                
+                // If location is null or old, GPS might not be providing good data
+                if (location == null) {
+                    Log.d(TAG, "No last known location from GPS")
+                    return false
+                }
+                
+                // Check how old the location is
+                val locationAgeMs = System.currentTimeMillis() - location.time
+                if (locationAgeMs > 30000) { // Location older than 30 seconds
+                    Log.d(TAG, "Last GPS location is too old: ${locationAgeMs/1000} seconds")
+                    return false
+                }
+                
+                // Check location accuracy
+                if (location.accuracy > 25) { // Accuracy worse than 25 meters
+                    Log.d(TAG, "GPS accuracy is poor: ${location.accuracy} meters")
+                    return false
+                }
+                
+                // Check number of satellites (if available)
+                if (location.extras != null && location.extras!!.containsKey("satellites")) {
+                    val satellites = location.extras!!.getInt("satellites", 0)
+                    if (satellites < 4) {
+                        Log.d(TAG, "Not enough GPS satellites: $satellites")
+                        return false
+                    }
+                }
+                
+                Log.d(TAG, "GPS signal appears good: accuracy ${location.accuracy}m")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking GPS signal", e)
+        }
+        
+        return false
+    }
+    
+    /**
+     * Show a dialog warning about poor GPS signal
+     */
+    private fun showGpsWarningDialog() {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("Poor GPS Signal")
+                .setMessage("Your GPS signal appears to be weak. AR tracking may not work well indoors or in areas with poor GPS reception. Would you like to continue or switch to map mode?")
+                .setPositiveButton("Continue Anyway") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .setNegativeButton("Switch to Map") { _, _ ->
+                    fallbackToMapOnlyMode()
+                }
+                .setNeutralButton("Go Outside") { dialog, _ ->
+                    Toast.makeText(this, "Please move to an open outdoor area with clear sky view", Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
+                }
+                .setCancelable(true)
+                .show()
+        }
+    }
+    
+    /**
+     * Show a dialog for geospatial tracking errors
+     */
+    private fun showGeospatialErrorDialog(message: String) {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("AR Initialization Issue")
+                .setMessage("$message\n\nThis may be due to:\n• Being indoors where GPS signal is weak\n• Interference from buildings or trees\n• Device sensors need calibration")
+                .setPositiveButton("Try Low-Precision Mode") { dialog, _ ->
+                    dialog.dismiss()
+                    enableLowPrecisionMode()
+                }
+                .setNeutralButton("Wait Longer") { dialog, _ ->
+                    dialog.dismiss()
+                    // Try to reconfigure session after a delay
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            val session = arCoreSessionHelper.session
+                            if (session != null) {
+                                configureSession(session)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error reconfiguring session", e)
+                        }
+                    }, 5000) // Wait 5 seconds before trying again
+                }
+                .setNegativeButton("Return to Map") { _, _ ->
+                    fallbackToMapOnlyMode()
+                }
+                .setCancelable(false)
+                .show()
+        }
+    }
+    
+    /**
+     * Enable a low-precision AR mode that's more tolerant of GPS issues
+     */
+    private fun enableLowPrecisionMode() {
+        try {
+            Toast.makeText(this, "Switching to low-precision AR mode...", Toast.LENGTH_SHORT).show()
+            
+            // Get current session
+            val session = arCoreSessionHelper.session ?: return
+            
+            // Create a new configuration with lower requirements
+            val config = Config(session)
+            
+            // Lower precision geospatial tracking
+            config.geospatialMode = Config.GeospatialMode.ENABLED
+            
+            // Disable more demanding features
+            config.planeFindingMode = Config.PlaneFindingMode.DISABLED
+            config.lightEstimationMode = Config.LightEstimationMode.DISABLED
+            config.depthMode = Config.DepthMode.DISABLED
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+            
+            // Optimize for performance over accuracy
+            config.focusMode = Config.FocusMode.FIXED
+            config.updateMode = Config.UpdateMode.BLOCKING
+            
+            // Apply the new configuration
+            session.configure(config)
+            
+            // Set renderer to low-precision mode
+            renderer.setLowPrecisionMode(true)
+            
+            // Show status to user
+            trackingQualityIndicator?.text = "LOW-PRECISION MODE"
+            trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_orange_light)
+            
+            // Force session to restart with new settings
+            session.resume()
+            
+            Log.d(TAG, "Enabled low-precision AR mode")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error enabling low-precision mode", e)
+            Toast.makeText(this, "Failed to enable low-precision mode: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    /**
+     * Handle changes in geospatial tracking state
+     */
+    private fun handleGeospatialStateChange(geospatialState: Session.GeospatialState) {
+        val trackingState = when (geospatialState) {
+            Session.GeospatialState.ENABLED -> "Geospatial tracking enabled"
+            Session.GeospatialState.RUNNING -> "Geospatial tracking running"
+            Session.GeospatialState.ERROR -> "Geospatial tracking error"
+            Session.GeospatialState.LOCALIZING -> "Determining your precise location..."
+            else -> "Unknown geospatial state"
+        }
+        
+        Log.d(TAG, "Geospatial state changed: $trackingState")
+        
+        // Update tracking quality indicator with geospatial state
+        trackingQualityIndicator?.text = "Tracking: $trackingState"
+        
+        // Show appropriate dialog based on state
+        if (geospatialState == Session.GeospatialState.ERROR) {
+            showGeospatialErrorDialog("Could not initialize AR tracking")
         }
     }
     
@@ -581,12 +782,42 @@ private fun retryMapLoading() {
     private fun updateTrackingQualityIndicator() {
         try {
             val session = arCoreSessionHelper.session ?: return
-            val earth = session.earth ?: return
+            val earth = session.earth
             
-            if (earth.trackingState != TrackingState.TRACKING) {
+            // Check if Earth object is available
+            if (earth == null) {
                 trackingQualityIndicator?.text = "Tracking: INITIALIZING"
                 trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_orange_light)
                 return
+            }
+            
+            // Check tracking state
+            if (earth.trackingState != TrackingState.TRACKING) {
+                val stateText = when (earth.trackingState) {
+                    TrackingState.PAUSED -> "PAUSED"
+                    TrackingState.STOPPED -> "STOPPED"
+                    else -> "NOT TRACKING"
+                }
+                
+                trackingQualityIndicator?.text = "Tracking: $stateText"
+                trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
+                
+                // If we've been in non-tracking state for a while, show help dialog
+                if (trackingErrorStartTime == 0L) {
+                    trackingErrorStartTime = System.currentTimeMillis()
+                } else if (System.currentTimeMillis() - trackingErrorStartTime > 15000) { // 15 seconds of error
+                    // Only show the dialog if we haven't recently shown it
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastTrackingErrorDialogTime > 60000) { // Don't show more than once per minute
+                        showTrackingErrorHelp()
+                        lastTrackingErrorDialogTime = currentTime
+                    }
+                }
+                
+                return
+            } else {
+                // Reset error timer if we're now tracking
+                trackingErrorStartTime = 0L
             }
             
             val pose = earth.cameraGeospatialPose
@@ -611,9 +842,153 @@ private fun retryMapLoading() {
             // Update current location from AR pose
             updateLocationFromARPose(pose.latitude, pose.longitude)
             
+            // Check if we need to suggest calibration
+            if (horizontalAccuracy > 10.0 && !hasShownCalibrationPrompt) {
+                showCalibrationPrompt()
+                hasShownCalibrationPrompt = true
+            }
+            
         } catch (e: Exception) {
             trackingQualityIndicator?.text = "Tracking: ERROR"
             trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
+            Log.e(TAG, "Error updating tracking quality", e)
+        }
+    }
+    
+    // Tracking variables
+    private var trackingErrorStartTime = 0L
+    private var lastTrackingErrorDialogTime = 0L
+    private var hasShownCalibrationPrompt = false
+    
+    /**
+     * Show a helpful dialog with instructions for resolving tracking issues
+     */
+    private fun showTrackingErrorHelp() {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("AR Tracking Issues")
+                .setMessage("There are problems with AR tracking. This may be because:\n\n" +
+                        "• You are indoors with poor GPS signal\n" +
+                        "• There are tall buildings or trees blocking GPS\n" +
+                        "• Your device sensors need calibration\n\n" +
+                        "Would you like to try calibration, continue trying, or switch to map mode?")
+                .setPositiveButton("Calibrate Sensors") { dialog, _ ->
+                    dialog.dismiss()
+                    startSensorCalibration()
+                }
+                .setNeutralButton("Keep Trying") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .setNegativeButton("Switch to Map") { _, _ ->
+                    fallbackToMapOnlyMode()
+                }
+                .setCancelable(true)
+                .show()
+        }
+    }
+    
+    /**
+     * Prompt user to calibrate their device
+     */
+    private fun showCalibrationPrompt() {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("Improve AR Accuracy")
+                .setMessage("Your device sensors may need calibration for better AR tracking. Would you like to calibrate now?")
+                .setPositiveButton("Calibrate") { dialog, _ ->
+                    dialog.dismiss()
+                    startSensorCalibration()
+                }
+                .setNegativeButton("Not Now") { dialog, _ ->
+                    dialog.dismiss()
+                }
+                .setCancelable(true)
+                .show()
+        }
+    }
+    
+    /**
+     * Start sensor calibration procedure
+     */
+    private fun startSensorCalibration() {
+        // Show calibration instructions dialog
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Sensor Calibration")
+            .setMessage("Please rotate your device in a figure-8 pattern to calibrate the sensors.")
+            .setCancelable(false)
+            .setPositiveButton("Done") { dialog, _ ->
+                dialog.dismiss()
+                Toast.makeText(this, "Calibration complete", Toast.LENGTH_SHORT).show()
+            }
+            .create()
+            
+        // Create animation to show figure-8 movement
+        val calibrationImage = ImageView(this)
+        calibrationImage.setImageResource(android.R.drawable.ic_menu_rotate) // Use a system resource or your own animation
+        calibrationImage.scaleType = ImageView.ScaleType.FIT_CENTER
+        
+        // Create animation
+        val rotateAnimation = android.view.animation.RotateAnimation(
+            0f, 360f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
+        )
+        rotateAnimation.duration = 2000
+        rotateAnimation.repeatCount = 5 // Repeat a few times
+        calibrationImage.startAnimation(rotateAnimation)
+        
+        // Set the image to the dialog
+        dialog.setView(calibrationImage)
+        
+        // Show the dialog
+        dialog.show()
+        
+        // Start actual sensor calibration (this is a visual guide only - 
+        // the actual sensor calibration happens naturally as the user moves the device)
+        try {
+            // Force sensor updates by requesting sensor data
+            val sensorManager = getSystemService(SENSOR_SERVICE) as android.hardware.SensorManager
+            
+            // Monitor accelerometer and magnetometer which are the main sensors that need calibration
+            val accelerometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+            val magnetometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_MAGNETIC_FIELD)
+            
+            // Listen for sensor events briefly
+            val sensorListener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+                    // Just need to listen to trigger calibration
+                }
+                
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
+                    // Log accuracy changes
+                    if (sensor != null) {
+                        val sensorName = when (sensor.type) {
+                            android.hardware.Sensor.TYPE_ACCELEROMETER -> "Accelerometer"
+                            android.hardware.Sensor.TYPE_MAGNETIC_FIELD -> "Magnetometer"
+                            else -> "Unknown"
+                        }
+                        val accuracyText = when (accuracy) {
+                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "HIGH"
+                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "MEDIUM"
+                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "LOW"
+                            else -> "UNRELIABLE"
+                        }
+                        Log.d(TAG, "$sensorName accuracy changed to $accuracyText")
+                    }
+                }
+            }
+            
+            // Register for sensor updates
+            sensorManager.registerListener(sensorListener, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(sensorListener, magnetometer, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+            
+            // After a while, unregister to save battery
+            Handler(Looper.getMainLooper()).postDelayed({
+                sensorManager.unregisterListener(sensorListener)
+            }, 10000) // 10 seconds
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during sensor calibration", e)
         }
     }
     

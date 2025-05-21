@@ -68,7 +68,7 @@ class HelloGeoRenderer(val context: Context) :
     private const val MAX_FRAMES_WITHOUT_EARTH_TRACKING = 900 // ~30 seconds at 30fps
     
     // Track Earth quality
-    private const val REQUIRED_TRACKING_CONFIDENCE = 0.7f // Min confidence to consider tracking reliable
+    private var REQUIRED_TRACKING_CONFIDENCE = 0.7f // Min confidence to consider tracking reliable
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -132,6 +132,26 @@ class HelloGeoRenderer(val context: Context) :
       // When in split screen mode, adjust rendering parameters for better performance
       Log.d(TAG, "Setting split screen mode: $value")
     }
+    
+  // Low precision mode for poor GPS environments
+  private var isLowPrecisionMode = false
+  
+  /**
+   * Set low precision mode to be more tolerant of GPS issues
+   */
+  fun setLowPrecisionMode(enabled: Boolean) {
+    isLowPrecisionMode = enabled
+    Log.d(TAG, "Setting low precision mode: $enabled")
+    
+    if (enabled) {
+      // Adjust rendering settings for low precision mode
+      // Increase distance thresholds and be more tolerant of tracking errors
+      REQUIRED_TRACKING_CONFIDENCE = 0.4f // Lower the required confidence threshold
+    } else {
+      // Reset to normal precision settings
+      REQUIRED_TRACKING_CONFIDENCE = 0.7f
+    }
+  }
 
   override fun onResume(owner: LifecycleOwner) {
     displayRotationHelper.onResume()
@@ -362,8 +382,8 @@ class HelloGeoRenderer(val context: Context) :
       // Determine how many anchors to draw based on tracking quality
       val trackingConfidence = calculateTrackingConfidence(cameraGeospatialPose)
       
-      // Only draw if we have good enough tracking
-      if (trackingConfidence > REQUIRED_TRACKING_CONFIDENCE) {
+      // Only draw if we have good enough tracking, or we're in low precision mode
+      if (trackingConfidence > REQUIRED_TRACKING_CONFIDENCE || isLowPrecisionMode) {
         // Get current position
         val currentPosition = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
         
