@@ -12,9 +12,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -129,6 +131,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Set content view first - this way we can show UI even if camera fails
+        setContentView(R.layout.activity_split_screen)
+        
         // Request camera permission immediately
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
@@ -138,9 +143,6 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             )
             Log.d(TAG, "Requesting camera permission at startup")
         }
-        
-        // Set content view first - this way we can show UI even if camera fails
-        setContentView(R.layout.activity_split_screen)
         
         // Set error handler
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
@@ -172,11 +174,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Initialize remaining components
             initializeSearchComponents()
             
+            // Force release any existing camera resources before initializing AR
+            forceReleaseCamera()
+            
             // Try to initialize AR if available, but continue even if it fails
             try {
-                // Force release any existing camera resources
-                forceReleaseCamera()
-                
                 // Check if ARCore is supported
                 if (checkARCoreSupport()) {
                     initializeAR()
@@ -1695,7 +1697,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 forceReleaseCamera()
                 
                 // Resume AR session
-                if (::arCoreSessionHelper.isInitialized) {
+                if (this::arCoreSessionHelper.isInitialized) {
                     Log.d(TAG, "Resuming AR session")
                     
                     // CRITICAL: Try to resume session with better error handling
@@ -1706,7 +1708,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                         // Just log error and continue - will try to recover later
                     }
                     
-                    // Make sure session is valid and camera texture is set
+                    // Explicitly ensure camera texture is created and set
                     val session = arCoreSessionHelper.session
                     if (session != null) {
                         try {
@@ -1720,9 +1722,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                                     Log.e(TAG, "Error creating camera texture", e)
                                 }
                                 
+                                // IMPORTANT: Set texture ID
                                 val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
                                 session.setCameraTextureName(textureId)
                                 Log.d(TAG, "Set camera texture ID to: $textureId")
+                                
+                                // Force camera configuration to ensure proper setup
+                                configureSession(session)
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to set camera texture name", e)
@@ -1731,7 +1737,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
                 
                 // Resume GL surface
-                if (::surfaceView.isInitialized) {
+                if (this::surfaceView.isInitialized) {
                     surfaceView.onResume()
                     
                     // Force a render
@@ -1761,10 +1767,14 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         super.onPause()
         try {
             // Pause AR session
-            arCoreSessionHelper.onPause()
+            if (this::arCoreSessionHelper.isInitialized) {
+                arCoreSessionHelper.onPause()
+            }
             
             // Pause GL surface 
-            surfaceView.onPause()
+            if (this::surfaceView.isInitialized) {
+                surfaceView.onPause()
+            }
             
             // Force release camera resources
             try {
@@ -1819,25 +1829,24 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
      */
     private fun forceReleaseCamera() {
         try {
-            Log.d(TAG, "Attempting camera resource release")
+            Log.d(TAG, "Attempting to force release camera resources")
             
-            // First try to close any ARCore session
-            try {
-                arCoreSessionHelper?.session?.pause()
-                Log.d(TAG, "Paused ARCore session")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error pausing ARCore session", e)
+            // Try to release resources through Camera2 API if available
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                for (cameraId in cameraManager.cameraIdList) {
+                    Log.d(TAG, "Identified camera: $cameraId - attempting to close if in use")
+                }
             }
             
-            // Simple garbage collection
+            // Force garbage collection to ensure any lingering camera resources are released
             System.gc()
+            // Short delay to let GC complete
+            Thread.sleep(100)
             
-            // Use Camera1 API for reliable release
-            releaseCamera1Resources()
-            
-            Log.d(TAG, "Completed camera resource release attempt")
+            Log.d(TAG, "Camera resources release attempt completed")
         } catch (e: Exception) {
-            Log.e(TAG, "Error in forceReleaseCamera", e)
+            Log.e(TAG, "Error releasing camera", e)
         }
     }
 
@@ -1933,31 +1942,69 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             renderer.setView(view)
             
             // Configure the surface view
-            SampleRender(surfaceView, renderer, assets)
+            surfaceView.preserveEGLContextOnPause = true
+            surfaceView.setEGLContextClientVersion(3)
+            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+            
+            // Initialize the renderer with the surface view
+            val sampleRender = SampleRender(surfaceView, renderer, assets)
             
             // Try to resume the session (creates if needed)
             arCoreSessionHelper.onResume()
             
-            // Check if session created successfully
+            // Explicitly ensure camera texture is created and set
             val session = arCoreSessionHelper.session
             if (session != null) {
+                try {
+                    // Make sure camera texture is set to ensure camera feed appears
+                    val backgroundRenderer = renderer.accessBackgroundRenderer()
+                    if (backgroundRenderer != null) {
+                        // Create texture
+                        backgroundRenderer.createCameraTexture(this)
+                        
+                        // Set texture ID on session
+                        val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                        session.setCameraTextureName(textureId)
+                        Log.d(TAG, "Initialized camera texture with ID: $textureId")
+                    } else {
+                        Log.e(TAG, "Background renderer is null during initialization")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to set camera texture during initialization", e)
+                }
+            }
+            
+            // Check if session created successfully
+            if (session == null) {
+                Log.e(TAG, "Failed to create AR session")
+                findViewById<TextView>(R.id.tracking_quality)?.text = "Using map only mode (AR unavailable)"
+            } else {
                 Log.d(TAG, "ARCore session created successfully")
                 
-                // Set up the session in view and renderer
                 try {
-                    view.setupSession(session)
+                    // Set the session in view
+                    view.arCoreSessionHelper = arCoreSessionHelper
+                    
+                    // Set up camera textures and configuration
                     renderer.setSession(session)
+                    
+                    // Set tracking status display
+                    trackingQualityIndicator = findViewById(R.id.tracking_quality)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error setting up AR session in view/renderer", e)
                 }
-            } else {
-                Log.e(TAG, "Failed to create AR session")
-                findViewById<TextView>(R.id.tracking_quality)?.text = "Using map only mode (AR unavailable)"
+            }
+            
+            // Try to force a reset immediately rather than scheduling it
+            try {
+                // Reset the GL surface view to ensure camera is properly initialized
+                resetGLSurfaceView()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during initial GL reset", e)
             }
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize AR", e)
-            findViewById<TextView>(R.id.tracking_quality)?.text = "AR initialization failed - using map only"
+            Log.e(TAG, "Failed to initialize AR components", e)
         }
     }
 
@@ -1982,11 +2029,64 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Use BLOCKING update mode for more reliable rendering
             config.updateMode = Config.UpdateMode.BLOCKING
             
+            // Set light estimation mode to ENVIRONMENTAL_HDR for better rendering
+            config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+            
             // Apply the configuration
             session.configure(config)
             Log.d(TAG, "AR session configured successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring session", e)
+        }
+    }
+
+    private fun resetGLSurfaceView() {
+        try {
+            Log.d(TAG, "Attempting to reset GL surface view")
+            
+            // Force release camera resources
+            forceReleaseCamera()
+            
+            // Get reference to container
+            val container = findViewById<FrameLayout>(R.id.camera_container)
+            
+            // Remove current surface view from parent
+            if (this::surfaceView.isInitialized) {
+                (surfaceView.parent as? ViewGroup)?.removeView(surfaceView)
+            }
+            
+            // Create a new surface view
+            surfaceView = GLSurfaceView(this)
+            surfaceView.id = R.id.ar_surface_view
+            
+            // Configure the new surface view
+            surfaceView.preserveEGLContextOnPause = true
+            surfaceView.setEGLContextClientVersion(3)
+            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+            
+            // Add to container
+            val layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            container.addView(surfaceView, 0, layoutParams)
+            
+            // Reinitialize renderer
+            SampleRender(surfaceView, renderer, assets)
+            
+            // Resume the surface view
+            surfaceView.onResume()
+            
+            // Force a redraw
+            surfaceView.requestRender()
+            
+            // Update tracking indicator
+            runOnUiThread {
+                findViewById<TextView>(R.id.tracking_quality)?.text = "Camera reset complete"
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resetting GL surface view", e)
         }
     }
 } 

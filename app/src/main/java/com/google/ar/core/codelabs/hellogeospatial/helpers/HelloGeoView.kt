@@ -61,6 +61,7 @@ import kotlin.math.cos
 import kotlin.math.sqrt
 import kotlin.math.atan2
 import kotlin.math.PI
+import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView : DefaultLifecycleObserver {
@@ -114,6 +115,9 @@ class HelloGeoView : DefaultLifecycleObserver {
   private val mapErrorHelper: MapErrorHelper
   private var mapLoadAttempts = 0
   private val MAX_MAP_LOAD_ATTEMPTS = 3
+  
+  // ARCore session helper
+  var arCoreSessionHelper: ARCoreSessionLifecycleHelper? = null
 
   // Constructor for HelloGeoActivity
   constructor(activity: HelloGeoActivity) {
