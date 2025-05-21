@@ -249,8 +249,10 @@ class HelloGeoRenderer(val context: Context) :
       
       arrowShader.setTexture("u_Texture", arrowTexture)
 
+      // Disable depth visualization and occlusion to ensure camera feed shows properly
       backgroundRenderer.setUseDepthVisualization(render, false)
-      backgroundRenderer.setUseOcclusion(render, true)
+      backgroundRenderer.setUseOcclusion(render, false) // Disable occlusion for better camera reliability
+      Log.d(TAG, "Background renderer configured for maximum camera compatibility")
       
               // Initialize a tracking helper to get cleaner logs
       if (context is AppCompatActivity) {

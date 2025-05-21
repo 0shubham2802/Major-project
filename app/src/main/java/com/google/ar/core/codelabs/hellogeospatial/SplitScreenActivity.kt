@@ -156,13 +156,17 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
             // Try to explicitly check camera access
             if (!checkCameraAvailability()) {
-                // Show dialog with option to retry or continue with map only
-                AlertDialog.Builder(this)
+                // Enhanced dialog with improved camera recovery options
+                val dialog = AlertDialog.Builder(this)
                     .setTitle("Camera Unavailable")
-                    .setMessage("Camera is being used by another app. Please close it and try again.")
-                    .setPositiveButton("RETRY") { _, _ ->
-                        // Attempt aggressive camera reset and restart
-                        Toast.makeText(this, "Attempting to force release camera...", Toast.LENGTH_SHORT).show()
+                    .setMessage("Camera is being used by another app or system process. What would you like to do?")
+                    .setPositiveButton("EMERGENCY RESET") { _, _ ->
+                        // Use the most aggressive camera recovery method
+                        emergencyCameraReset()
+                    }
+                    .setNeutralButton("RETRY") { _, _ ->
+                        // Attempt gentle camera reset
+                        Toast.makeText(this, "Attempting to release camera...", Toast.LENGTH_SHORT).show()
                         
                         // Use a thread to perform potentially time-consuming operations
                         Thread {
@@ -179,51 +183,40 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                                 runOnUiThread {
                                     if (isAvailable) {
                                         Toast.makeText(this, "Camera released successfully!", Toast.LENGTH_SHORT).show()
-                                        // Restart activity with clean state
-                                        val intent = Intent(this, SplitScreenActivity::class.java)
-                                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                        startActivity(intent)
-                                        finish()
+                                        recreate() // Recreate activity with clean state
                                     } else {
-                                        // Second more aggressive attempt
-                                        Toast.makeText(this, "First attempt failed, trying more aggressively...", Toast.LENGTH_SHORT).show()
-                                        
-                                        // Use Android's built-in camera app to try to reset the camera state
-                                        // Sometimes opening another camera app and then closing it resets the camera state
-                                        try {
-                                            val cameraIntent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-                                            if (cameraIntent.resolveActivity(packageManager) != null) {
-                                                // Start camera intent without expecting a result - just to reset camera
-                                                startActivity(cameraIntent)
-                                                
-                                                // Show instructions to the user
-                                                Handler(Looper.getMainLooper()).postDelayed({
-                                                    Toast.makeText(this, "Please close the camera app when it opens", Toast.LENGTH_LONG).show()
-                                                    
-                                                    // Return to our app after a delay
-                                                    Handler(Looper.getMainLooper()).postDelayed({
-                                                        // Final restart attempt
-                                                        forceReleaseCamera()
-                                                        val intent = Intent(this, SplitScreenActivity::class.java)
-                                                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                                        startActivity(intent)
-                                                        finish()
-                                                    }, 5000) // 5 seconds delay
-                                                }, 1000)
-                                            } else {
-                                                // No camera app available, restart directly
-                                                restartApp()
+                                        // Show dialog to try emergency reset
+                                        AlertDialog.Builder(this)
+                                            .setTitle("Camera Still Unavailable")
+                                            .setMessage("Standard recovery failed. Would you like to try emergency reset?")
+                                            .setPositiveButton("EMERGENCY RESET") { _, _ ->
+                                                emergencyCameraReset()
                                             }
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Error launching camera app", e)
-                                            // Last resort - restart activity
-                                            restartApp()
-                                        }
+                                            .setNegativeButton("MAP ONLY") { _, _ ->
+                                                startActivity(Intent(this, FallbackActivity::class.java))
+                                                finish()
+                                            }
+                                            .setCancelable(false)
+                                            .show()
                                     }
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error in camera reset thread", e)
-                                runOnUiThread { restartApp() }
+                                runOnUiThread { 
+                                    // Offer emergency reset
+                                    AlertDialog.Builder(this)
+                                        .setTitle("Error Releasing Camera")
+                                        .setMessage("Standard recovery failed. Would you like to try emergency reset?")
+                                        .setPositiveButton("EMERGENCY RESET") { _, _ ->
+                                            emergencyCameraReset()
+                                        }
+                                        .setNegativeButton("MAP ONLY") { _, _ ->
+                                            startActivity(Intent(this, FallbackActivity::class.java))
+                                            finish()
+                                        }
+                                        .setCancelable(false)
+                                        .show()
+                                }
                             }
                         }.start()
                     }
@@ -232,7 +225,14 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                         finish()
                     }
                     .setCancelable(false)
-                    .show()
+                    .create()
+                
+                // Show dialog with attention-getting styling
+                dialog.show()
+                
+                // Change button colors for better visibility
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(ContextCompat.getColor(this, android.R.color.holo_blue_light))
                 return
             }
             
@@ -2812,6 +2812,156 @@ private fun retryMapLoading() {
             val intent = Intent(this, SplitScreenActivity::class.java)
             startActivity(intent)
             finish()
+        }
+    }
+
+    /**
+     * Emergency camera release that attempts to fix camera issues by directly interacting with Camera APIs
+     * This is the most aggressive version that tries multiple approaches
+     */
+    private fun emergencyCameraReset() {
+        Log.d(TAG, "Emergency camera reset - attempting to recover camera")
+        Toast.makeText(this, "Attempting emergency camera recovery...", Toast.LENGTH_SHORT).show()
+        
+        try {
+            // First try to release any ARCore camera resources
+            arCoreSessionHelper?.session?.pause()
+            
+            // Force release camera using the Camera2 API
+            releaseCamera2Resources()
+            
+            // Also try the legacy Camera API as fallback
+            releaseCamera1Resources()
+            
+            // Force garbage collection to ensure resources are freed
+            System.gc()
+            System.runFinalization()
+            
+            // Try to release other system services that might hold camera
+            releaseMediaRecorder()
+            
+            // Wait a moment for system to process
+            Thread.sleep(500)
+            
+            // Attempt to restart the AR session
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    // Try to resume with fresh camera
+                    Toast.makeText(this, "Attempting to restart camera...", Toast.LENGTH_SHORT).show()
+                    recreate() // Recreate activity for clean state
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart AR session", e)
+                    fallbackToMapOnlyMode()
+                }
+            }, 1000)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in emergency camera reset", e)
+            fallbackToMapOnlyMode()
+        }
+    }
+    
+    /**
+     * Release Camera2 API resources
+     */
+    private fun releaseCamera2Resources() {
+        try {
+            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            
+            // Log available cameras
+            for (cameraId in cameraManager.cameraIdList) {
+                Log.d(TAG, "Attempting to force close Camera2 device: $cameraId")
+                
+                // We'll use a timeout mechanism to avoid blocking forever
+                val semaphore = java.util.concurrent.Semaphore(1)
+                semaphore.acquire()
+                
+                try {
+                    // Create a state callback
+                    val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+                        override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
+                            Log.d(TAG, "Camera $cameraId opened successfully, now closing it")
+                            camera.close()
+                            semaphore.release()
+                        }
+                        
+                        override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
+                            Log.d(TAG, "Camera $cameraId disconnected")
+                            camera.close()
+                            semaphore.release()
+                        }
+                        
+                        override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
+                            Log.e(TAG, "Camera $cameraId error: $error")
+                            camera.close()
+                            semaphore.release()
+                        }
+                    }
+                    
+                    // Try to open and then immediately close the camera
+                    val handler = Handler(Looper.getMainLooper())
+                    cameraManager.openCamera(cameraId, stateCallback, handler)
+                    
+                    // Wait with timeout
+                    semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing Camera2 device: ${e.message}")
+                    semaphore.release()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in Camera2 release", e)
+        }
+    }
+    
+    /**
+     * Release legacy Camera API resources as a fallback
+     */
+    @Suppress("DEPRECATION")
+    private fun releaseCamera1Resources() {
+        try {
+            // Try with legacy Camera API for older devices or as fallback
+            var camera: android.hardware.Camera? = null
+            try {
+                // Try to open front camera first
+                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT)
+                Log.d(TAG, "Successfully opened front camera for reset")
+                Thread.sleep(100)
+                camera.release()
+                Log.d(TAG, "Released front camera")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with front camera: ${e.message}")
+            }
+            
+            try {
+                // Try to open back camera
+                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
+                Log.d(TAG, "Successfully opened back camera for reset")
+                Thread.sleep(100)
+                camera.release()
+                Log.d(TAG, "Released back camera")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with back camera: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in Camera1 release", e)
+        }
+    }
+    
+    /**
+     * Release MediaRecorder which might be holding camera
+     */
+    private fun releaseMediaRecorder() {
+        try {
+            val recorder = android.media.MediaRecorder()
+            try {
+                recorder.release()
+                Log.d(TAG, "Released MediaRecorder")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing MediaRecorder", e)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating MediaRecorder", e)
         }
     }
 } 

@@ -135,7 +135,28 @@ class ARActivity : AppCompatActivity() {
             
             // Add help button to show navigation tips
             findViewById<Button>(R.id.help_button)?.setOnClickListener {
-                showNavigationHelp()
+                if (arStatusMessage?.contains("camera", ignoreCase = true) == true) {
+                    // If we have camera issues, offer camera recovery options
+                    AlertDialog.Builder(this)
+                        .setTitle("Camera Issues Detected")
+                        .setMessage("Would you like to try emergency camera recovery or switch to map mode?")
+                        .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
+                            dialog.dismiss()
+                            emergencyCameraReset()
+                        }
+                        .setNegativeButton("MAP MODE") { dialog, _ ->
+                            dialog.dismiss()
+                            returnToMapMode()
+                        }
+                        .setNeutralButton("NAVIGATION HELP") { dialog, _ ->
+                            dialog.dismiss()
+                            showNavigationHelp()
+                        }
+                        .show()
+                } else {
+                    // Normal help
+                    showNavigationHelp()
+                }
             }
             
             // Get the surface view
@@ -165,21 +186,42 @@ class ARActivity : AppCompatActivity() {
             // Set lifecycle owner for session helper
             arCoreSessionHelper.onLifecycleOwner = this
             
-            // Set exception handler
+            // Set enhanced exception handler with recovery options
             arCoreSessionHelper.exceptionCallback = { exception ->
                 val message = when (exception) {
                     is UnavailableUserDeclinedInstallationException -> "Please install ARCore"
                     is UnavailableApkTooOldException -> "Please update ARCore"
                     is UnavailableSdkTooOldException -> "Please update this app"
                     is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
-                    is CameraNotAvailableException -> "Camera is not available"
+                    is CameraNotAvailableException -> "Camera is not available - may be in use by another app"
                     else -> "Failed to initialize AR: $exception"
                 }
                 Log.e(TAG, "ARCore threw an exception", exception)
                 arStatusMessage = message
                 
-                // Return to map mode with error
-                returnToMapMode()
+                // Special handling for camera issues
+                if (exception is CameraNotAvailableException) {
+                    runOnUiThread {
+                        // Offer camera recovery options
+                        AlertDialog.Builder(this)
+                            .setTitle("Camera Not Available")
+                            .setMessage("The camera appears to be in use by another app. Would you like to attempt recovery?")
+                            .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
+                                dialog.dismiss()
+                                emergencyCameraReset()
+                            }
+                            .setNegativeButton("MAP MODE") { dialog, _ ->
+                                dialog.dismiss()
+                                returnToMapMode()
+                            }
+                            .setCancelable(false)
+                            .show()
+                    }
+                } else {
+                    // For other errors, just return to map mode
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    returnToMapMode()
+                }
             }
             
             // Register the renderer as a lifecycle observer
@@ -808,5 +850,169 @@ class ARActivity : AppCompatActivity() {
                     .show()
             }
         }, AR_INITIALIZATION_TIMEOUT)
+    }
+
+    /**
+     * Emergency camera reset to recover from stubborn camera-in-use issues
+     */
+    private fun emergencyCameraReset() {
+        try {
+            Log.d(TAG, "Performing emergency camera reset")
+            Toast.makeText(this, "Attempting emergency camera recovery...", Toast.LENGTH_SHORT).show()
+            
+            // Pause session if active
+            try {
+                arCoreSessionHelper.session?.pause()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error pausing session", e)
+            }
+            
+            // Force release cameras using multiple approaches
+            releaseAllCameras()
+            
+            // Force garbage collection
+            System.gc()
+            System.runFinalization()
+            
+            // Wait a moment for system to process
+            Thread.sleep(300)
+            
+            // Try to restart
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    Log.d(TAG, "Restarting after emergency camera reset")
+                    Toast.makeText(this, "Restarting camera...", Toast.LENGTH_SHORT).show()
+                    
+                    // Recreate activity for clean state
+                    recreate()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart after camera reset", e)
+                    returnToMapMode()
+                }
+            }, 1000)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in emergency camera reset", e)
+            returnToMapMode()
+        }
+    }
+    
+    /**
+     * Release all camera resources using both Camera1 and Camera2 APIs
+     */
+    private fun releaseAllCameras() {
+        // Release using Camera2 API
+        releaseCamera2Resources()
+        
+        // Also try legacy Camera API
+        releaseCamera1Resources()
+        
+        // Release media recorder which might hold camera
+        releaseMediaRecorderResources()
+    }
+    
+    /**
+     * Release Camera2 API resources
+     */
+    private fun releaseCamera2Resources() {
+        try {
+            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            
+            for (cameraId in cameraManager.cameraIdList) {
+                Log.d(TAG, "Attempting to release Camera2 device: $cameraId")
+                
+                // Use a semaphore with timeout to prevent blocking
+                val semaphore = java.util.concurrent.Semaphore(1)
+                semaphore.acquire()
+                
+                try {
+                    // Create callback to open and immediately close
+                    val callback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+                        override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
+                            Log.d(TAG, "Camera $cameraId opened successfully, now closing")
+                            camera.close()
+                            semaphore.release()
+                        }
+                        
+                        override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
+                            Log.d(TAG, "Camera $cameraId disconnected")
+                            camera.close()
+                            semaphore.release()
+                        }
+                        
+                        override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
+                            Log.d(TAG, "Camera $cameraId error: $error")
+                            camera.close()
+                            semaphore.release()
+                        }
+                    }
+                    
+                    // Try to open camera to reset its state
+                    val handler = Handler(Looper.getMainLooper())
+                    cameraManager.openCamera(cameraId, callback, handler)
+                    
+                    // Wait with timeout
+                    if (!semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)) {
+                        Log.e(TAG, "Timeout waiting for camera $cameraId")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error opening/closing camera $cameraId: ${e.message}")
+                    semaphore.release()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in Camera2 release", e)
+        }
+    }
+    
+    /**
+     * Release legacy Camera API resources
+     */
+    @Suppress("DEPRECATION")
+    private fun releaseCamera1Resources() {
+        try {
+            // Try with legacy Camera API as fallback
+            var camera: android.hardware.Camera? = null
+            
+            try {
+                // Front camera
+                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT)
+                Log.d(TAG, "Successfully opened front camera")
+                Thread.sleep(100)
+                camera.release()
+                Log.d(TAG, "Released front camera")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with front camera: ${e.message}")
+            }
+            
+            try {
+                // Back camera
+                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
+                Log.d(TAG, "Successfully opened back camera")
+                Thread.sleep(100)
+                camera.release()
+                Log.d(TAG, "Released back camera")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with back camera: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in Camera1 release", e)
+        }
+    }
+    
+    /**
+     * Release MediaRecorder resources
+     */
+    private fun releaseMediaRecorderResources() {
+        try {
+            val recorder = android.media.MediaRecorder()
+            try {
+                recorder.release()
+                Log.d(TAG, "Released MediaRecorder")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing MediaRecorder", e)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating MediaRecorder", e)
+        }
     }
 } 
