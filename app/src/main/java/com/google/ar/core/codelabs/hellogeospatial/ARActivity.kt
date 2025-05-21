@@ -312,42 +312,28 @@ class ARActivity : AppCompatActivity() {
         }
     }
     
+    /**
+     * Configure ARCore session with more stable settings
+     */
     private fun configureSession(session: Session) {
-        try {
-            Log.d(TAG, "Configuring AR session with enhanced settings")
-            
-            // Create a new configuration
-            val config = Config(session)
-            
-            // Enable geospatial mode
-            config.geospatialMode = Config.GeospatialMode.ENABLED
-            
-            // CRITICAL: Basic camera and rendering settings for better reliability 
-            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-            config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-            config.focusMode = Config.FocusMode.AUTO
-            
-            // Simplify rendering for better performance in case we're having camera issues
-            // Disable features we don't absolutely need
-            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
-            
-            // IMPORTANT: Make sure depth is properly configured - this can interfere with camera
-            try {
-                config.depthMode = Config.DepthMode.DISABLED // Disable depth to ensure camera feed shows
-                Log.d(TAG, "Disabled depth mode for better camera reliability")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error configuring depth settings", e)
+        session.configure(
+            session.config.apply {
+                // Enable Geospatial mode for Earth anchors
+                geospatialMode = Config.GeospatialMode.ENABLED
+                
+                // Set focus mode to AUTO for more reliable camera performance
+                focusMode = Config.FocusMode.AUTO
+                
+                // Set depth mode only if supported
+                depthMode = when {
+                    session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) -> Config.DepthMode.AUTOMATIC
+                    else -> Config.DepthMode.DISABLED
+                }
+                
+                // Use blocking update mode for more reliable tracking
+                updateMode = Config.UpdateMode.BLOCKING
             }
-            
-            // Apply the configuration
-            session.configure(config)
-            
-            Log.d(TAG, "AR session configured successfully with enhanced camera settings")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error configuring session", e)
-            Toast.makeText(this, "Error configuring AR: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
+        )
     }
     
     private fun isEarthTrackingStable(): Boolean {
@@ -866,12 +852,11 @@ class ARActivity : AppCompatActivity() {
                 Log.e(TAG, "Error pausing session", e)
             }
             
-            // Force release cameras using multiple approaches
-            releaseAllCameras()
+            // Use a simpler camera release approach
+            releaseCamera1Resources()
             
             // Force garbage collection
             System.gc()
-            System.runFinalization()
             
             // Wait a moment for system to process
             Thread.sleep(300)
@@ -899,84 +884,15 @@ class ARActivity : AppCompatActivity() {
      * Release all camera resources using both Camera1 and Camera2 APIs
      */
     private fun releaseAllCameras() {
-        // Release using Camera2 API
-        releaseCamera2Resources()
-        
-        // Also try legacy Camera API
+        // Use legacy Camera API as it's more stable
         releaseCamera1Resources()
-        
-        // Release media recorder which might hold camera
-        releaseMediaRecorderResources()
     }
     
     /**
      * Release Camera2 API resources
      */
     private fun releaseCamera2Resources() {
-        try {
-            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            val cameraIds = cameraManager.cameraIdList
-            
-            for (cameraId in cameraIds) {
-                Log.d(TAG, "Attempting to release Camera2 resources for camera $cameraId")
-                
-                try {
-                    // Create a semaphore to handle callbacks
-                    val semaphore = java.util.concurrent.Semaphore(0)
-                    
-                    // Try opening and immediately closing the camera
-                    val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
-                        override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera2 $cameraId opened successfully for reset")
-                            try {
-                                // Close immediately
-                                camera.close()
-                                Log.d(TAG, "Camera2 $cameraId closed successfully")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error closing Camera2 device", e)
-                            } finally {
-                                semaphore.release()
-                            }
-                        }
-                        
-                        override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera2 $cameraId disconnected")
-                            camera.close()
-                            semaphore.release()
-                        }
-                        
-                        override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
-                            Log.e(TAG, "Camera2 $cameraId error: $error")
-                            camera.close()
-                            semaphore.release()
-                        }
-                        
-                        override fun onClosed(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera2 $cameraId closed in callback")
-                            semaphore.release()
-                        }
-                    }
-                    
-                    // Check for permissions at runtime
-                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                        Log.e(TAG, "No camera permission during reset")
-                        semaphore.release()
-                        continue
-                    }
-                    
-                    // Try to open the camera
-                    cameraManager.openCamera(cameraId, stateCallback, null)
-                    
-                    // Wait with timeout
-                    semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error releasing Camera2 device: ${e.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in Camera2 release", e)
-        }
+        // Removed complex Camera2 API code that could cause instability
     }
     
     /**
@@ -1017,17 +933,7 @@ class ARActivity : AppCompatActivity() {
      * Release MediaRecorder which might be holding camera
      */
     private fun releaseMediaRecorderResources() {
-        try {
-            val mediaRecorder = android.media.MediaRecorder()
-            try {
-                mediaRecorder.release()
-                Log.d(TAG, "Released MediaRecorder")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error releasing MediaRecorder", e)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating MediaRecorder for release", e)
-        }
+        // Simplified to avoid potential issues
     }
 
     /**
@@ -1054,59 +960,23 @@ class ARActivity : AppCompatActivity() {
                         // Try to resume the session
                         arCoreSessionHelper.onResume()
                         
-                        // Check if camera works after brief delay
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            if (arStatusMessage?.contains("camera", ignoreCase = true) == true) {
-                                // Still failing, try more aggressive approach or offer options
-                                if (cameraRetryCount == MAX_CAMERA_RETRIES) {
-                                    // Max retries reached, show options dialog
-                                    AlertDialog.Builder(this)
-                                        .setTitle("Camera Still Unavailable")
-                                        .setMessage("Would you like to try emergency reset or switch to map mode?")
-                                        .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
-                                            dialog.dismiss()
-                                            emergencyCameraReset()
-                                        }
-                                        .setNegativeButton("MAP ONLY") { dialog, _ ->
-                                            dialog.dismiss()
-                                            returnToMapMode()
-                                        }
-                                        .setCancelable(false)
-                                        .show()
-                                } else {
-                                    // Simple toast for retry feedback
-                                    Toast.makeText(this, "Retry failed. Trying again...", Toast.LENGTH_SHORT).show()
-                                    
-                                    // Try more aggressive approach next time
-                                    Handler(Looper.getMainLooper()).postDelayed({
-                                        retryCameraAccess()
-                                    }, 1000)
-                                }
-                            } else {
-                                // Successfully recovered
-                                Toast.makeText(this, "Camera access restored!", Toast.LENGTH_SHORT).show()
-                                cameraRetryCount = 0
-                            }
-                        }, 2000)
+                        // Check if session is valid
+                        if (arCoreSessionHelper.session == null) {
+                            // Session is null, try to recreate
+                            returnToMapMode()
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error resuming session in retry", e)
-                        // Try again or escalate
-                        if (cameraRetryCount < MAX_CAMERA_RETRIES) {
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                retryCameraAccess()
-                            }, 1000)
-                        } else {
-                            emergencyCameraReset()
-                        }
+                        returnToMapMode()
                     }
                 }, 1000)
             } else {
-                // Max retries exceeded, try emergency reset
-                emergencyCameraReset()
+                // Max retries reached, return to map mode
+                returnToMapMode()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in retryCameraAccess", e)
-            emergencyCameraReset()
+            returnToMapMode()
         }
     }
 } 

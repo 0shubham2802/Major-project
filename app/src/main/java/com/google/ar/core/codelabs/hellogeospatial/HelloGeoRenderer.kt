@@ -1732,4 +1732,14 @@ class HelloGeoRenderer(val context: Context) :
   private fun toDegrees(radians: Double): Double {
     return radians * 180.0 / PI
   }
+
+  /**
+   * Sets the current device location
+   */
+  fun setCurrentLocation(location: LatLng) {
+    currentLocation = location
+  }
+
+  // For storing current device location
+  private var currentLocation: LatLng? = null
 }

@@ -54,6 +54,10 @@ import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GeoPermissionsHelper
+import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
+import com.google.ar.core.exceptions.UnavailableApkTooOldException
+import com.google.ar.core.exceptions.UnavailableSdkTooOldException
+import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -124,6 +128,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Set content view first - this way we can show UI even if camera fails
+        setContentView(R.layout.activity_split_screen)
+        
         // Set error handler
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             Log.e(TAG, "Uncaught exception", throwable)
@@ -133,943 +140,56 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         
         try {
-            // Force release any camera resources first
-            forceReleaseCamera()
+            // Initialize UI components first
+            initializeUIComponents()
             
-            // Check if ARCore is supported
-            if (!checkARCoreSupport()) {
-                // If not supported, redirect to map-only view
-                Toast.makeText(this, "AR not supported on this device. Redirecting to map view.", Toast.LENGTH_LONG).show()
-                startActivity(Intent(this, FallbackActivity::class.java))
-                finish()
+            // Ensure we have required permissions before proceeding
+            if (!checkPermissions()) {
+                // Permissions will be requested and onCreate logic will continue in onRequestPermissionsResult
                 return
             }
             
-            // Check for camera availability
-            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            if (cameraManager.cameraIdList.isEmpty()) {
-                Toast.makeText(this, "No camera available on this device.", Toast.LENGTH_LONG).show()
-                startActivity(Intent(this, FallbackActivity::class.java))
-                finish()
-                return
-            }
-            
-            // Try to explicitly check camera access
-            if (!checkCameraAvailability()) {
-                // Enhanced dialog with improved camera recovery options
-                val dialog = AlertDialog.Builder(this)
-                    .setTitle("Camera Unavailable")
-                    .setMessage("Camera is being used by another app or system process. What would you like to do?")
-                    .setPositiveButton("EMERGENCY RESET") { _, _ ->
-                        // Use the most aggressive camera recovery method
-                        emergencyCameraReset()
-                    }
-                    .setNeutralButton("RETRY") { _, _ ->
-                        // Attempt gentle camera reset
-                        Toast.makeText(this, "Attempting to release camera...", Toast.LENGTH_SHORT).show()
-                        
-                        // Use a thread to perform potentially time-consuming operations
-                        Thread {
-                            try {
-                                // First attempt - gentle release
-                                forceReleaseCamera()
-                                
-                                // Wait a moment
-                                Thread.sleep(500)
-                                
-                                // Check if camera is now available
-                                val isAvailable = checkCameraAvailability()
-                                
-                                runOnUiThread {
-                                    if (isAvailable) {
-                                        Toast.makeText(this, "Camera released successfully!", Toast.LENGTH_SHORT).show()
-                                        recreate() // Recreate activity with clean state
-                                    } else {
-                                        // Show dialog to try emergency reset
-                                        AlertDialog.Builder(this)
-                                            .setTitle("Camera Still Unavailable")
-                                            .setMessage("Standard recovery failed. Would you like to try emergency reset?")
-                                            .setPositiveButton("EMERGENCY RESET") { _, _ ->
-                                                emergencyCameraReset()
-                                            }
-                                            .setNegativeButton("MAP ONLY") { _, _ ->
-                                                startActivity(Intent(this, FallbackActivity::class.java))
-                                                finish()
-                                            }
-                                            .setCancelable(false)
-                                            .show()
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error in camera reset thread", e)
-                                runOnUiThread { 
-                                    // Offer emergency reset
-                                    AlertDialog.Builder(this)
-                                        .setTitle("Error Releasing Camera")
-                                        .setMessage("Standard recovery failed. Would you like to try emergency reset?")
-                                        .setPositiveButton("EMERGENCY RESET") { _, _ ->
-                                            emergencyCameraReset()
-                                        }
-                                        .setNegativeButton("MAP ONLY") { _, _ ->
-                                            startActivity(Intent(this, FallbackActivity::class.java))
-                                            finish()
-                                        }
-                                        .setCancelable(false)
-                                        .show()
-                                }
-                            }
-                        }.start()
-                    }
-                    .setNegativeButton("MAP ONLY") { _, _ ->
-                        startActivity(Intent(this, FallbackActivity::class.java))
-                        finish()
-                    }
-                    .setCancelable(false)
-                    .create()
-                
-                // Show dialog with attention-getting styling
-                dialog.show()
-                
-                // Change button colors for better visibility
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(ContextCompat.getColor(this, android.R.color.holo_blue_light))
-                return
-            }
-            
-            // Set the content view
-            setContentView(R.layout.activity_split_screen)
-            
-            // Initialize the location provider
+            // Initialize location services
             fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
             
-            // Initialize the directions helper
+            // Initialize directions helper
             directionsHelper = DirectionsHelper(this)
             
-            // Initialize search suggestion provider
-            suggestionProvider = SearchSuggestionProvider(this)
-            
-            // Initialize recent places manager
-            recentPlacesManager = RecentPlacesManager(this)
-            
-            // Check for required permissions
-            checkAndRequestPermissions()
-            
-            // Initialize the map portion
+            // Initialize map first as it's more reliable
             initializeMap()
             
-            // Initialize the AR portion - delay AR initialization to improve loading performance
-            Handler(Looper.getMainLooper()).postDelayed({
-                initializeAR()
-            }, 500) // 500ms delay
+            // Initialize remaining components
+            initializeSearchComponents()
             
-            // Set up UI controls
-            setupUIControls()
-            
-            // Set up search suggestions
-            setupSearchSuggestions()
-            
-            // Get destination from intent if available
-            if (intent.hasExtra("DESTINATION_LAT") && intent.hasExtra("DESTINATION_LNG")) {
-                val lat = intent.getDoubleExtra("DESTINATION_LAT", 0.0)
-                val lng = intent.getDoubleExtra("DESTINATION_LNG", 0.0)
+            // Try to initialize AR if available, but continue even if it fails
+            try {
+                // Force release any existing camera resources
+                forceReleaseCamera()
                 
-                if (lat != 0.0 && lng != 0.0) {
-                    destinationLatLng = LatLng(lat, lng)
-                    destinationLatLng?.let { destination ->
-                        // Show destination on map when ready
-                        googleMap?.apply {
-                            clear()
-                            destinationMarker = addMarker(MarkerOptions().position(destination).title("Destination"))
-                            animateCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
-                        }
-                        
-                        // Make navigate button visible
-                        findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
-                    }
+                // Check if ARCore is supported
+                if (checkARCoreSupport()) {
+                    initializeAR()
+                } else {
+                    Log.w(TAG, "ARCore not supported, continuing with map-only functionality")
+                    // Show notification to user
+                    findViewById<TextView>(R.id.tracking_quality)?.setText("AR not supported on this device - using map only")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize AR components", e)
+                // Continue with map-only mode
+                findViewById<TextView>(R.id.tracking_quality)?.setText("AR initialization failed - using map only")
             }
             
-            // Get the current location
-            getCurrentLocation()
+            // Process intent data (destination coordinates, etc.)
+            processIntentData()
+            
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing: ${e.message}", Toast.LENGTH_LONG).show()
-            fallbackToMapOnlyMode()
         }
     }
     
-    private fun getCurrentLocation() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
-            == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                location?.let {
-                    currentLocation = LatLng(it.latitude, it.longitude)
-                    Log.d(TAG, "Current location: ${it.latitude}, ${it.longitude}")
-                    
-                    // Update navigation if active
-                    if (isNavigating) {
-                        // Update current step if navigating
-                        updateCurrentNavigationStep()
-                        
-                        // If we already have a destination, we can calculate/update the route
-                        destinationLatLng?.let { destination ->
-                            googleMap?.apply {
-                                clear()
-                                destinationMarker = addMarker(MarkerOptions().position(destination).title("Destination"))
-                                animateCamera(CameraUpdateFactory.newLatLngZoom(destination, 15f))
-                            }
-                            
-                            // Update navigation if active
-                            if (isNavigating) {
-                                // Only recalculate route if needed
-                                // Calculate route frequently at first until we have a good route
-                                if (directionsHelper.lastSteps.isEmpty()) {
-                                    fetchAndDisplayDirections(currentLocation!!, destination)
-                                } else {
-                                    // Recalculate if we've moved significantly from route start
-                                    val distanceThresholdMeters = 50 // Only recalculate if moved 50+ meters
-                                    val steps = directionsHelper.lastSteps
-                                    if (steps.isNotEmpty()) {
-                                        val results = FloatArray(1)
-                                        android.location.Location.distanceBetween(
-                                            currentLocation!!.latitude, currentLocation!!.longitude,
-                                            steps[0].startLocation.latitude, steps[0].startLocation.longitude,
-                                            results
-                                        )
-                                        
-                                        if (results[0] > distanceThresholdMeters) {
-                                            fetchAndDisplayDirections(currentLocation!!, destination)
-                                        }
-                                    } else {
-                                        // No steps yet, calculate route
-                                        fetchAndDisplayDirections(currentLocation!!, destination)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Request location updates for continuous navigation
-            try {
-                if (isNavigating) {
-                    val locationRequest = com.google.android.gms.location.LocationRequest.create().apply {
-                        interval = 5000 // Update every 5 seconds
-                        fastestInterval = 2000 // Fastest update interval
-                        priority = com.google.android.gms.location.LocationRequest.PRIORITY_HIGH_ACCURACY
-                    }
-                    
-                    fusedLocationClient.requestLocationUpdates(
-                        locationRequest,
-                        object : com.google.android.gms.location.LocationCallback() {
-                            override fun onLocationResult(locationResult: com.google.android.gms.location.LocationResult) {
-                                locationResult.lastLocation?.let {
-                                    currentLocation = LatLng(it.latitude, it.longitude)
-                                    
-                                    // Update navigation if active
-                                    if (isNavigating) {
-                                        updateCurrentNavigationStep()
-                                    }
-                                }
-                            }
-                        },
-                        Looper.getMainLooper() // Use main thread looper instead of null
-                    )
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error requesting location updates", e)
-            }
-        }
-    }
-    
-    private fun checkARCoreSupport(): Boolean {
-        val availability = ArCoreApk.getInstance().checkAvailability(this)
-        return when (availability) {
-            ArCoreApk.Availability.SUPPORTED_INSTALLED -> true
-            else -> false
-        }
-    }
-    
-    private fun initializeMap() {
-        try {
-            mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
-            
-            // Set a timeout for map loading - increased to 30 seconds
-            val mapLoadingTimeout = Handler(Looper.getMainLooper())
-            val timeoutRunnable = Runnable {
-                Log.e(TAG, "Map loading timed out")
-                
-                // Don't just show a Toast and error out, try to recover
-                findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.GONE
-                
-                // Display a retry button instead of just showing error
-                val loadingText = findViewById<TextView>(R.id.map_loading_text)
-                loadingText?.text = "Map loading timed out. Tap to retry."
-                loadingText?.setOnClickListener {
-                    // Retry map loading
-                    retryMapLoading()
-                }
-                
-                // Try to continue with limited functionality
-                if (googleMap == null) {
-                    Toast.makeText(this, "Continuing with limited map functionality", Toast.LENGTH_LONG).show()
-                }
-            }
-            
-            mapLoadingTimeout.postDelayed(timeoutRunnable, 30000) // 30 second timeout
-            
-            // Initialize the map asynchronously with timeout handling
-val mapTimeoutHandler = Handler(Looper.getMainLooper())
-val mapLoadRunnable = object : Runnable {
-    private var attempts = 0
-    private val maxAttempts = 3
-    
-    override fun run() {
-        if (googleMap == null && attempts < maxAttempts) {
-            Log.d(TAG, "Attempt ${attempts + 1} to load map")
-            attempts++
-            mapFragment.getMapAsync(this@SplitScreenActivity)
-            mapTimeoutHandler.postDelayed(this, 10000)  // Try again in 10 seconds
-        } else if (googleMap == null) {
-            Log.e(TAG, "Failed to load map after $maxAttempts attempts")
-            // Show error message and allow retry
-            findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.GONE
-            Toast.makeText(
-                this@SplitScreenActivity, 
-                "Failed to load map. Please check your internet connection and try again.", 
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-}
-mapLoadRunnable.run()
-            } catch (e: Exception) {
-        Log.e(TAG, "Error initializing map", e)
-        Toast.makeText(this, "Error initializing map", Toast.LENGTH_SHORT).show()
-    }
-}
-
-private fun retryMapLoading() {
-    // Show loading indicator again
-    findViewById<LinearLayout>(R.id.map_loading_container)?.visibility = View.VISIBLE
-    findViewById<TextView>(R.id.map_loading_text)?.text = "Loading map..."
-    
-    // Reset any click listeners
-    findViewById<TextView>(R.id.map_loading_text)?.setOnClickListener(null)
-    
-    // Try to initialize map again
-    mapFragment.getMapAsync(this)
-}
-    
-    private fun initializeAR() {
-        try {
-            // Explicitly request camera permission before initializing AR
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                Log.d(TAG, "Camera permission not granted, requesting now")
-                ActivityCompat.requestPermissions(
-                    this, 
-                    arrayOf(Manifest.permission.CAMERA),
-                    CAMERA_PERMISSION_CODE
-                )
-                // Don't proceed with AR initialization until permission granted
-                return
-            }
-            
-            Log.d(TAG, "Starting AR initialization with camera permission granted")
-            
-            // Initialize AR view
-            view = HelloGeoView(this)
-            renderer = HelloGeoRenderer(this)
-            renderer.isSplitScreenMode = true
-            
-            // Initialize surface view with OpenGL ES 3.0
-            surfaceView = findViewById(R.id.ar_surface_view)
-            surfaceView.preserveEGLContextOnPause = true
-            surfaceView.setEGLContextClientVersion(3)
-            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-            
-            // Create and initialize ARCore session
-            arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
-            
-            // Register error handler
-            arCoreSessionHelper.exceptionCallback = { exception ->
-                val message = when (exception) {
-                    is CameraNotAvailableException -> {
-                        Log.e(TAG, "Camera not available", exception)
-                        "Camera not available. Please check if another app is using the camera or restart your device."
-                    }
-                    else -> {
-                        Log.e(TAG, "AR error", exception)
-                        "AR Error: ${exception.message}"
-                    }
-                }
-                runOnUiThread {
-                    trackingQualityIndicator?.text = message
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                    
-                    // Try to recover by restarting AR session
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        try {
-                            Log.d(TAG, "Attempting to restart AR session after error")
-                            arCoreSessionHelper.onPause()
-                            arCoreSessionHelper.onResume()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to restart AR session", e)
-                        }
-                    }, 2000) // Wait 2 seconds before retry
-                }
-            }
-            
-            // Configure the session
-            arCoreSessionHelper.beforeSessionResume = ::configureSession
-            
-            // Initialize the session with robust error handling
-            try {
-                // Check if camera is in use before trying to resume
-                if (!checkCameraAvailability()) {
-                    Log.e(TAG, "Camera is being used by another app")
-                    Toast.makeText(this, "Camera is being used by another app. Please close it and try again.", Toast.LENGTH_LONG).show()
-                    fallbackToMapOnlyMode()
-                    return
-                }
-                
-                // Try to resume the AR session
-                arCoreSessionHelper.onResume()
-            } catch (e: CameraNotAvailableException) {
-                Log.e(TAG, "Camera not available", e)
-                Toast.makeText(this, "Camera not available. Please check if another app is using the camera and try again.", Toast.LENGTH_LONG).show()
-                fallbackToMapOnlyMode()
-                return
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to resume ARCore session", e)
-                Toast.makeText(this, "Failed to initialize camera: ${e.message}", Toast.LENGTH_LONG).show()
-                fallbackToMapOnlyMode()
-                return
-            }
-            
-            // Get the session
-            val session = arCoreSessionHelper.session
-            if (session != null) {
-                view.setupSession(session)
-                renderer.setSession(session)
-                
-                // Set up the renderer with proper error handling
-                try {
-                    SampleRender(surfaceView, renderer, assets)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize AR renderer", e)
-                    Toast.makeText(this, "Failed to initialize AR renderer: ${e.message}", Toast.LENGTH_LONG).show()
-                    return
-                }
-                
-                // Start tracking quality updates
-                startTrackingQualityUpdates()
-            } else {
-                val errorMsg = "Failed to create AR session. Please check camera permissions and ARCore installation."
-                Log.e(TAG, errorMsg)
-                runOnUiThread {
-                    trackingQualityIndicator?.text = errorMsg
-                    Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing AR", e)
-            val errorMsg = when {
-                e.message?.contains("camera") == true -> "Camera access failed. Please check permissions."
-                e.message?.contains("ARCore") == true -> "ARCore initialization failed. Please check ARCore installation."
-                e.message?.contains("OpenGL") == true -> "OpenGL error. Your device may not support AR features."
-                else -> e.message ?: "Unknown error initializing AR"
-            }
-            runOnUiThread {
-                trackingQualityIndicator?.text = "AR Error: $errorMsg"
-                Toast.makeText(this, errorMsg, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    
-    private fun configureSession(session: Session) {
-        try {
-            Log.d(TAG, "Configuring AR session")
-            
-            // Create a new config
-            val config = Config(session)
-            
-            // Check GPS signal before enabling geospatial
-            if (!hasGoodGpsSignal()) {
-                // Show dialog warning about poor GPS
-                showGpsWarningDialog()
-            }
-            
-            // Enable geospatial mode with error handling
-            try {
-                config.geospatialMode = Config.GeospatialMode.ENABLED
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to enable geospatial mode", e)
-                showGeospatialErrorDialog("Failed to enable geospatial tracking: ${e.message}")
-                return
-            }
-            
-            // Basic settings for navigation
-            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-            config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-            config.focusMode = Config.FocusMode.AUTO
-            
-            // Try to enable depth for better occlusion
-            try {
-                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.depthMode = Config.DepthMode.AUTOMATIC
-                    Log.d(TAG, "Depth mode enabled for better AR experience")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error checking depth support", e)
-            }
-            
-            // Enable cloud anchors for possible sharing features
-            config.cloudAnchorMode = Config.CloudAnchorMode.ENABLED
-            
-            // Apply the configuration
-            session.configure(config)
-            
-            // Instead of using addOnGeospatialStateChangedListener (which isn't available in this ARCore version),
-            // we'll monitor the Earth state in our tracking quality updates
-            
-            Log.d(TAG, "AR session configured successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error configuring AR session", e)
-            Toast.makeText(this, "AR configuration error: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * Check if the device has good GPS signal
-     */
-    private fun hasGoodGpsSignal(): Boolean {
-        val locationManager = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
-        
-        // Check if GPS is enabled at all
-        if (!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
-            Log.d(TAG, "GPS is disabled")
-            return false
-        }
-        
-        // Check last known location and its accuracy
-        try {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == 
-                    PackageManager.PERMISSION_GRANTED) {
-                val location = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
-                
-                // If location is null or old, GPS might not be providing good data
-                if (location == null) {
-                    Log.d(TAG, "No last known location from GPS")
-                    return false
-                }
-                
-                // Check how old the location is
-                val locationAgeMs = System.currentTimeMillis() - location.time
-                if (locationAgeMs > 30000) { // Location older than 30 seconds
-                    Log.d(TAG, "Last GPS location is too old: ${locationAgeMs/1000} seconds")
-                    return false
-                }
-                
-                // Check location accuracy
-                if (location.accuracy > 25) { // Accuracy worse than 25 meters
-                    Log.d(TAG, "GPS accuracy is poor: ${location.accuracy} meters")
-                    return false
-                }
-                
-                // Check number of satellites (if available)
-                if (location.extras != null && location.extras!!.containsKey("satellites")) {
-                    val satellites = location.extras!!.getInt("satellites", 0)
-                    if (satellites < 4) {
-                        Log.d(TAG, "Not enough GPS satellites: $satellites")
-                        return false
-                    }
-                }
-                
-                Log.d(TAG, "GPS signal appears good: accuracy ${location.accuracy}m")
-                return true
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking GPS signal", e)
-        }
-        
-        return false
-    }
-    
-    /**
-     * Show a dialog warning about poor GPS signal
-     */
-    private fun showGpsWarningDialog() {
-        runOnUiThread {
-            AlertDialog.Builder(this)
-                .setTitle("Poor GPS Signal")
-                .setMessage("Your GPS signal appears to be weak. AR tracking may not work well indoors or in areas with poor GPS reception. Would you like to continue or switch to map mode?")
-                .setPositiveButton("Continue Anyway") { dialog, _ ->
-                    dialog.dismiss()
-                }
-                .setNegativeButton("Switch to Map") { _, _ ->
-                    fallbackToMapOnlyMode()
-                }
-                .setNeutralButton("Go Outside") { dialog, _ ->
-                    Toast.makeText(this, "Please move to an open outdoor area with clear sky view", Toast.LENGTH_LONG).show()
-                    dialog.dismiss()
-                }
-                .setCancelable(true)
-                .show()
-        }
-    }
-    
-    /**
-     * Show a dialog for geospatial tracking errors
-     */
-    private fun showGeospatialErrorDialog(message: String) {
-        runOnUiThread {
-            AlertDialog.Builder(this)
-                .setTitle("AR Initialization Issue")
-                .setMessage("$message\n\nThis may be due to:\n• Being indoors where GPS signal is weak\n• Interference from buildings or trees\n• Device sensors need calibration")
-                .setPositiveButton("Try Low-Precision Mode") { dialog, _ ->
-                    dialog.dismiss()
-                    enableLowPrecisionMode()
-                }
-                .setNeutralButton("Wait Longer") { dialog, _ ->
-                    dialog.dismiss()
-                    // Try to reconfigure session after a delay
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        try {
-                            val session = arCoreSessionHelper.session
-                            if (session != null) {
-                                configureSession(session)
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error reconfiguring session", e)
-                        }
-                    }, 5000) // Wait 5 seconds before trying again
-                }
-                .setNegativeButton("Return to Map") { _, _ ->
-                    fallbackToMapOnlyMode()
-                }
-                .setCancelable(false)
-                .show()
-        }
-    }
-    
-    /**
-     * Enable a low-precision AR mode that's more tolerant of GPS issues
-     */
-    private fun enableLowPrecisionMode() {
-        try {
-            Toast.makeText(this, "Switching to low-precision AR mode...", Toast.LENGTH_SHORT).show()
-            
-            // Get current session
-            val session = arCoreSessionHelper.session ?: return
-            
-            // Create a new configuration with lower requirements
-            val config = Config(session)
-            
-            // Lower precision geospatial tracking
-            config.geospatialMode = Config.GeospatialMode.ENABLED
-            
-            // Disable more demanding features
-            config.planeFindingMode = Config.PlaneFindingMode.DISABLED
-            config.lightEstimationMode = Config.LightEstimationMode.DISABLED
-            config.depthMode = Config.DepthMode.DISABLED
-            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
-            
-            // Optimize for performance over accuracy
-            config.focusMode = Config.FocusMode.FIXED
-            config.updateMode = Config.UpdateMode.BLOCKING
-            
-            // Apply the new configuration
-            session.configure(config)
-            
-            // Set renderer to low-precision mode
-            renderer.setLowPrecisionMode(true)
-            
-            // Show status to user
-            trackingQualityIndicator?.text = "LOW-PRECISION MODE"
-            trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_orange_light)
-            
-            // Force session to restart with new settings
-            session.resume()
-            
-            Log.d(TAG, "Enabled low-precision AR mode")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error enabling low-precision mode", e)
-            Toast.makeText(this, "Failed to enable low-precision mode: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-    
-
-    
-    private fun startTrackingQualityUpdates() {
-        // Update tracking quality status every second
-        val handler = Handler(Looper.getMainLooper())
-        handler.post(object : Runnable {
-            override fun run() {
-                updateTrackingQualityIndicator()
-                handler.postDelayed(this, 1000)
-            }
-        })
-    }
-    
-    private fun updateTrackingQualityIndicator() {
-        try {
-            val session = arCoreSessionHelper.session ?: return
-            val earth = session.earth
-            
-            // Check if Earth object is available
-            if (earth == null) {
-                trackingQualityIndicator?.text = "Tracking: INITIALIZING"
-                trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_orange_light)
-                
-                // Check how long we've been waiting for Earth initialization
-                val currentTime = System.currentTimeMillis()
-                if (trackingErrorStartTime == 0L) {
-                    trackingErrorStartTime = currentTime
-                } else if (currentTime - trackingErrorStartTime > 20000) { // 20 seconds of waiting for Earth
-                    // Only show the dialog if we haven't recently shown it
-                    if (currentTime - lastTrackingErrorDialogTime > 60000) { // Don't show more than once per minute
-                        showGeospatialErrorDialog("Could not initialize AR tracking")
-                        lastTrackingErrorDialogTime = currentTime
-                    }
-                }
-                return
-            }
-            
-            // Reset Earth initialization timer since we have Earth object
-            trackingErrorStartTime = 0L
-            
-            // Check tracking state
-            if (earth.trackingState != TrackingState.TRACKING) {
-                val stateText = when (earth.trackingState) {
-                    TrackingState.PAUSED -> "PAUSED"
-                    TrackingState.STOPPED -> "STOPPED"
-                    else -> "NOT TRACKING"
-                }
-                
-                trackingQualityIndicator?.text = "Tracking: $stateText"
-                trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
-                
-                // If we've been in non-tracking state for a while, show help dialog
-                val currentTime = System.currentTimeMillis()
-                if (earthTrackingErrorTime == 0L) {
-                    earthTrackingErrorTime = currentTime
-                } else if (currentTime - earthTrackingErrorTime > 15000) { // 15 seconds of error
-                    // Only show the dialog if we haven't recently shown it
-                    if (currentTime - lastTrackingErrorDialogTime > 60000) { // Don't show more than once per minute
-                        showTrackingErrorHelp()
-                        lastTrackingErrorDialogTime = currentTime
-                    }
-                }
-                
-                return
-            } else {
-                // Reset error timer if we're now tracking
-                earthTrackingErrorTime = 0L
-            }
-            
-            val pose = earth.cameraGeospatialPose
-            val horizontalAccuracy = pose.horizontalAccuracy
-            
-            val qualityText = when {
-                horizontalAccuracy <= 1.0 -> "HIGH"
-                horizontalAccuracy <= 3.0 -> "MEDIUM"
-                else -> "LOW"
-            }
-            
-            trackingQualityIndicator?.text = "Tracking: $qualityText (±${horizontalAccuracy.toInt()}m)"
-            
-            val colorRes = when {
-                horizontalAccuracy <= 1.0 -> android.R.color.holo_green_light
-                horizontalAccuracy <= 3.0 -> android.R.color.holo_orange_light
-                else -> android.R.color.holo_red_light
-            }
-            
-            trackingQualityIndicator?.setBackgroundResource(colorRes)
-            
-            // Update current location from AR pose
-            updateLocationFromARPose(pose.latitude, pose.longitude)
-            
-            // Check if we need to suggest calibration based on accuracy issues
-            val currentTime = System.currentTimeMillis()
-            if (horizontalAccuracy > 10.0) {
-                if (!hasShownCalibrationPrompt && currentTime - lastCalibrationPromptTime > 90000) {
-                    showCalibrationPrompt()
-                    hasShownCalibrationPrompt = true
-                    lastCalibrationPromptTime = currentTime
-                }
-            } else if (horizontalAccuracy <= 5.0) {
-                // Reset prompt shown flag if tracking improves significantly, so we can show it again if needed later
-                hasShownCalibrationPrompt = false
-            }
-            
-        } catch (e: Exception) {
-            trackingQualityIndicator?.text = "Tracking: ERROR"
-            trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
-            Log.e(TAG, "Error updating tracking quality", e)
-            
-            // Show error dialog for exceptions
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastTrackingErrorDialogTime > 60000) { // Limit dialog frequency
-                showGeospatialErrorDialog("AR tracking error: ${e.message}")
-                lastTrackingErrorDialogTime = currentTime
-            }
-        }
-    }
-    
-    // Tracking variables
-    private var trackingErrorStartTime = 0L
-    private var earthTrackingErrorTime = 0L
-    private var lastTrackingErrorDialogTime = 0L
-    private var hasShownCalibrationPrompt = false
-    private var lastCalibrationPromptTime = 0L
-    
-    /**
-     * Show a helpful dialog with instructions for resolving tracking issues
-     */
-    private fun showTrackingErrorHelp() {
-        runOnUiThread {
-            AlertDialog.Builder(this)
-                .setTitle("AR Tracking Issues")
-                .setMessage("There are problems with AR tracking. This may be because:\n\n" +
-                        "• You are indoors with poor GPS signal\n" +
-                        "• There are tall buildings or trees blocking GPS\n" +
-                        "• Your device sensors need calibration\n\n" +
-                        "Would you like to try calibration, continue trying, or switch to map mode?")
-                .setPositiveButton("Calibrate Sensors") { dialog, _ ->
-                    dialog.dismiss()
-                    startSensorCalibration()
-                }
-                .setNeutralButton("Keep Trying") { dialog, _ ->
-                    dialog.dismiss()
-                }
-                .setNegativeButton("Switch to Map") { _, _ ->
-                    fallbackToMapOnlyMode()
-                }
-                .setCancelable(true)
-                .show()
-        }
-    }
-    
-    /**
-     * Prompt user to calibrate their device
-     */
-    private fun showCalibrationPrompt() {
-        runOnUiThread {
-            AlertDialog.Builder(this)
-                .setTitle("Improve AR Accuracy")
-                .setMessage("Your device sensors may need calibration for better AR tracking. Would you like to calibrate now?")
-                .setPositiveButton("Calibrate") { dialog, _ ->
-                    dialog.dismiss()
-                    startSensorCalibration()
-                }
-                .setNegativeButton("Not Now") { dialog, _ ->
-                    dialog.dismiss()
-                }
-                .setCancelable(true)
-                .show()
-        }
-    }
-    
-    /**
-     * Start sensor calibration procedure
-     */
-    private fun startSensorCalibration() {
-        // Show calibration instructions dialog
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Sensor Calibration")
-            .setMessage("Please rotate your device in a figure-8 pattern to calibrate the sensors.")
-            .setCancelable(false)
-            .setPositiveButton("Done") { dialog, _ ->
-                dialog.dismiss()
-                Toast.makeText(this, "Calibration complete", Toast.LENGTH_SHORT).show()
-            }
-            .create()
-            
-        // Create animation to show figure-8 movement
-        val calibrationImage = ImageView(this)
-        calibrationImage.setImageResource(android.R.drawable.ic_menu_rotate) // Use a system resource or your own animation
-        calibrationImage.scaleType = ImageView.ScaleType.FIT_CENTER
-        
-        // Create animation
-        val rotateAnimation = android.view.animation.RotateAnimation(
-            0f, 360f,
-            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
-            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
-        )
-        rotateAnimation.duration = 2000
-        rotateAnimation.repeatCount = 5 // Repeat a few times
-        calibrationImage.startAnimation(rotateAnimation)
-        
-        // Set the image to the dialog
-        dialog.setView(calibrationImage)
-        
-        // Show the dialog
-        dialog.show()
-        
-        // Start actual sensor calibration (this is a visual guide only - 
-        // the actual sensor calibration happens naturally as the user moves the device)
-        try {
-            // Force sensor updates by requesting sensor data
-            val sensorManager = getSystemService(SENSOR_SERVICE) as android.hardware.SensorManager
-            
-            // Monitor accelerometer and magnetometer which are the main sensors that need calibration
-            val accelerometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
-            val magnetometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_MAGNETIC_FIELD)
-            
-            // Listen for sensor events briefly
-            val sensorListener = object : android.hardware.SensorEventListener {
-                override fun onSensorChanged(event: android.hardware.SensorEvent?) {
-                    // Just need to listen to trigger calibration
-                }
-                
-                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {
-                    // Log accuracy changes
-                    if (sensor != null) {
-                        val sensorName = when (sensor.type) {
-                            android.hardware.Sensor.TYPE_ACCELEROMETER -> "Accelerometer"
-                            android.hardware.Sensor.TYPE_MAGNETIC_FIELD -> "Magnetometer"
-                            else -> "Unknown"
-                        }
-                        val accuracyText = when (accuracy) {
-                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> "HIGH"
-                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> "MEDIUM"
-                            android.hardware.SensorManager.SENSOR_STATUS_ACCURACY_LOW -> "LOW"
-                            else -> "UNRELIABLE"
-                        }
-                        Log.d(TAG, "$sensorName accuracy changed to $accuracyText")
-                    }
-                }
-            }
-            
-            // Register for sensor updates
-            sensorManager.registerListener(sensorListener, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_GAME)
-            sensorManager.registerListener(sensorListener, magnetometer, android.hardware.SensorManager.SENSOR_DELAY_GAME)
-            
-            // After a while, unregister to save battery
-            Handler(Looper.getMainLooper()).postDelayed({
-                sensorManager.unregisterListener(sensorListener)
-            }, 10000) // 10 seconds
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during sensor calibration", e)
-        }
-    }
-    
-    private fun updateLocationFromARPose(latitude: Double, longitude: Double) {
-        // Update current location from AR
-        currentLocation = LatLng(latitude, longitude)
-        
-        // If navigating, update AR anchors with the new route points
-        if (isNavigating && routePoints != null && routePoints!!.isNotEmpty()) {
-            // Update AR view with the route
-            renderer.updatePathAnchors(routePoints!!)
-        }
-    }
-    
-    private fun setupUIControls() {
+    private fun initializeUIComponents() {
         try {
             // Find UI components
             val searchBar = findViewById<EditText>(R.id.searchBar)
@@ -2312,7 +1432,8 @@ private fun retryMapLoading() {
         }
     }
     
-    private fun checkAndRequestPermissions() {
+    private fun checkPermissions(): Boolean {
+        // Check for required permissions
         val permissions = arrayOf(
             Manifest.permission.CAMERA,
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -2325,10 +1446,128 @@ private fun retryMapLoading() {
         
         if (permissionsToRequest.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, permissionsToRequest, LOCATION_PERMISSION_CODE)
-        } else {
-            // All permissions granted, proceed with initialization
-            initializeMap()
-            initializeAR()
+            return false
+        }
+        
+        return true
+    }
+    
+    private fun initializeMap() {
+        try {
+            // Get map fragment
+            mapFragment = supportFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
+            
+            // Get map asynchronously
+            mapFragment.getMapAsync(this)
+            
+            // Show loading indicator
+            findViewById<View>(R.id.map_loading_container)?.visibility = View.VISIBLE
+            
+            // Get current location
+            getCurrentLocation()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing map", e)
+            Toast.makeText(this, "Error initializing map: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun initializeSearchComponents() {
+        try {
+            // Initialize suggestion provider
+            suggestionProvider = SearchSuggestionProvider(this)
+            
+            // Initialize recent places manager
+            recentPlacesManager = RecentPlacesManager(this)
+            
+            // Setup search suggestions
+            setupSearchSuggestions()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing search components", e)
+        }
+    }
+    
+    private fun checkARCoreSupport(): Boolean {
+        return try {
+            // Check ARCore availability
+            val availability = ArCoreApk.getInstance().checkAvailability(this)
+            
+            // Log availability status
+            when (availability.isTransient) {
+                true -> Log.i(TAG, "ARCore is temporarily unavailable")
+                false -> Log.i(TAG, "ARCore is available")
+            }
+            
+            !availability.isTransient
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking ARCore support", e)
+            false
+        }
+    }
+    
+    private fun processIntentData() {
+        try {
+            // Extract destination data if provided in intent
+            val extras = intent.extras
+            if (extras != null) {
+                val lat = extras.getDouble("DESTINATION_LAT", 0.0)
+                val lng = extras.getDouble("DESTINATION_LNG", 0.0)
+                
+                if (lat != 0.0 && lng != 0.0) {
+                    destinationLatLng = LatLng(lat, lng)
+                    
+                    // If we already have a map, update it with the destination
+                    googleMap?.clear()
+                    destinationLatLng?.let {
+                        googleMap?.addMarker(MarkerOptions().position(it).title("Destination"))
+                        googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(it, 15f))
+                    }
+                    
+                    // Show navigation button
+                    findViewById<Button>(R.id.navigateButton).visibility = View.VISIBLE
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing intent data", e)
+        }
+    }
+    
+    private fun getCurrentLocation() {
+        try {
+            // Check permission first
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+            
+            // Get last known location
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                if (location != null) {
+                    currentLocation = LatLng(location.latitude, location.longitude)
+                    
+                    // Move camera to current location if we don't have a destination
+                    if (destinationLatLng == null) {
+                        googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(currentLocation!!, 15f))
+                    }
+                    
+                    // Update AR renderer with current location
+                    try {
+                        renderer.setCurrentLocation(currentLocation!!)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating renderer with location", e)
+                    }
+                } else {
+                    // If no location available, use a default location (e.g., a city center)
+                    val defaultLocation = LatLng(28.6139, 77.2090)  // New Delhi
+                    currentLocation = defaultLocation
+                    
+                    // Also move camera to default location
+                    googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(defaultLocation, 10f))
+                    
+                    Toast.makeText(this, "Could not get your location", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting current location", e)
         }
     }
     
@@ -2514,274 +1753,53 @@ private fun retryMapLoading() {
     // We now have direct access to lastInstructions and lastSteps in DirectionsHelper class
 
     /**
-     * Attempts to check if camera is available or in use by another app
-     * Uses a more reliable approach with timeouts and better error handling
-     */
-    private fun checkCameraAvailability(): Boolean {
-        try {
-            // Check camera permission first
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                Log.d(TAG, "No camera permission granted")
-                return false
-            }
-            
-            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            if (cameraManager.cameraIdList.isEmpty()) {
-                Log.d(TAG, "No cameras available on device")
-                return false
-            }
-            
-            // Attempt to open camera to see if it's in use
-            val cameraAvailability = java.util.concurrent.atomic.AtomicBoolean(false)
-            val lock = java.lang.Object()
-            var camera: android.hardware.camera2.CameraDevice? = null
-            
-            // Create callback to receive results
-            val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
-                override fun onOpened(cameraDevice: android.hardware.camera2.CameraDevice) {
-                    Log.d(TAG, "Camera successfully opened")
-                    camera = cameraDevice
-                    cameraAvailability.set(true)
-                    synchronized(lock) {
-                        lock.notifyAll()
-                    }
-                }
-                
-                override fun onDisconnected(cameraDevice: android.hardware.camera2.CameraDevice) {
-                    Log.d(TAG, "Camera disconnected")
-                    cameraDevice.close()
-                    synchronized(lock) {
-                        lock.notifyAll()
-                    }
-                }
-                
-                override fun onError(cameraDevice: android.hardware.camera2.CameraDevice, error: Int) {
-                    val errorMessage = when(error) {
-                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> "Camera device error"
-                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> "Camera disabled"
-                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> "Camera in use by another app"
-                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> "Camera service error"
-                        android.hardware.camera2.CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
-                        else -> "Unknown camera error: $error"
-                    }
-                    Log.e(TAG, errorMessage)
-                    cameraDevice.close()
-                    cameraAvailability.set(false)
-                    synchronized(lock) {
-                        lock.notifyAll()
-                    }
-                }
-            }
-            
-            // Try to open camera (using back camera if available)
-            var cameraId = cameraManager.cameraIdList[0]
-            
-            // Try to find back camera if we have multiple cameras
-            if (cameraManager.cameraIdList.size > 1) {
-                for (id in cameraManager.cameraIdList) {
-                    val characteristics = cameraManager.getCameraCharacteristics(id)
-                    val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
-                    if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
-                        cameraId = id
-                        break
-                    }
-                }
-            }
-            
-            try {
-                val handler = Handler(Looper.getMainLooper())
-                
-                // Try to open camera with timeout
-                synchronized(lock) {
-                    cameraManager.openCamera(cameraId, stateCallback, handler)
-                    
-                    // Wait for result with timeout
-                    try {
-                        // Wait up to 3 seconds for camera access
-                        lock.wait(3000)
-                    } catch (e: InterruptedException) {
-                        Log.e(TAG, "Interrupted while waiting for camera", e)
-                    }
-                }
-                
-                // Release camera resources if we got access
-                camera?.close()
-                
-                if (!cameraAvailability.get()) {
-                    Log.e(TAG, "Camera is in use or unavailable")
-                }
-                
-                return cameraAvailability.get()
-            } catch (e: android.hardware.camera2.CameraAccessException) {
-                if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_DISABLED) {
-                    Log.e(TAG, "Camera is disabled")
-                } else if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_IN_USE) {
-                    Log.e(TAG, "Camera is in use by another app")
-                } else if (e.reason == android.hardware.camera2.CameraAccessException.CAMERA_ERROR) {
-                    Log.e(TAG, "General camera error")
-                } else {
-                    Log.e(TAG, "Camera access exception: ${e.reason}", e)
-                }
-                return false
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Security exception accessing camera", e)
-                return false
-            } catch (e: Exception) {
-                Log.e(TAG, "Error checking camera availability", e)
-                return false
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to check camera availability", e)
-            return false
-        }
-    }
-
-    /**
      * Force releases camera resources to ensure they're available for our app
-     * Uses an aggressive approach to try multiple strategies
+     * Uses a simple approach for better reliability
      */
     private fun forceReleaseCamera() {
         try {
-            Log.d(TAG, "Attempting aggressive camera resource release")
+            Log.d(TAG, "Attempting camera resource release")
             
             // First try to close any ARCore session
             try {
                 arCoreSessionHelper?.session?.pause()
-                arCoreSessionHelper?.session?.close()
-                Log.d(TAG, "Closed ARCore session")
+                Log.d(TAG, "Paused ARCore session")
             } catch (e: Exception) {
-                Log.e(TAG, "Error closing ARCore session", e)
+                Log.e(TAG, "Error pausing ARCore session", e)
             }
             
-                            // Try to identify any camera-related processes (for debugging only)
-                try {
-                    val activityManager = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-                    
-                    // Get list of running processes
-                    val runningAppProcesses = activityManager.runningAppProcesses
-                    
-                    // Look for camera-related process names
-                    val cameraPkgPatterns = listOf("camera", "photo", "vision", "scan", "ar.core")
-                    for (process in runningAppProcesses) {
-                        for (pattern in cameraPkgPatterns) {
-                            if (process.processName.contains(pattern, ignoreCase = true)) {
-                                Log.d(TAG, "Found possible camera app: ${process.processName}")
-                                // We can't directly manage other processes' priorities without special permissions
-                                // Just logging for diagnostic purposes
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error checking camera processes", e)
-                }
-            
-            // Multiple GC passes to ensure resources are freed
-            System.gc()
-            System.runFinalization()
+            // Simple garbage collection
             System.gc()
             
-            // Use low-level Camera2 API to try to force camera availability
-            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            // Use Camera1 API for reliable release
+            releaseCamera1Resources()
             
-            // Force register and unregister availability callback to trigger camera service check
-            val availabilityCallback = object : android.hardware.camera2.CameraManager.AvailabilityCallback() {
-                override fun onCameraAvailable(cameraId: String) {
-                    Log.d(TAG, "Camera $cameraId is now available")
-                }
-                
-                override fun onCameraUnavailable(cameraId: String) {
-                    Log.d(TAG, "Camera $cameraId is unavailable")
-                }
-            }
-            
-            // Register and immediately unregister to force camera service to update state
-            cameraManager.registerAvailabilityCallback(availabilityCallback, Handler(Looper.getMainLooper()))
-            cameraManager.unregisterAvailabilityCallback(availabilityCallback)
-            
-            // Try to force close all camera IDs
-            for (cameraId in cameraManager.cameraIdList) {
-                Log.d(TAG, "Attempting to force reset camera: $cameraId")
-                
-                try {
-                    // Get the characteristics to identify front/back camera
-                    val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-                    val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
-                    val facingStr = when (facing) {
-                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> "BACK"
-                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                        else -> "EXTERNAL/OTHER"
-                    }
-                    
-                    Log.d(TAG, "Camera $cameraId is a $facingStr camera")
-                    
-                    // Try to forcibly open and immediately close the camera
-                    // This might help "steal" it from other apps
-                    if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == 
-                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                        
-                        val semaphore = java.util.concurrent.Semaphore(1)
-                        var cameraDevice: android.hardware.camera2.CameraDevice? = null
-                        
-                        // Create callback
-                        val cameraCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
-                            override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
-                                Log.d(TAG, "Successfully opened camera $cameraId")
-                                cameraDevice = camera
-                                semaphore.release()
-                            }
-                            
-                            override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
-                                Log.d(TAG, "Camera $cameraId disconnected")
-                                camera.close()
-                                semaphore.release()
-                            }
-                            
-                            override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
-                                val errorMsg = when (error) {
-                                    android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> "Camera device error"
-                                    android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> "Camera disabled"
-                                    android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> "Camera in use"
-                                    android.hardware.camera2.CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> "Camera service error"
-                                    android.hardware.camera2.CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> "Max cameras in use"
-                                    else -> "Unknown camera error $error"
-                                }
-                                Log.e(TAG, "Error opening camera $cameraId: $errorMsg")
-                                camera.close()
-                                semaphore.release()
-                            }
-                        }
-                        
-                        // Try to acquire the camera
-                        semaphore.acquire()
-                        try {
-                            cameraManager.openCamera(cameraId, cameraCallback, Handler(Looper.getMainLooper()))
-                            
-                            // Wait with timeout
-                            if (semaphore.tryAcquire(1000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                                // We've either successfully opened the camera or got an error
-                                cameraDevice?.close()
-                            } else {
-                                Log.e(TAG, "Timeout waiting for camera $cameraId")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Exception trying to force reset camera $cameraId", e)
-                            semaphore.release()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error forcing reset of camera $cameraId", e)
-                }
-            }
-            
-            // Final GC pass
-            System.gc()
-            
-            // Give some time for camera operations to complete
-            Thread.sleep(300)
-            
-            Log.d(TAG, "Completed aggressive camera resource release attempt")
+            Log.d(TAG, "Completed camera resource release attempt")
         } catch (e: Exception) {
             Log.e(TAG, "Error in forceReleaseCamera", e)
+        }
+    }
+
+    /**
+     * Release using Camera1 API - simpler and more reliable
+     */
+    @Suppress("DEPRECATION")
+    private fun releaseCamera1Resources() {
+        try {
+            // Try with legacy Camera API
+            var camera: android.hardware.Camera? = null
+            try {
+                // Try to open back camera (main camera)
+                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
+                Log.d(TAG, "Successfully opened back camera for reset")
+                Thread.sleep(100)
+                camera.release()
+                Log.d(TAG, "Released back camera")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with back camera: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in Camera1 release", e)
         }
     }
 
@@ -2797,171 +1815,109 @@ private fun retryMapLoading() {
             forceReleaseCamera()
             
             // Create intent to restart the app with a clean state
-            val intent = Intent(this, SplitScreenActivity::class.java)
+            val intent = Intent(this, FallbackActivity::class.java)
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
             
             // Add a delay to allow resources to be freed
             Handler(Looper.getMainLooper()).postDelayed({
                 startActivity(intent)
-                // Use finish with a slight delay to ensure proper cleanup
-                Handler(Looper.getMainLooper()).postDelayed({ finish() }, 100)
+                finish()
             }, 500)
         } catch (e: Exception) {
             Log.e(TAG, "Error restarting app", e)
             // Last resort - simple restart
-            val intent = Intent(this, SplitScreenActivity::class.java)
+            val intent = Intent(this, FallbackActivity::class.java)
             startActivity(intent)
             finish()
         }
     }
 
-    /**
-     * Emergency camera release that attempts to fix camera issues by directly interacting with Camera APIs
-     * This is the most aggressive version that tries multiple approaches
-     */
-    private fun emergencyCameraReset() {
-        Log.d(TAG, "Emergency camera reset - attempting to recover camera")
-        Toast.makeText(this, "Attempting emergency camera recovery...", Toast.LENGTH_SHORT).show()
-        
+    private fun initializeAR() {
         try {
-            // First try to release any ARCore camera resources
-            arCoreSessionHelper?.session?.pause()
+            Log.d(TAG, "Initializing AR components")
             
-            // Force release camera using the Camera2 API
-            releaseCamera2Resources()
+            // Get AR surface view
+            surfaceView = findViewById(R.id.ar_surface_view)
             
-            // Also try the legacy Camera API as fallback
-            releaseCamera1Resources()
-            
-            // Force garbage collection to ensure resources are freed
-            System.gc()
-            System.runFinalization()
-            
-            // Try to release other system services that might hold camera
-            releaseMediaRecorder()
-            
-            // Wait a moment for system to process
-            Thread.sleep(500)
-            
-            // Attempt to restart the AR session
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    // Try to resume with fresh camera
-                    Toast.makeText(this, "Attempting to restart camera...", Toast.LENGTH_SHORT).show()
-                    recreate() // Recreate activity for clean state
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restart AR session", e)
-                    fallbackToMapOnlyMode()
+            // Create helpers
+            arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+            arCoreSessionHelper.exceptionCallback = { exception ->
+                val message = when (exception) {
+                    is UnavailableUserDeclinedInstallationException -> "Please install Google Play Services for AR"
+                    is UnavailableApkTooOldException -> "Please update ARCore"
+                    is UnavailableSdkTooOldException -> "Please update this app"
+                    is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
+                    is CameraNotAvailableException -> "Camera is not available. It may be in use by another app."
+                    else -> "Failed to create AR session: $exception"
                 }
-            }, 1000)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in emergency camera reset", e)
-            fallbackToMapOnlyMode()
-        }
-    }
-    
-    /**
-     * Release Camera2 API resources
-     */
-    private fun releaseCamera2Resources() {
-        try {
-            val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            
-            // Log available cameras
-            for (cameraId in cameraManager.cameraIdList) {
-                Log.d(TAG, "Attempting to force close Camera2 device: $cameraId")
                 
-                // We'll use a timeout mechanism to avoid blocking forever
-                val semaphore = java.util.concurrent.Semaphore(1)
-                semaphore.acquire()
+                Log.e(TAG, "ARCore threw an exception", exception)
                 
-                try {
-                    // Create a state callback
-                    val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
-                        override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera $cameraId opened successfully, now closing it")
-                            camera.close()
-                            semaphore.release()
-                        }
-                        
-                        override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera $cameraId disconnected")
-                            camera.close()
-                            semaphore.release()
-                        }
-                        
-                        override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
-                            Log.e(TAG, "Camera $cameraId error: $error")
-                            camera.close()
-                            semaphore.release()
-                        }
-                    }
-                    
-                    // Try to open and then immediately close the camera
-                    val handler = Handler(Looper.getMainLooper())
-                    cameraManager.openCamera(cameraId, stateCallback, handler)
-                    
-                    // Wait with timeout
-                    semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error releasing Camera2 device: ${e.message}")
-                    semaphore.release()
+                // Show error on tracking indicator
+                runOnUiThread {
+                    findViewById<TextView>(R.id.tracking_quality)?.text = message
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in Camera2 release", e)
-        }
-    }
-    
-    /**
-     * Release legacy Camera API resources as a fallback
-     */
-    @Suppress("DEPRECATION")
-    private fun releaseCamera1Resources() {
-        try {
-            // Try with legacy Camera API for older devices or as fallback
-            var camera: android.hardware.Camera? = null
-            try {
-                // Try to open front camera first
-                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT)
-                Log.d(TAG, "Successfully opened front camera for reset")
-                Thread.sleep(100)
-                camera.release()
-                Log.d(TAG, "Released front camera")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error with front camera: ${e.message}")
+            
+            // Set up configuration
+            arCoreSessionHelper.beforeSessionResume = ::configureSession
+            
+            // Initialize view
+            view = HelloGeoView(this)
+            
+            // Initialize renderer
+            renderer = HelloGeoRenderer(this)
+            
+            // Configure renderer
+            renderer.setView(view)
+            
+            // Configure the surface view
+            SampleRender(surfaceView, renderer, assets)
+            
+            // Try to resume the session (creates if needed)
+            arCoreSessionHelper.onResume()
+            
+            // Check if session created successfully
+            val session = arCoreSessionHelper.session
+            if (session != null) {
+                Log.d(TAG, "ARCore session created successfully")
+                
+                // Set up the session in view and renderer
+                try {
+                    view.setupSession(session)
+                    renderer.setSession(session)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error setting up AR session in view/renderer", e)
+                }
+            } else {
+                Log.e(TAG, "Failed to create AR session")
+                findViewById<TextView>(R.id.tracking_quality)?.text = "Using map only mode (AR unavailable)"
             }
             
-            try {
-                // Try to open back camera
-                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
-                Log.d(TAG, "Successfully opened back camera for reset")
-                Thread.sleep(100)
-                camera.release()
-                Log.d(TAG, "Released back camera")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error with back camera: ${e.message}")
-            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in Camera1 release", e)
+            Log.e(TAG, "Failed to initialize AR", e)
+            findViewById<TextView>(R.id.tracking_quality)?.text = "AR initialization failed - using map only"
         }
     }
-    
-    /**
-     * Release MediaRecorder which might be holding camera
-     */
-    private fun releaseMediaRecorder() {
-        try {
-            val recorder = android.media.MediaRecorder()
-            try {
-                recorder.release()
-                Log.d(TAG, "Released MediaRecorder")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error releasing MediaRecorder", e)
+
+    private fun configureSession(session: Session) {
+        session.configure(
+            session.config.apply {
+                // Enable Geospatial mode
+                geospatialMode = Config.GeospatialMode.ENABLED
+                
+                // Configure camera focus mode
+                depthMode = when {
+                    session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) -> Config.DepthMode.AUTOMATIC
+                    else -> Config.DepthMode.DISABLED
+                }
+                
+                // Set focus mode - use auto mode for camera stability
+                focusMode = Config.FocusMode.AUTO
+                
+                // Update rate - don't set too high to avoid camera issues
+                updateMode = Config.UpdateMode.BLOCKING
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating MediaRecorder", e)
-        }
+        )
     }
 } 
