@@ -58,6 +58,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
+import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -1690,10 +1691,20 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         try {
             // Make sure permissions are granted before trying to resume AR
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                // Force release camera resources first to ensure clean state
+                forceReleaseCamera()
+                
                 // Resume AR session
                 if (::arCoreSessionHelper.isInitialized) {
                     Log.d(TAG, "Resuming AR session")
-                    arCoreSessionHelper.onResume()
+                    
+                    // CRITICAL: Try to resume session with better error handling
+                    try {
+                        arCoreSessionHelper.onResume()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in arCoreSessionHelper.onResume()", e)
+                        // Just log error and continue - will try to recover later
+                    }
                     
                     // Make sure session is valid and camera texture is set
                     val session = arCoreSessionHelper.session
@@ -1702,6 +1713,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                             // Make sure camera texture is set to ensure camera feed appears
                             val backgroundRenderer = renderer.accessBackgroundRenderer()
                             if (backgroundRenderer != null) {
+                                // CRITICAL: Create texture if needed
+                                try {
+                                    backgroundRenderer.createCameraTexture(this)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error creating camera texture", e)
+                                }
+                                
                                 val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
                                 session.setCameraTextureName(textureId)
                                 Log.d(TAG, "Set camera texture ID to: $textureId")

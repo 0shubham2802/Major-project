@@ -45,6 +45,7 @@ import android.hardware.SensorManager
 import androidx.core.app.ActivityCompat
 import android.widget.ProgressBar
 import androidx.cardview.widget.CardView
+import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
 
 class ARActivity : AppCompatActivity() {
     companion object {
@@ -661,7 +662,25 @@ class ARActivity : AppCompatActivity() {
                 // Resume AR session
                 if (::arCoreSessionHelper.isInitialized) {
                     Log.d(TAG, "Resuming AR session")
-                    arCoreSessionHelper.onResume()
+                    
+                    // Force clean camera resources first
+                    forceReleaseCamera()
+                    
+                    // CRITICAL: Try to resume session with better error handling
+                    try {
+                        arCoreSessionHelper.onResume()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in arCoreSessionHelper.onResume()", e)
+                        // Give it another chance after cleanup
+                        emergencyCameraReset()
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                arCoreSessionHelper.onResume()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Second attempt at resuming session failed", e)
+                            }
+                        }, 1000)
+                    }
                     
                     // Make sure session is valid and camera texture is set
                     val session = arCoreSessionHelper.session
@@ -670,6 +689,13 @@ class ARActivity : AppCompatActivity() {
                             // Make sure camera texture is set to ensure camera feed appears
                             val backgroundRenderer = renderer.accessBackgroundRenderer()
                             if (backgroundRenderer != null) {
+                                // CRITICAL: Create texture if needed
+                                try {
+                                    backgroundRenderer.createCameraTexture(this)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error creating camera texture", e)
+                                }
+                                
                                 val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
                                 session.setCameraTextureName(textureId)
                                 Log.d(TAG, "Set camera texture ID to: $textureId")
@@ -695,6 +721,26 @@ class ARActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error resuming AR session", e)
+        }
+    }
+    
+    /**
+     * Force releases camera resources
+     */
+    private fun forceReleaseCamera() {
+        try {
+            Log.d(TAG, "Force releasing camera resources")
+            
+            // Force a garbage collection
+            System.gc()
+            
+            // Wait a moment
+            Thread.sleep(100)
+            
+            // Use the Camera1 API to do a clean release
+            releaseCamera1Resources()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in forceReleaseCamera", e)
         }
     }
     

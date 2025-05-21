@@ -52,6 +52,7 @@ import kotlin.math.min
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.sqrt
+import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
 
 
 class HelloGeoRenderer(val context: Context) :
@@ -166,24 +167,25 @@ class HelloGeoRenderer(val context: Context) :
     // Prepare the rendering objects.
     // This involves reading shaders and 3D model files, so may throw an IOException.
     try {
-      // Initialize background renderer
+      // Initialize background renderer with explicit camera texture creation
       backgroundRenderer = BackgroundRenderer(render)
       
-      try {
-        // Configure background renderer to show camera feed, not depth visualization
-        backgroundRenderer.setUseDepthVisualization(render, false)
-        backgroundRenderer.setUseOcclusion(render, false) // Disable occlusion for better reliability
-        
-        // Explicitly set camera texture
-        if (arSession != null) {
-          val textureId = backgroundRenderer.getCameraColorTexture().textureId
-          arSession?.setCameraTextureName(textureId)
-          Log.d(TAG, "Initial camera texture setup with ID: $textureId")
+      // CRITICAL: Create camera texture directly and explicitly
+      backgroundRenderer.createCameraTexture(context)
+      
+      // Get texture ID immediately and log it
+      val textureId = backgroundRenderer.getCameraColorTexture().textureId
+      Log.d(TAG, "Created camera texture with ID: $textureId")
+      
+      // Set camera texture name on session immediately if session exists
+      arSession?.let { session ->
+        try {
+          session.setCameraTextureName(textureId)
+          Log.d(TAG, "Set camera texture name to: $textureId on session")
+          hasSetTextureNames = true
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to set camera texture name on session", e)
         }
-        
-        Log.d(TAG, "Background renderer initialized with camera feed visualization")
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to configure background renderer", e)
       }
       
       // Initialize framebuffer for virtual content
@@ -302,16 +304,15 @@ class HelloGeoRenderer(val context: Context) :
       // Access the session instance directly from the local field variable
       val localSession = arSession as com.google.ar.core.Session
       
-      // Initialize camera texture if not already done
+      // CRITICAL: Make sure camera texture is set on every frame if needed
       if (!hasSetTextureNames) {
         try {
-          // Set the texture name for the camera feed
-          val cameraTextureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-          localSession.setCameraTextureName(cameraTextureId)
+          val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+          localSession.setCameraTextureName(textureId)
+          Log.d(TAG, "Set camera texture name to: $textureId during draw frame")
           hasSetTextureNames = true
-          Log.d(TAG, "Set camera texture name to: $cameraTextureId on session init")
         } catch (e: Exception) {
-          Log.e(TAG, "Failed to set camera texture name", e)
+          Log.e(TAG, "Failed to set camera texture name during draw", e)
         }
       }
       
@@ -343,12 +344,14 @@ class HelloGeoRenderer(val context: Context) :
         trackingStateHelperInstance!!.updateKeepScreenOnFlag(localCamera.trackingState)
       }
       
-      // Draw background with better error handling
+      // CRITICAL: Draw the camera background with better exception handling
       try {
-        // Draw the camera background
+        // Draw the camera background - this is where the camera gets displayed
         backgroundRenderer.drawBackground(render)
       } catch (e: Exception) {
         Log.e(TAG, "Exception drawing background: ${e.javaClass.simpleName}: ${e.message}", e)
+        // Try to reset texture name if there was an error
+        hasSetTextureNames = false
       }
       
       // Check if camera is tracking
