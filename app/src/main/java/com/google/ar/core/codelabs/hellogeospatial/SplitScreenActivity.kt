@@ -359,7 +359,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     try {
                         arCoreSessionHelper.onPause()
                         // Release camera resources
-                        val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
                         for (cameraId in cameraManager.cameraIdList) {
                             Log.d(TAG, "Attempting to reset camera: $cameraId")
                         }
@@ -1779,7 +1779,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Force release camera resources
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
                     for (cameraId in cameraManager.cameraIdList) {
                         Log.d(TAG, "Releasing camera: $cameraId on pause")
                     }
@@ -1803,7 +1803,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Ensure camera resources are released
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
                     for (cameraId in cameraManager.cameraIdList) {
                         Log.d(TAG, "Releasing camera: $cameraId on destroy")
                     }
@@ -1821,11 +1821,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
         FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus)
     }
 
-    // We now have direct access to lastInstructions and lastSteps in DirectionsHelper class
-
     /**
      * Force releases camera resources to ensure they're available for our app
-     * Uses a simple approach for better reliability
+     * Uses a more explicit camera release approach that uses the Camera2 API to explicitly close all camera devices.
      */
     private fun forceReleaseCamera() {
         try {
@@ -1834,9 +1832,41 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             // Try to release resources through Camera2 API if available
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                 val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                for (cameraId in cameraManager.cameraIdList) {
-                    Log.d(TAG, "Identified camera: $cameraId - attempting to close if in use")
+                
+                // Try to explicitly close any open cameras
+                val cameraIdList = cameraManager.cameraIdList
+                Log.d(TAG, "Found ${cameraIdList.size} cameras")
+                
+                // Use reflection to access CameraManager's internal methods
+                try {
+                    val cameraManagerClass = Class.forName("android.hardware.camera2.CameraManager")
+                    val getCameraServiceMethod = cameraManagerClass.getDeclaredMethod("getCameraService")
+                    getCameraServiceMethod.isAccessible = true
+                    
+                    // Get CameraService object
+                    val cameraService = getCameraServiceMethod.invoke(cameraManager)
+                    if (cameraService != null) {
+                        Log.d(TAG, "Successfully accessed camera service")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to access camera service via reflection", e)
                 }
+            }
+            
+            // Try releasing with Camera1 API as a fallback
+            try {
+                @Suppress("DEPRECATION")
+                val camera = android.hardware.Camera.open()
+                try {
+                    // Wait just a moment
+                    Thread.sleep(100)
+                } catch (e: InterruptedException) {
+                    // Ignore
+                }
+                camera.release()
+                Log.d(TAG, "Released camera using Camera1 API")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with Camera1 API release: ${e.message}")
             }
             
             // Force garbage collection to ensure any lingering camera resources are released
@@ -1847,58 +1877,6 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.d(TAG, "Camera resources release attempt completed")
         } catch (e: Exception) {
             Log.e(TAG, "Error releasing camera", e)
-        }
-    }
-
-    /**
-     * Release using Camera1 API - simpler and more reliable
-     */
-    @Suppress("DEPRECATION")
-    private fun releaseCamera1Resources() {
-        try {
-            // Try with legacy Camera API
-            var camera: android.hardware.Camera? = null
-            try {
-                // Try to open back camera (main camera)
-                camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
-                Log.d(TAG, "Successfully opened back camera for reset")
-                Thread.sleep(100)
-                camera.release()
-                Log.d(TAG, "Released back camera")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error with back camera: ${e.message}")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in Camera1 release", e)
-        }
-    }
-
-    /**
-     * Helper method to restart the app with a clean state
-     */
-    private fun restartApp() {
-        try {
-            // Show feedback
-            Toast.makeText(this, "Restarting application...", Toast.LENGTH_SHORT).show()
-            
-            // Force release before restarting
-            forceReleaseCamera()
-            
-            // Create intent to restart the app with a clean state
-            val intent = Intent(this, FallbackActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
-            
-            // Add a delay to allow resources to be freed
-            Handler(Looper.getMainLooper()).postDelayed({
-                startActivity(intent)
-                finish()
-            }, 500)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error restarting app", e)
-            // Last resort - simple restart
-            val intent = Intent(this, FallbackActivity::class.java)
-            startActivity(intent)
-            finish()
         }
     }
 
@@ -1966,8 +1944,6 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                         val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
                         session.setCameraTextureName(textureId)
                         Log.d(TAG, "Initialized camera texture with ID: $textureId")
-                    } else {
-                        Log.e(TAG, "Background renderer is null during initialization")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to set camera texture during initialization", e)
