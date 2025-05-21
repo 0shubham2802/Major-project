@@ -572,12 +572,8 @@ private fun retryMapLoading() {
             // Apply the configuration
             session.configure(config)
             
-            // Add tracking state listener
-            session.addOnGeospatialStateChangedListener { geospatialState ->
-                runOnUiThread {
-                    handleGeospatialStateChange(geospatialState)
-                }
-            }
+            // Instead of using addOnGeospatialStateChangedListener (which isn't available in this ARCore version),
+            // we'll monitor the Earth state in our tracking quality updates
             
             Log.d(TAG, "AR session configured successfully")
         } catch (e: Exception) {
@@ -745,28 +741,7 @@ private fun retryMapLoading() {
         }
     }
     
-    /**
-     * Handle changes in geospatial tracking state
-     */
-    private fun handleGeospatialStateChange(geospatialState: Session.GeospatialState) {
-        val trackingState = when (geospatialState) {
-            Session.GeospatialState.ENABLED -> "Geospatial tracking enabled"
-            Session.GeospatialState.RUNNING -> "Geospatial tracking running"
-            Session.GeospatialState.ERROR -> "Geospatial tracking error"
-            Session.GeospatialState.LOCALIZING -> "Determining your precise location..."
-            else -> "Unknown geospatial state"
-        }
-        
-        Log.d(TAG, "Geospatial state changed: $trackingState")
-        
-        // Update tracking quality indicator with geospatial state
-        trackingQualityIndicator?.text = "Tracking: $trackingState"
-        
-        // Show appropriate dialog based on state
-        if (geospatialState == Session.GeospatialState.ERROR) {
-            showGeospatialErrorDialog("Could not initialize AR tracking")
-        }
-    }
+
     
     private fun startTrackingQualityUpdates() {
         // Update tracking quality status every second
@@ -788,8 +763,23 @@ private fun retryMapLoading() {
             if (earth == null) {
                 trackingQualityIndicator?.text = "Tracking: INITIALIZING"
                 trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_orange_light)
+                
+                // Check how long we've been waiting for Earth initialization
+                val currentTime = System.currentTimeMillis()
+                if (trackingErrorStartTime == 0L) {
+                    trackingErrorStartTime = currentTime
+                } else if (currentTime - trackingErrorStartTime > 20000) { // 20 seconds of waiting for Earth
+                    // Only show the dialog if we haven't recently shown it
+                    if (currentTime - lastTrackingErrorDialogTime > 60000) { // Don't show more than once per minute
+                        showGeospatialErrorDialog("Could not initialize AR tracking")
+                        lastTrackingErrorDialogTime = currentTime
+                    }
+                }
                 return
             }
+            
+            // Reset Earth initialization timer since we have Earth object
+            trackingErrorStartTime = 0L
             
             // Check tracking state
             if (earth.trackingState != TrackingState.TRACKING) {
@@ -803,11 +793,11 @@ private fun retryMapLoading() {
                 trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
                 
                 // If we've been in non-tracking state for a while, show help dialog
-                if (trackingErrorStartTime == 0L) {
-                    trackingErrorStartTime = System.currentTimeMillis()
-                } else if (System.currentTimeMillis() - trackingErrorStartTime > 15000) { // 15 seconds of error
+                val currentTime = System.currentTimeMillis()
+                if (earthTrackingErrorTime == 0L) {
+                    earthTrackingErrorTime = currentTime
+                } else if (currentTime - earthTrackingErrorTime > 15000) { // 15 seconds of error
                     // Only show the dialog if we haven't recently shown it
-                    val currentTime = System.currentTimeMillis()
                     if (currentTime - lastTrackingErrorDialogTime > 60000) { // Don't show more than once per minute
                         showTrackingErrorHelp()
                         lastTrackingErrorDialogTime = currentTime
@@ -817,7 +807,7 @@ private fun retryMapLoading() {
                 return
             } else {
                 // Reset error timer if we're now tracking
-                trackingErrorStartTime = 0L
+                earthTrackingErrorTime = 0L
             }
             
             val pose = earth.cameraGeospatialPose
@@ -842,23 +832,39 @@ private fun retryMapLoading() {
             // Update current location from AR pose
             updateLocationFromARPose(pose.latitude, pose.longitude)
             
-            // Check if we need to suggest calibration
-            if (horizontalAccuracy > 10.0 && !hasShownCalibrationPrompt) {
-                showCalibrationPrompt()
-                hasShownCalibrationPrompt = true
+            // Check if we need to suggest calibration based on accuracy issues
+            val currentTime = System.currentTimeMillis()
+            if (horizontalAccuracy > 10.0) {
+                if (!hasShownCalibrationPrompt && currentTime - lastCalibrationPromptTime > 90000) {
+                    showCalibrationPrompt()
+                    hasShownCalibrationPrompt = true
+                    lastCalibrationPromptTime = currentTime
+                }
+            } else if (horizontalAccuracy <= 5.0) {
+                // Reset prompt shown flag if tracking improves significantly, so we can show it again if needed later
+                hasShownCalibrationPrompt = false
             }
             
         } catch (e: Exception) {
             trackingQualityIndicator?.text = "Tracking: ERROR"
             trackingQualityIndicator?.setBackgroundResource(android.R.color.holo_red_light)
             Log.e(TAG, "Error updating tracking quality", e)
+            
+            // Show error dialog for exceptions
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastTrackingErrorDialogTime > 60000) { // Limit dialog frequency
+                showGeospatialErrorDialog("AR tracking error: ${e.message}")
+                lastTrackingErrorDialogTime = currentTime
+            }
         }
     }
     
     // Tracking variables
     private var trackingErrorStartTime = 0L
+    private var earthTrackingErrorTime = 0L
     private var lastTrackingErrorDialogTime = 0L
     private var hasShownCalibrationPrompt = false
+    private var lastCalibrationPromptTime = 0L
     
     /**
      * Show a helpful dialog with instructions for resolving tracking issues
