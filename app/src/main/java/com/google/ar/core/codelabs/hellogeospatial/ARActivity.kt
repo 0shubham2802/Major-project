@@ -271,34 +271,35 @@ class ARActivity : AppCompatActivity() {
     private fun configureSession(session: Session) {
         try {
             Log.d(TAG, "Configuring AR session with enhanced settings")
-            session.configure(
-                session.config.apply {
-                    // Enable geospatial mode
-                    geospatialMode = Config.GeospatialMode.ENABLED
-                    
-                    // Basic features for navigation
-                    planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                    lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                    updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                    focusMode = Config.FocusMode.AUTO
-                    
-                    // Try adding some additional settings that might help with initialization
-                    try {
-                        // Check if the device supports depth
-                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                            depthMode = Config.DepthMode.AUTOMATIC
-                            Log.d(TAG, "Enabled depth mode for better tracking")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error checking depth support", e)
-                    }
-                    
-                    // Enable cloud anchors for possible network-assisted positioning
-                    cloudAnchorMode = Config.CloudAnchorMode.ENABLED
-                }
-            )
             
-            Log.d(TAG, "AR session configured successfully with enhanced settings")
+            // Create a new configuration
+            val config = Config(session)
+            
+            // Enable geospatial mode
+            config.geospatialMode = Config.GeospatialMode.ENABLED
+            
+            // CRITICAL: Basic camera and rendering settings for better reliability 
+            config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+            config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
+            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+            config.focusMode = Config.FocusMode.AUTO
+            
+            // Simplify rendering for better performance in case we're having camera issues
+            // Disable features we don't absolutely need
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+            
+            // IMPORTANT: Make sure depth is properly configured - this can interfere with camera
+            try {
+                config.depthMode = Config.DepthMode.DISABLED // Disable depth to ensure camera feed shows
+                Log.d(TAG, "Disabled depth mode for better camera reliability")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error configuring depth settings", e)
+            }
+            
+            // Apply the configuration
+            session.configure(config)
+            
+            Log.d(TAG, "AR session configured successfully with enhanced camera settings")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring session", e)
             Toast.makeText(this, "Error configuring AR: ${e.message}", Toast.LENGTH_SHORT).show()

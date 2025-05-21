@@ -166,7 +166,19 @@ class HelloGeoRenderer(val context: Context) :
     // Prepare the rendering objects.
     // This involves reading shaders and 3D model files, so may throw an IOException.
     try {
+      // Initialize background renderer
       backgroundRenderer = BackgroundRenderer(render)
+      
+      try {
+        // Configure background renderer to show camera feed, not depth visualization
+        backgroundRenderer.setUseDepthVisualization(render, false)
+        backgroundRenderer.setUseOcclusion(render, false) // Disable occlusion for better reliability
+        Log.d(TAG, "Background renderer initialized with camera feed visualization")
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to configure background renderer", e)
+      }
+      
+      // Initialize framebuffer for virtual content
       virtualSceneFramebuffer = Framebuffer(render, /*width=*/ 1, /*height=*/ 1)
 
       // Virtual object to render (ARCore pawn)
@@ -280,9 +292,33 @@ class HelloGeoRenderer(val context: Context) :
       // Access the session instance directly from the local field variable
       val localSession = arSession as com.google.ar.core.Session
       
-      // Update the session with a placeholder texture
-      localSession.setCameraTextureName(backgroundRenderer.getCameraColorTexture().getTextureId())
-      localSession.update()
+      // Initialize camera texture if not already done
+      if (!hasSetTextureNames) {
+        try {
+          // Set the texture name for the camera feed
+          val cameraTextureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+          localSession.setCameraTextureName(cameraTextureId)
+          hasSetTextureNames = true
+          Log.d(TAG, "Set camera texture name to: $cameraTextureId on session init")
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to set camera texture name", e)
+        }
+      }
+      
+      // Get latest camera frame
+      val frame = try {
+        localSession.update()
+      } catch (e: Exception) {
+        Log.e(TAG, "Exception during session.update()", e)
+        return
+      }
+      
+      // Update background geometry using the new frame
+      try {
+        backgroundRenderer.updateDisplayGeometry(frame)
+      } catch (e: Exception) {
+        Log.e(TAG, "Exception updating display geometry", e)
+      }
       
       // Access camera through reflection
       val cameraMethod = com.google.ar.core.Session::class.java.getDeclaredMethod("getCamera")
@@ -297,11 +333,12 @@ class HelloGeoRenderer(val context: Context) :
         trackingStateHelperInstance!!.updateKeepScreenOnFlag(localCamera.trackingState)
       }
       
-      // Draw background
+      // Draw background with better error handling
       try {
+        // Draw the camera background
         backgroundRenderer.drawBackground(render)
       } catch (e: Exception) {
-        Log.e(TAG, "Exception drawing background", e)
+        Log.e(TAG, "Exception drawing background: ${e.javaClass.simpleName}: ${e.message}", e)
       }
       
       // Check if camera is tracking
