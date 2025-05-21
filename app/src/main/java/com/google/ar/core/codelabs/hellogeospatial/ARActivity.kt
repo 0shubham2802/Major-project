@@ -68,6 +68,8 @@ class ARActivity : AppCompatActivity() {
     private var isNavigating = false
     private var arStatusMessage: String? = null
     private val lifecycleRegistry = LifecycleRegistry(this)
+    private var cameraRetryCount = 0
+    private val MAX_CAMERA_RETRIES = 3
     private lateinit var surfaceView: GLSurfaceView
     
     // Navigation-related variables
@@ -139,18 +141,18 @@ class ARActivity : AppCompatActivity() {
                     // If we have camera issues, offer camera recovery options
                     AlertDialog.Builder(this)
                         .setTitle("Camera Issues Detected")
-                        .setMessage("Would you like to try emergency camera recovery or switch to map mode?")
+                        .setMessage("Camera is being used by another app or system process. What would you like to do?")
                         .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
                             dialog.dismiss()
                             emergencyCameraReset()
                         }
-                        .setNegativeButton("MAP MODE") { dialog, _ ->
+                        .setNegativeButton("MAP ONLY") { dialog, _ ->
                             dialog.dismiss()
                             returnToMapMode()
                         }
-                        .setNeutralButton("NAVIGATION HELP") { dialog, _ ->
+                        .setNeutralButton("RETRY") { dialog, _ ->
                             dialog.dismiss()
-                            showNavigationHelp()
+                            retryCameraAccess()
                         }
                         .show()
                 } else {
@@ -703,12 +705,9 @@ class ARActivity : AppCompatActivity() {
     }
     
     fun returnToMapMode() {
-        Log.d(TAG, "Returning to map mode")
-        
-        // Clean up any navigation resources
-        navigationUpdateHandler?.removeCallbacksAndMessages(null)
-        
-        // Return to previous activity
+        // Exit AR mode and return to map mode
+        val intent = Intent(this, FallbackActivity::class.java)
+        startActivity(intent)
         finish()
     }
     
@@ -916,47 +915,63 @@ class ARActivity : AppCompatActivity() {
     private fun releaseCamera2Resources() {
         try {
             val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            val cameraIds = cameraManager.cameraIdList
             
-            for (cameraId in cameraManager.cameraIdList) {
-                Log.d(TAG, "Attempting to release Camera2 device: $cameraId")
-                
-                // Use a semaphore with timeout to prevent blocking
-                val semaphore = java.util.concurrent.Semaphore(1)
-                semaphore.acquire()
+            for (cameraId in cameraIds) {
+                Log.d(TAG, "Attempting to release Camera2 resources for camera $cameraId")
                 
                 try {
-                    // Create callback to open and immediately close
-                    val callback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+                    // Create a semaphore to handle callbacks
+                    val semaphore = java.util.concurrent.Semaphore(0)
+                    
+                    // Try opening and immediately closing the camera
+                    val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
                         override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera $cameraId opened successfully, now closing")
-                            camera.close()
-                            semaphore.release()
+                            Log.d(TAG, "Camera2 $cameraId opened successfully for reset")
+                            try {
+                                // Close immediately
+                                camera.close()
+                                Log.d(TAG, "Camera2 $cameraId closed successfully")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error closing Camera2 device", e)
+                            } finally {
+                                semaphore.release()
+                            }
                         }
                         
                         override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
-                            Log.d(TAG, "Camera $cameraId disconnected")
+                            Log.d(TAG, "Camera2 $cameraId disconnected")
                             camera.close()
                             semaphore.release()
                         }
                         
                         override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
-                            Log.d(TAG, "Camera $cameraId error: $error")
+                            Log.e(TAG, "Camera2 $cameraId error: $error")
                             camera.close()
+                            semaphore.release()
+                        }
+                        
+                        override fun onClosed(camera: android.hardware.camera2.CameraDevice) {
+                            Log.d(TAG, "Camera2 $cameraId closed in callback")
                             semaphore.release()
                         }
                     }
                     
-                    // Try to open camera to reset its state
-                    val handler = Handler(Looper.getMainLooper())
-                    cameraManager.openCamera(cameraId, callback, handler)
+                    // Check for permissions at runtime
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        Log.e(TAG, "No camera permission during reset")
+                        semaphore.release()
+                        continue
+                    }
+                    
+                    // Try to open the camera
+                    cameraManager.openCamera(cameraId, stateCallback, null)
                     
                     // Wait with timeout
-                    if (!semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)) {
-                        Log.e(TAG, "Timeout waiting for camera $cameraId")
-                    }
+                    semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)
+                    
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error opening/closing camera $cameraId: ${e.message}")
-                    semaphore.release()
+                    Log.e(TAG, "Error releasing Camera2 device: ${e.message}")
                 }
             }
         } catch (e: Exception) {
@@ -965,18 +980,17 @@ class ARActivity : AppCompatActivity() {
     }
     
     /**
-     * Release legacy Camera API resources
+     * Release legacy Camera API resources as a fallback
      */
     @Suppress("DEPRECATION")
     private fun releaseCamera1Resources() {
         try {
-            // Try with legacy Camera API as fallback
+            // Try with legacy Camera API for older devices or as fallback
             var camera: android.hardware.Camera? = null
-            
             try {
-                // Front camera
+                // Try to open front camera first
                 camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT)
-                Log.d(TAG, "Successfully opened front camera")
+                Log.d(TAG, "Successfully opened front camera for reset")
                 Thread.sleep(100)
                 camera.release()
                 Log.d(TAG, "Released front camera")
@@ -985,9 +999,9 @@ class ARActivity : AppCompatActivity() {
             }
             
             try {
-                // Back camera
+                // Try to open back camera
                 camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
-                Log.d(TAG, "Successfully opened back camera")
+                Log.d(TAG, "Successfully opened back camera for reset")
                 Thread.sleep(100)
                 camera.release()
                 Log.d(TAG, "Released back camera")
@@ -1000,19 +1014,99 @@ class ARActivity : AppCompatActivity() {
     }
     
     /**
-     * Release MediaRecorder resources
+     * Release MediaRecorder which might be holding camera
      */
     private fun releaseMediaRecorderResources() {
         try {
-            val recorder = android.media.MediaRecorder()
+            val mediaRecorder = android.media.MediaRecorder()
             try {
-                recorder.release()
+                mediaRecorder.release()
                 Log.d(TAG, "Released MediaRecorder")
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing MediaRecorder", e)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating MediaRecorder", e)
+            Log.e(TAG, "Error creating MediaRecorder for release", e)
+        }
+    }
+
+    /**
+     * Attempts to retry camera access with progressive approaches
+     */
+    private fun retryCameraAccess() {
+        cameraRetryCount++
+        Log.d(TAG, "Attempting to retry camera access (attempt $cameraRetryCount)")
+        
+        // Show progress indicator to user
+        Toast.makeText(this, "Retrying camera access...", Toast.LENGTH_SHORT).show()
+        
+        try {
+            if (cameraRetryCount <= MAX_CAMERA_RETRIES) {
+                // Pause current session if exists
+                arCoreSessionHelper.session?.pause()
+                
+                // Basic cleanup
+                System.gc()
+                
+                // Wait briefly to let resources release
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        // Try to resume the session
+                        arCoreSessionHelper.onResume()
+                        
+                        // Check if camera works after brief delay
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            if (arStatusMessage?.contains("camera", ignoreCase = true) == true) {
+                                // Still failing, try more aggressive approach or offer options
+                                if (cameraRetryCount == MAX_CAMERA_RETRIES) {
+                                    // Max retries reached, show options dialog
+                                    AlertDialog.Builder(this)
+                                        .setTitle("Camera Still Unavailable")
+                                        .setMessage("Would you like to try emergency reset or switch to map mode?")
+                                        .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
+                                            dialog.dismiss()
+                                            emergencyCameraReset()
+                                        }
+                                        .setNegativeButton("MAP ONLY") { dialog, _ ->
+                                            dialog.dismiss()
+                                            returnToMapMode()
+                                        }
+                                        .setCancelable(false)
+                                        .show()
+                                } else {
+                                    // Simple toast for retry feedback
+                                    Toast.makeText(this, "Retry failed. Trying again...", Toast.LENGTH_SHORT).show()
+                                    
+                                    // Try more aggressive approach next time
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        retryCameraAccess()
+                                    }, 1000)
+                                }
+                            } else {
+                                // Successfully recovered
+                                Toast.makeText(this, "Camera access restored!", Toast.LENGTH_SHORT).show()
+                                cameraRetryCount = 0
+                            }
+                        }, 2000)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error resuming session in retry", e)
+                        // Try again or escalate
+                        if (cameraRetryCount < MAX_CAMERA_RETRIES) {
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                retryCameraAccess()
+                            }, 1000)
+                        } else {
+                            emergencyCameraReset()
+                        }
+                    }
+                }, 1000)
+            } else {
+                // Max retries exceeded, try emergency reset
+                emergencyCameraReset()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in retryCameraAccess", e)
+            emergencyCameraReset()
         }
     }
 } 

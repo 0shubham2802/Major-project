@@ -94,6 +94,20 @@ class HelloGeoActivity : AppCompatActivity() {
   // Add missing variables
   private lateinit var surfaceView: GLSurfaceView
   private var installRequested = false
+  
+  // Add watchdog for ANR prevention
+  private val watchdogHandler = Handler(Looper.getMainLooper())
+  private val watchdogRunnable = Runnable {
+    Log.w(TAG, "UI thread watchdog triggered - potential ANR detected")
+    // Take recovery action
+    try {
+      Toast.makeText(this, "Application responsiveness issue detected, recovering...", Toast.LENGTH_SHORT).show()
+      startFallbackActivity()
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in watchdog recovery", e)
+    }
+  }
+  private val WATCHDOG_TIMEOUT_MS = 5000L // 5 seconds
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -151,6 +165,9 @@ class HelloGeoActivity : AppCompatActivity() {
   override fun onResume() {
     super.onResume()
     try {
+      // Start UI watchdog
+      startWatchdog()
+      
       // Additional check for AR availability
       if (!checkIsARCoreSupportedAndUpToDate()) {
         showFallbackUserInterface()
@@ -158,6 +175,49 @@ class HelloGeoActivity : AppCompatActivity() {
     } catch (e: Exception) {
       Log.e(TAG, "Error in onResume", e)
     }
+  }
+  
+  override fun onPause() {
+    super.onPause()
+    // Stop watchdog when activity is paused
+    stopWatchdog()
+  }
+  
+  /**
+   * Start the UI watchdog to detect potential ANRs
+   */
+  private fun startWatchdog() {
+    // First, ensure any existing watchdog is stopped
+    stopWatchdog()
+    
+    // Schedule a new watchdog check
+    watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_TIMEOUT_MS)
+    
+    // Post a tiny task that will execute if the UI thread is responsive
+    // and reset the watchdog
+    watchdogHandler.post {
+      // UI thread is still responsive, reset watchdog
+      resetWatchdog()
+    }
+  }
+  
+  /**
+   * Reset the watchdog timer
+   */
+  private fun resetWatchdog() {
+    // Remove existing watchdog
+    watchdogHandler.removeCallbacks(watchdogRunnable)
+    
+    // Post a new one
+    watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_TIMEOUT_MS)
+  }
+  
+  /**
+   * Stop the watchdog timer
+   */
+  private fun stopWatchdog() {
+    // Remove the watchdog callback
+    watchdogHandler.removeCallbacks(watchdogRunnable)
   }
   
   private fun checkIsARCoreSupportedAndUpToDate(): Boolean {
@@ -618,40 +678,259 @@ class HelloGeoActivity : AppCompatActivity() {
     }
   }
 
+  /**
+   * Handle AR exceptions with proper error recovery
+   */
   private fun handleARException(exception: Exception) {
-    val message = when (exception) {
-      is UnavailableUserDeclinedInstallationException ->
-        "Please install ARCore"
-      is UnavailableApkTooOldException ->
-        "Please update ARCore"
-      is UnavailableSdkTooOldException ->
-        "Please update this app"
-      is UnavailableDeviceNotCompatibleException ->
-        "This device does not support AR"
-      is CameraNotAvailableException ->
-        "Camera not available. Try restarting the app."
-      else -> "Failed to initialize AR: ${exception.message}"
+    Log.e(TAG, "AR exception", exception)
+    
+    // Reset watchdog to prevent ANR while handling the exception
+    resetWatchdog()
+    
+    try {
+      val message = when (exception) {
+        is UnavailableUserDeclinedInstallationException -> "Please install ARCore"
+        is UnavailableApkTooOldException -> "Please update ARCore"
+        is UnavailableSdkTooOldException -> "Please update this app"
+        is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
+        is CameraNotAvailableException -> "Camera is not available - may be in use by another app"
+        else -> "Failed to initialize AR: $exception"
+      }
+      
+      // Special handling for camera issues
+      if (exception is CameraNotAvailableException) {
+        // Show a dialog with camera recovery options
+        runOnUiThread {
+          AlertDialog.Builder(this)
+            .setTitle("Camera Unavailable")
+            .setMessage("Camera is being used by another app or system process. What would you like to do?")
+            .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
+              dialog.dismiss()
+              emergencyCameraReset()
+            }
+            .setNegativeButton("MAP ONLY") { dialog, _ ->
+              dialog.dismiss()
+              startFallbackActivity()
+            }
+            .setNeutralButton("RETRY") { dialog, _ ->
+              dialog.dismiss()
+              retryCameraAccess()
+            }
+            .setCancelable(false)
+            .show()
+        }
+      } else {
+        // For other exceptions, show a toast and start the fallback activity
+        runOnUiThread {
+          Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+          startFallbackActivity()
+        }
+      }
+    } catch (e: Exception) {
+      // Failsafe error handling
+      Log.e(TAG, "Error in exception handler", e)
+      runOnUiThread {
+        Toast.makeText(this, "Critical error - switching to fallback mode", Toast.LENGTH_LONG).show()
+        startFallbackActivity()
+      }
     }
+  }
+  
+  /**
+   * Attempt to retry camera access
+   */
+  private var cameraRetryCount = 0
+  private val MAX_CAMERA_RETRIES = 3
+  
+  private fun retryCameraAccess() {
+    cameraRetryCount++
+    Log.d(TAG, "Attempting to retry camera access (attempt $cameraRetryCount)")
     
-    Log.e(TAG, "AR error: $message", exception)
+    // Show progress indicator to user
+    Toast.makeText(this, "Retrying camera access...", Toast.LENGTH_SHORT).show()
     
-    runOnUiThread {
-      // Show a descriptive error message
-      Toast.makeText(this, "AR feature unavailable: $message", Toast.LENGTH_LONG).show()
+    try {
+      // First release resources
+      arCoreSessionHelper.onPause()
       
-      // Instead of showing a blank screen, still allow using the map
-      findViewById<View>(R.id.map)?.visibility = View.VISIBLE
+      // Clean up resources
+      System.gc()
       
-      // Hide AR view
-      findViewById<View>(R.id.surfaceview)?.visibility = View.GONE
+      // Wait briefly
+      Handler(Looper.getMainLooper()).postDelayed({
+        try {
+          // Try to resume
+          arCoreSessionHelper.onResume()
+          
+          // Check for success after a moment
+          Handler(Looper.getMainLooper()).postDelayed({
+            if (cameraRetryCount >= MAX_CAMERA_RETRIES) {
+              // Max retries reached
+              Toast.makeText(this, "Camera access failed after multiple attempts", Toast.LENGTH_SHORT).show()
+              emergencyCameraReset()
+            } else {
+              // Retry was successful
+              Toast.makeText(this, "Camera access restored", Toast.LENGTH_SHORT).show()
+            }
+          }, 1000)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error resuming session", e)
+          if (cameraRetryCount < MAX_CAMERA_RETRIES) {
+            // Try again
+            Handler(Looper.getMainLooper()).postDelayed({
+              retryCameraAccess()
+            }, 1000)
+          } else {
+            // Try emergency reset
+            emergencyCameraReset()
+          }
+        }
+      }, 1000)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in retryCameraAccess", e)
+      emergencyCameraReset()
+    }
+  }
+  
+  /**
+   * Emergency camera reset that attempts to fix camera issues
+   */
+  private fun emergencyCameraReset() {
+    Log.d(TAG, "Emergency camera reset - attempting to recover camera")
+    Toast.makeText(this, "Attempting emergency camera recovery...", Toast.LENGTH_SHORT).show()
+    
+    try {
+      // First try to release any ARCore camera resources
+      arCoreSessionHelper.onPause()
       
-      // Update status display
-      val statusTextView = findViewById<TextView>(R.id.statusText)
-      statusTextView?.text = "AR UNAVAILABLE\n$message\nUsing map-only mode"
-      statusTextView?.setBackgroundColor(Color.RED)
+      // Force release camera using the Camera2 API
+      releaseCamera2Resources()
       
-      // Explicitly tell user that we're in map-only mode now
-      Toast.makeText(this, "Continuing in map-only mode", Toast.LENGTH_LONG).show()
+      // Also try the legacy Camera API as fallback
+      releaseCamera1Resources()
+      
+      // Force garbage collection to ensure resources are freed
+      System.gc()
+      System.runFinalization()
+      
+      // Wait a moment for system to process
+      Handler(Looper.getMainLooper()).postDelayed({
+        try {
+          // Try to resume with fresh camera
+          Toast.makeText(this, "Attempting to restart camera...", Toast.LENGTH_SHORT).show()
+          recreate() // Recreate activity for clean state
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to restart AR session", e)
+          startFallbackActivity()
+        }
+      }, 1000)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in emergency camera reset", e)
+      startFallbackActivity()
+    }
+  }
+  
+  /**
+   * Release Camera2 API resources
+   */
+  private fun releaseCamera2Resources() {
+    try {
+      val cameraManager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+      val cameraIds = cameraManager.cameraIdList
+      
+      for (cameraId in cameraIds) {
+        Log.d(TAG, "Attempting to release Camera2 resources for camera $cameraId")
+        
+        try {
+          // Create a semaphore to handle callbacks
+          val semaphore = java.util.concurrent.Semaphore(0)
+          
+          // Try opening and immediately closing the camera
+          val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+            override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
+              Log.d(TAG, "Camera2 $cameraId opened successfully for reset")
+              try {
+                // Close immediately
+                camera.close()
+                Log.d(TAG, "Camera2 $cameraId closed successfully")
+              } catch (e: Exception) {
+                Log.e(TAG, "Error closing Camera2 device", e)
+              } finally {
+                semaphore.release()
+              }
+            }
+            
+            override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
+              Log.d(TAG, "Camera2 $cameraId disconnected")
+              camera.close()
+              semaphore.release()
+            }
+            
+            override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
+              Log.e(TAG, "Camera2 $cameraId error: $error")
+              camera.close()
+              semaphore.release()
+            }
+            
+            override fun onClosed(camera: android.hardware.camera2.CameraDevice) {
+              Log.d(TAG, "Camera2 $cameraId closed in callback")
+              semaphore.release()
+            }
+          }
+          
+          // Check for permissions at runtime
+          if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "No camera permission during reset")
+            semaphore.release()
+            continue
+          }
+          
+          // Try to open the camera
+          cameraManager.openCamera(cameraId, stateCallback, null)
+          
+          // Wait with timeout
+          semaphore.tryAcquire(1, java.util.concurrent.TimeUnit.SECONDS)
+          
+        } catch (e: Exception) {
+          Log.e(TAG, "Error releasing Camera2 device: ${e.message}")
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in Camera2 release", e)
+    }
+  }
+  
+  /**
+   * Release legacy Camera API resources as a fallback
+   */
+  @Suppress("DEPRECATION")
+  private fun releaseCamera1Resources() {
+    try {
+      // Try with legacy Camera API for older devices or as fallback
+      var camera: android.hardware.Camera? = null
+      try {
+        // Try to open front camera first
+        camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT)
+        Log.d(TAG, "Successfully opened front camera for reset")
+        Thread.sleep(100)
+        camera.release()
+        Log.d(TAG, "Released front camera")
+      } catch (e: Exception) {
+        Log.e(TAG, "Error with front camera: ${e.message}")
+      }
+      
+      try {
+        // Try to open back camera
+        camera = android.hardware.Camera.open(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK)
+        Log.d(TAG, "Successfully opened back camera for reset")
+        Thread.sleep(100)
+        camera.release()
+        Log.d(TAG, "Released back camera")
+      } catch (e: Exception) {
+        Log.e(TAG, "Error with back camera: ${e.message}")
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in Camera1 release", e)
     }
   }
 }

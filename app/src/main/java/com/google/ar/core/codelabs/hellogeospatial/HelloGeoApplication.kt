@@ -2,10 +2,15 @@ package com.google.ar.core.codelabs.hellogeospatial
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.github.anrwatchdog.ANRWatchDog
+import com.github.anrwatchdog.ANRError
 import com.google.ar.core.codelabs.hellogeospatial.helpers.GoogleApiKeyValidator
 
 /**
@@ -23,6 +28,9 @@ class HelloGeoApplication : Application() {
             return instance
         }
     }
+    
+    // ANR watchdog
+    private lateinit var anrWatchDog: ANRWatchDog
     
     override fun onCreate() {
         super.onCreate()
@@ -49,7 +57,53 @@ class HelloGeoApplication : Application() {
             Thread.getDefaultUncaughtExceptionHandler()?.uncaughtException(thread, throwable)
         }
         
+        // Initialize ANR watchdog
+        setupANRWatchdog()
+        
         Log.d(TAG, "Application initialized")
+    }
+    
+    /**
+     * Setup ANR watchdog to detect and recover from app freezes
+     */
+    private fun setupANRWatchdog() {
+        try {
+            anrWatchDog = ANRWatchDog(5000) // 5 second timeout
+            
+            // Set ANR listener to handle freezes
+            anrWatchDog.setANRListener { anrError ->
+                Log.e(TAG, "ANR detected!", anrError)
+                
+                // Get the stacktrace as string
+                val stackTraceString = anrError.message ?: "Unknown ANR error"
+                Log.e(TAG, "ANR stack trace: $stackTraceString")
+                
+                // Try to recover on the main thread
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        // Show a toast about the issue
+                        Toast.makeText(
+                            applicationContext,
+                            "Application freeze detected, attempting recovery...",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        
+                        // Launch fallback activity to recover
+                        val fallbackIntent = Intent(applicationContext, FallbackActivity::class.java)
+                        fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        startActivity(fallbackIntent)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in ANR recovery", e)
+                    }
+                }
+            }
+            
+            // Start the watchdog
+            anrWatchDog.start()
+            Log.d(TAG, "ANR watchdog started")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up ANR watchdog", e)
+        }
     }
     
     /**
