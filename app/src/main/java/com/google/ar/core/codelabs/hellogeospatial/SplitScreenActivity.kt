@@ -61,15 +61,24 @@ import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import com.google.ar.core.codelabs.hellogeospatial.helpers.configureSessionForEnvironment
+import com.google.ar.core.codelabs.hellogeospatial.helpers.resetCamera
+import com.google.ar.core.LightEstimate
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
  */
-class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
+class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListener {
     companion object {
         private const val TAG = "SplitScreenActivity"
         private const val LOCATION_PERMISSION_CODE = 100
         private const val CAMERA_PERMISSION_CODE = 101
+        private const val INDOOR_LIGHT_THRESHOLD = 300f // Lux threshold for indoor detection
+        private const val MAX_CAMERA_RETRIES = 3
     }
 
     // Map components
@@ -127,6 +136,16 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
     private var searchQueryHandler = Handler(Looper.getMainLooper())
     private var lastSearchRunnable: Runnable? = null
     private lateinit var recentPlacesManager: RecentPlacesManager
+    
+    // Environment detection
+    private lateinit var sensorManager: SensorManager
+    private var lightSensor: Sensor? = null
+    private var isIndoorEnvironment = false
+    private var lastLightValue = 0f
+    private var hasEnvironmentBeenDetected = false
+    private var lastEnvironmentCheckTime = 0L
+    private val ENVIRONMENT_CHECK_INTERVAL = 10000L // Check every 10 seconds
+    private var cameraRetryCount = 0
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -200,6 +219,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.e(TAG, "Error in onCreate", e)
             Toast.makeText(this, "Error initializing: ${e.message}", Toast.LENGTH_LONG).show()
         }
+        
+        // Initialize sensor manager for environment detection
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
     }
     
     private fun initializeUIComponents() {
@@ -1623,6 +1646,15 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
             }
         }
+        
+        // After camera permission is granted, make sure to reset the camera
+        if (requestCode == CAMERA_PERMISSION_CODE && 
+            grantResults.isNotEmpty() && 
+            grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            
+            // Reset camera to ensure a clean state
+            resetCamera(this)
+        }
     }
     
     override fun onMapReady(map: GoogleMap) {
@@ -1744,6 +1776,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                     surfaceView.requestRender()
                 }
                 
+                // Register light sensor
+                lightSensor?.let {
+                    sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+                }
+                
                 Log.d(TAG, "AR session resumed successfully")
             } else {
                 Log.e(TAG, "Camera permission not granted - can't resume AR")
@@ -1786,6 +1823,11 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing camera on pause", e)
+            }
+            
+            // Unregister sensor
+            lightSensor?.let {
+                sensorManager.unregisterListener(this)
             }
             
             Log.d(TAG, "AR session paused successfully")
@@ -1908,7 +1950,7 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             }
             
             // Set up configuration
-            arCoreSessionHelper.beforeSessionResume = ::configureSession
+            arCoreSessionHelper.beforeSessionResume = ::configureSessionWithEnvironment
             
             // Initialize view
             view = HelloGeoView(this)
@@ -1986,31 +2028,33 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun configureSession(session: Session) {
         try {
-            Log.d(TAG, "Configuring AR session with proper camera settings")
-            // Configure the session with better camera settings
+            Log.d(TAG, "Configuring AR session with proper camera settings for ${if (isIndoorEnvironment) "indoor" else "outdoor"} environment")
+            
+            // Use our enhanced environment-specific configuration
+            configureSessionForEnvironment(session, isIndoorEnvironment)
+            
+            // Additional split-screen specific configurations
             val config = session.config
-            
-            // Enable geospatial mode
-            config.geospatialMode = Config.GeospatialMode.ENABLED
-            
-            // Set focus mode - AUTO works better for camera feed
-            config.focusMode = Config.FocusMode.AUTO
-            
-            // IMPORTANT: Disable depth mode which can interfere with camera feed display
-            config.depthMode = Config.DepthMode.DISABLED
-            
-            // For better camera stability, disable unnecessary features
             config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
             
-            // Use BLOCKING update mode for more reliable rendering
-            config.updateMode = Config.UpdateMode.BLOCKING
-            
-            // Set light estimation mode to ENVIRONMENTAL_HDR for better rendering
-            config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+            // Make sure we disable depth mode which can interfere with camera feed
+            config.depthMode = Config.DepthMode.DISABLED
             
             // Apply the configuration
             session.configure(config)
-            Log.d(TAG, "AR session configured successfully")
+            
+            // Update UI based on environment
+            runOnUiThread {
+                if (isIndoorEnvironment) {
+                    findViewById<TextView>(R.id.tracking_quality)?.text = "Indoor mode - AR precision may be reduced"
+                    renderer.setRenderingForEnvironment(true)
+                } else {
+                    findViewById<TextView>(R.id.tracking_quality)?.text = "Outdoor mode - optimal AR precision"
+                    renderer.setRenderingForEnvironment(false)
+                }
+            }
+            
+            Log.d(TAG, "AR session configured successfully for ${if (isIndoorEnvironment) "indoor" else "outdoor"} environment")
         } catch (e: Exception) {
             Log.e(TAG, "Error configuring session", e)
         }
@@ -2063,6 +2107,124 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback {
             
         } catch (e: Exception) {
             Log.e(TAG, "Error resetting GL surface view", e)
+        }
+    }
+
+    /**
+     * Configure ARCore session specifically for this activity
+     */
+    private fun configureSessionWithEnvironment(session: Session) {
+        try {
+            Log.d(TAG, "Configuring AR session with proper camera settings for ${if (isIndoorEnvironment) "indoor" else "outdoor"} environment")
+            
+            // Use our enhanced environment-specific configuration
+            configureSessionForEnvironment(session, isIndoorEnvironment)
+            
+            // Additional split-screen specific configurations
+            val config = session.config
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+            
+            // Make sure we disable depth mode which can interfere with camera feed
+            config.depthMode = Config.DepthMode.DISABLED
+            
+            // Apply the configuration
+            session.configure(config)
+            
+            // Update UI based on environment
+            runOnUiThread {
+                if (isIndoorEnvironment) {
+                    findViewById<TextView>(R.id.tracking_quality)?.text = "Indoor mode - AR precision may be reduced"
+                    renderer.setRenderingForEnvironment(true)
+                } else {
+                    findViewById<TextView>(R.id.tracking_quality)?.text = "Outdoor mode - optimal AR precision"
+                    renderer.setRenderingForEnvironment(false)
+                }
+            }
+            
+            Log.d(TAG, "AR session configured successfully for ${if (isIndoorEnvironment) "indoor" else "outdoor"} environment")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error configuring session", e)
+        }
+    }
+    
+    // Sensor event implementations
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type == Sensor.TYPE_LIGHT) {
+            val currentTime = System.currentTimeMillis()
+            lastLightValue = event.values[0]
+            
+            // Only change environment config periodically to avoid constant reconfiguration
+            if (currentTime - lastEnvironmentCheckTime > ENVIRONMENT_CHECK_INTERVAL) {
+                lastEnvironmentCheckTime = currentTime
+                
+                // Detect if we're indoors based on light level
+                val newIsIndoor = lastLightValue < INDOOR_LIGHT_THRESHOLD
+                
+                // If environment changed, reconfigure
+                if (isIndoorEnvironment != newIsIndoor || !hasEnvironmentBeenDetected) {
+                    isIndoorEnvironment = newIsIndoor
+                    hasEnvironmentBeenDetected = true
+                    
+                    // Only reconfigure session if it's active
+                    arCoreSessionHelper.session?.let { session ->
+                        configureSessionWithEnvironment(session)
+                    }
+                    
+                    Log.d(TAG, "Environment changed to: ${if (isIndoorEnvironment) "indoor" else "outdoor"}")
+                }
+            }
+        }
+    }
+    
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+        // Not used
+    }
+    
+    private fun handleCameraFailure() {
+        if (cameraRetryCount < MAX_CAMERA_RETRIES) {
+            cameraRetryCount++
+            
+            Log.d(TAG, "Attempting camera reset (attempt $cameraRetryCount)")
+            
+            // Reset camera
+            val wasReset = resetCamera(this)
+            
+            // Show status to user
+            val message = if (wasReset) 
+                "Camera reset, retrying..." 
+            else 
+                "Camera reset failed"
+            
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            
+            if (wasReset) {
+                // Destroy and recreate session
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        // Close existing session
+                        arCoreSessionHelper.session?.close()
+                        
+                        // Create a new session
+                        arCoreSessionHelper.onDestroy()
+                        arCoreSessionHelper.onResume()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error recreating AR session", e)
+                    }
+                }, 1000)
+            }
+        } else {
+            // Max retries reached, disable AR
+            Toast.makeText(this, "Camera unavailable - continuing with map only", Toast.LENGTH_LONG).show()
+            
+            // Hide AR view
+            findViewById<View>(R.id.ar_surface_view)?.visibility = View.GONE
+            
+            // Expand map to full screen
+            findViewById<View>(R.id.map_container)?.let { container ->
+                val params = container.layoutParams
+                params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                container.layoutParams = params
+            }
         }
     }
 } 

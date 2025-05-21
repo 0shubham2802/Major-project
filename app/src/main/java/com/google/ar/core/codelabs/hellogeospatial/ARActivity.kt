@@ -35,6 +35,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 import com.google.android.gms.maps.model.LatLng
 import android.graphics.Color
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.provider.Settings
@@ -46,12 +47,17 @@ import androidx.core.app.ActivityCompat
 import android.widget.ProgressBar
 import androidx.cardview.widget.CardView
 import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
+import com.google.ar.core.codelabs.hellogeospatial.helpers.configureSessionForEnvironment
+import com.google.ar.core.codelabs.hellogeospatial.helpers.resetCamera
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
 
-class ARActivity : AppCompatActivity() {
+class ARActivity : AppCompatActivity(), SensorEventListener {
     companion object {
         private const val TAG = "ARActivity"
         private const val AR_INITIALIZATION_TIMEOUT = 15000L // 15 seconds
         private const val CAMERA_PERMISSION_CODE = 101
+        private const val INDOOR_LIGHT_THRESHOLD = 300f // Lux threshold for indoor detection
     }
 
     private lateinit var arCoreSessionHelper: ARCoreSessionLifecycleHelper
@@ -85,6 +91,14 @@ class ARActivity : AppCompatActivity() {
     private var timeRemaining: Int = 0
     private var isArrived = false
 
+    private lateinit var sensorManager: SensorManager
+    private var lightSensor: Sensor? = null
+    private var isIndoorEnvironment = false
+    private var lastLightValue = 0f
+    private var hasEnvironmentBeenDetected = false
+    private var lastEnvironmentCheckTime = 0L
+    private val ENVIRONMENT_CHECK_INTERVAL = 10000L // Check every 10 seconds
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -97,6 +111,10 @@ class ARActivity : AppCompatActivity() {
             )
             Log.d(TAG, "Requesting camera permission at startup")
         }
+        
+        // Initialize sensor manager for environment detection
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
         
         // Ensure we're using NoActionBar theme
         setTheme(R.style.Theme_AppCompat_NoActionBar)
@@ -194,8 +212,10 @@ class ARActivity : AppCompatActivity() {
             // Create and initialize ARCore session
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
             
-            // Configure ARCore session
-            arCoreSessionHelper.beforeSessionResume = ::configureSession
+            // Configure ARCore session - we'll use our environment detection
+            arCoreSessionHelper.beforeSessionResume = { session ->
+                configureSession(session)
+            }
             
             // Set lifecycle owner for session helper
             arCoreSessionHelper.onLifecycleOwner = this
@@ -328,24 +348,19 @@ class ARActivity : AppCompatActivity() {
      * Configure ARCore session with more stable settings
      */
     private fun configureSession(session: Session) {
-        session.configure(
-            session.config.apply {
-                // Enable Geospatial mode for Earth anchors
-                geospatialMode = Config.GeospatialMode.ENABLED
-                
-                // Set focus mode to AUTO for more reliable camera performance
-                focusMode = Config.FocusMode.AUTO
-                
-                // Set depth mode only if supported
-                depthMode = when {
-                    session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) -> Config.DepthMode.AUTOMATIC
-                    else -> Config.DepthMode.DISABLED
-                }
-                
-                // Use blocking update mode for more reliable tracking
-                updateMode = Config.UpdateMode.BLOCKING
+        // Configure session based on detected environment
+        // Default to outdoor if we haven't detected environment yet
+        configureSessionForEnvironment(session, isIndoorEnvironment)
+        
+        if (isIndoorEnvironment) {
+            // If indoor, notify user 
+            runOnUiThread {
+                Toast.makeText(this, "Indoor environment detected - optimizing AR", Toast.LENGTH_SHORT).show()
             }
-        )
+        }
+        
+        // Record that we configured the session
+        Log.d(TAG, "Session configured with indoor mode: $isIndoorEnvironment")
     }
     
     private fun isEarthTrackingStable(): Boolean {
@@ -656,6 +671,17 @@ class ARActivity : AppCompatActivity() {
     
     override fun onResume() {
         super.onResume()
+        
+        // Reset camera on resume to ensure fresh session
+        if (cameraRetryCount > 0) {
+            resetCamera(this)
+        }
+        
+        // Register light sensor for environment detection
+        lightSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        
         try {
             // Make sure permissions are granted before trying to resume AR
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -746,6 +772,9 @@ class ARActivity : AppCompatActivity() {
     
     override fun onPause() {
         super.onPause()
+        
+        // Unregister sensor listener
+        sensorManager.unregisterListener(this)
         
         try {
             view.onPause()
@@ -927,41 +956,33 @@ class ARActivity : AppCompatActivity() {
      * Emergency camera reset to recover from stubborn camera-in-use issues
      */
     private fun emergencyCameraReset() {
+        // Completely reset camera subsystem
         try {
-            Log.d(TAG, "Performing emergency camera reset")
-            Toast.makeText(this, "Attempting emergency camera recovery...", Toast.LENGTH_SHORT).show()
+            // Force release any camera resources
+            arCoreSessionHelper.session?.close()
             
-            // Pause session if active
-            try {
-                arCoreSessionHelper.session?.pause()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error pausing session", e)
-            }
+            // Reset camera in the OS
+            resetCamera(this)
             
-            // Use a simpler camera release approach
-            releaseCamera1Resources()
-            
-            // Force garbage collection
-            System.gc()
-            
-            // Wait a moment for system to process
-            Thread.sleep(300)
-            
-            // Try to restart
+            // Recreate session after short delay
             Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    Log.d(TAG, "Restarting after emergency camera reset")
-                    Toast.makeText(this, "Restarting camera...", Toast.LENGTH_SHORT).show()
-                    
-                    // Recreate activity for clean state
-                    recreate()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restart after camera reset", e)
-                    returnToMapMode()
+                // Configure the session for the detected environment
+                arCoreSessionHelper.onDestroy()
+                
+                // Create new helper
+                arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+                arCoreSessionHelper.beforeSessionResume = { session ->
+                    configureSession(session)
                 }
-            }, 1000)
+                
+                // Resume with new configuration
+                arCoreSessionHelper.onResume()
+                
+                Toast.makeText(this, "Camera reset complete", Toast.LENGTH_SHORT).show()
+            }, 2000)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in emergency camera reset", e)
+            Log.e(TAG, "Emergency camera reset failed", e)
+            Toast.makeText(this, "Emergency reset failed: ${e.message}", Toast.LENGTH_LONG).show()
             returnToMapMode()
         }
     }
@@ -1026,42 +1047,29 @@ class ARActivity : AppCompatActivity() {
      * Attempts to retry camera access with progressive approaches
      */
     private fun retryCameraAccess() {
-        cameraRetryCount++
-        Log.d(TAG, "Attempting to retry camera access (attempt $cameraRetryCount)")
-        
-        // Show progress indicator to user
-        Toast.makeText(this, "Retrying camera access...", Toast.LENGTH_SHORT).show()
-        
-        try {
-            if (cameraRetryCount <= MAX_CAMERA_RETRIES) {
-                // Pause current session if exists
-                arCoreSessionHelper.session?.pause()
+        if (cameraRetryCount < MAX_CAMERA_RETRIES) {
+            cameraRetryCount++
+            
+            // First reset camera access
+            val wasReset = resetCamera(this)
+            
+            // Then try to recreate the session
+            if (wasReset) {
+                Toast.makeText(this, "Retrying camera setup...", Toast.LENGTH_SHORT).show()
                 
-                // Basic cleanup
-                System.gc()
+                // Force release the current session
+                arCoreSessionHelper.session?.close()
                 
-                // Wait briefly to let resources release
+                // Create a new session with a delay
                 Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        // Try to resume the session
-                        arCoreSessionHelper.onResume()
-                        
-                        // Check if session is valid
-                        if (arCoreSessionHelper.session == null) {
-                            // Session is null, try to recreate
-                            returnToMapMode()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error resuming session in retry", e)
-                        returnToMapMode()
-                    }
+                    arCoreSessionHelper.onDestroy()
+                    arCoreSessionHelper.onResume()
                 }, 1000)
             } else {
-                // Max retries reached, return to map mode
-                returnToMapMode()
+                Toast.makeText(this, "Camera reset failed. Please restart app.", Toast.LENGTH_LONG).show()
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in retryCameraAccess", e)
+        } else {
+            Toast.makeText(this, "Maximum camera retry attempts reached", Toast.LENGTH_LONG).show()
             returnToMapMode()
         }
     }
@@ -1073,5 +1081,38 @@ class ARActivity : AppCompatActivity() {
             arrayOf(Manifest.permission.CAMERA),
             CAMERA_PERMISSION_CODE
         )
+    }
+
+    // Sensor event implementations
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type == Sensor.TYPE_LIGHT) {
+            val currentTime = System.currentTimeMillis()
+            lastLightValue = event.values[0]
+            
+            // Only change environment config periodically to avoid constant reconfiguration
+            if (currentTime - lastEnvironmentCheckTime > ENVIRONMENT_CHECK_INTERVAL) {
+                lastEnvironmentCheckTime = currentTime
+                
+                // Detect if we're indoors based on light level
+                val newIsIndoor = lastLightValue < INDOOR_LIGHT_THRESHOLD
+                
+                // If environment changed, reconfigure
+                if (isIndoorEnvironment != newIsIndoor || !hasEnvironmentBeenDetected) {
+                    isIndoorEnvironment = newIsIndoor
+                    hasEnvironmentBeenDetected = true
+                    
+                    // Only reconfigure session if it's active
+                    arCoreSessionHelper.session?.let { session ->
+                        configureSession(session)
+                    }
+                    
+                    Log.d(TAG, "Environment changed to: ${if (isIndoorEnvironment) "indoor" else "outdoor"}")
+                }
+            }
+        }
+    }
+    
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+        // Not used
     }
 } 
