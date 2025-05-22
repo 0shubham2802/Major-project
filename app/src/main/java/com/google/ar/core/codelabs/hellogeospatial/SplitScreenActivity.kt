@@ -1736,89 +1736,62 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                 // Force release camera resources first to ensure clean state
                 forceReleaseCamera()
                 
-                // Add a small delay to ensure camera resources are fully released
+                // Add a small delay to ensure camera is fully released
                 Handler(Looper.getMainLooper()).postDelayed({
-                    // Resume AR session
+                    // Resume AR session with retry mechanism
                     if (this::arCoreSessionHelper.isInitialized) {
-                        Log.d(TAG, "Resuming AR session")
+                        Log.d(TAG, "Attempting to resume AR session")
                         
-                        // CRITICAL: Try to resume session with better error handling
-                        try {
-                            arCoreSessionHelper.onResume()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error in arCoreSessionHelper.onResume()", e)
-                            // Try again with the force camera reset
-                            forceCameraReset(this)
+                        // Try to resume the session with retry logic
+                        var success = false
+                        var retryCount = 0
+                        val maxRetries = 3
+                        
+                        while (!success && retryCount < maxRetries) {
                             try {
-                                Thread.sleep(500)
+                                // Try to resume session
                                 arCoreSessionHelper.onResume()
-                            } catch (e2: Exception) {
-                                Log.e(TAG, "Retry also failed", e2)
+                                success = true
+                                Log.d(TAG, "AR session resumed successfully")
+                            } catch (e: Exception) {
+                                retryCount++
+                                Log.e(TAG, "Failed to resume AR session (attempt $retryCount/$maxRetries): ${e.message}", e)
+                                
+                                if (retryCount < maxRetries) {
+                                    // If camera error, try more aggressive reset
+                                    if (e.message?.contains("CAMERA_ERROR") == true) {
+                                        Log.d(TAG, "Detected CAMERA_ERROR, attempting aggressive reset")
+                                        forceCameraReset(this)
+                                        Thread.sleep(500) // Wait for camera reset
+                                    } else {
+                                        // For other errors, just wait a bit
+                                        Thread.sleep(300)
+                                    }
+                                } else {
+                                    // Failed after max retries, show error to user
+                                    runOnUiThread {
+                                        Toast.makeText(this, 
+                                            "Camera issue: ${e.message}. Try restarting the app.", 
+                                            Toast.LENGTH_LONG).show()
+                                        
+                                        trackingQualityIndicator?.text = "Camera error - Please restart app"
+                                        trackingQualityIndicator?.setBackgroundColor(
+                                            ContextCompat.getColor(this, android.R.color.holo_red_dark))
+                                    }
+                                }
                             }
                         }
                         
-                        // IMPORTANT ADDITION: Force refresh camera feed after resuming
-                        forceRefreshCameraFeed()
-                        
-                        // Explicitly ensure camera texture is created and set
-                        val session = arCoreSessionHelper.session
-                        if (session != null) {
-                            try {
-                                // Make sure camera texture is set to ensure camera feed appears
-                                val backgroundRenderer = renderer.accessBackgroundRenderer()
-                                if (backgroundRenderer != null) {
-                                    // CRITICAL: Create texture if needed with our improved method
-                                    try {
-                                        val success = backgroundRenderer.createCameraTexture(this)
-                                        Log.d(TAG, "Camera texture creation success: $success")
-                                        
-                                        if (!success) {
-                                            // Try again with a delay if it failed
-                                            Handler(Looper.getMainLooper()).postDelayed({
-                                                try {
-                                                    backgroundRenderer.createCameraTexture(this)
-                                                    // Set texture ID after retry
-                                                    val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-                                                    session.setCameraTextureName(textureId)
-                                                    Log.d(TAG, "Retry set camera texture ID to: $textureId")
-                                                    
-                                                    // Force a render after retry
-                                                    if (this::surfaceView.isInitialized) {
-                                                        surfaceView.requestRender()
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Log.e(TAG, "Retry texture creation failed", e)
-                                                }
-                                            }, 1000)
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error creating camera texture", e)
-                                    }
-                                    
-                                    // IMPORTANT: Set texture ID
-                                    try {
-                                        val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-                                        session.setCameraTextureName(textureId)
-                                        Log.d(TAG, "Set camera texture ID to: $textureId")
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Failed to get/set texture ID", e)
-                                    }
-                                    
-                                    // Force camera configuration to ensure proper setup
-                                    configureSession(session)
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed to set camera texture name", e)
-                            }
+                        // If we successfully resumed, ensure texture is set
+                        if (success) {
+                            // IMPORTANT ADDITION: Force refresh camera feed after resuming
+                            forceRefreshCameraFeed()
                         }
                     }
                     
-                    // Resume GL surface
+                    // Resume GL surface view
                     if (this::surfaceView.isInitialized) {
                         surfaceView.onResume()
-                        
-                        // Force a render
-                        surfaceView.requestRender()
                     }
                     
                     // Register light sensor
@@ -1826,7 +1799,6 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                         sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
                     }
                     
-                    Log.d(TAG, "AR session resumed successfully")
                 }, 500) // 500ms delay for camera reset
             } else {
                 Log.e(TAG, "Camera permission not granted - can't resume AR")
@@ -1917,58 +1889,75 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
         try {
             Log.d(TAG, "Attempting to force release camera resources")
             
-            // Use our improved camera reset function
+            // First, try to manually release all cameras using Camera2 API
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                
+                // Kill all camera processes more aggressively
+                for (cameraId in cameraManager.cameraIdList) {
+                    try {
+                        // Use reflection to access internal camera close methods
+                        val cameraManagerClass = Class.forName("android.hardware.camera2.CameraManager")
+                        val getCameraServiceMethod = cameraManagerClass.getDeclaredMethod("getCameraService")
+                        getCameraServiceMethod.isAccessible = true
+                        val cameraService = getCameraServiceMethod.invoke(cameraManager)
+                        
+                        if (cameraService != null) {
+                            // Try to call disconnect camera
+                            try {
+                                val cameraServiceClass = cameraService.javaClass
+                                val disconnectMethod = cameraServiceClass.getDeclaredMethod("disconnect", String::class.java)
+                                disconnectMethod.isAccessible = true
+                                disconnectMethod.invoke(cameraService, cameraId)
+                                Log.d(TAG, "Forcefully disconnected camera $cameraId")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error disconnecting camera $cameraId", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error releasing camera $cameraId", e)
+                    }
+                }
+            }
+            
+            // Also try Camera1 API as a fallback
+            try {
+                for (i in 0..2) { // Try all possible camera IDs
+                    try {
+                        @Suppress("DEPRECATION")
+                        val camera = android.hardware.Camera.open(i)
+                        try {
+                            Thread.sleep(100) // Brief pause
+                        } catch (ie: InterruptedException) {
+                            // Ignore
+                        }
+                        camera.release()
+                        Log.d(TAG, "Released camera $i using Camera1 API")
+                    } catch (e: Exception) {
+                        // This is expected for camera IDs that don't exist
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with Camera1 API release", e)
+            }
+            
+            // Use our helper to reset system camera
             val result = forceCameraReset(this)
             if (result) {
                 Log.d(TAG, "Camera reset performed successfully")
             } else {
-                Log.w(TAG, "Camera reset may not have fully succeeded, trying backup method")
-                
-                // Backup approach with Camera2 API
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                    
-                    // Try to explicitly close any open cameras
-                    val cameraIdList = cameraManager.cameraIdList
-                    Log.d(TAG, "Found ${cameraIdList.size} cameras")
-                    
-                    // Use reflection to access CameraManager's internal methods
-                    try {
-                        val cameraManagerClass = Class.forName("android.hardware.camera2.CameraManager")
-                        val getCameraServiceMethod = cameraManagerClass.getDeclaredMethod("getCameraService")
-                        getCameraServiceMethod.isAccessible = true
-                        
-                        // Get CameraService object
-                        val cameraService = getCameraServiceMethod.invoke(cameraManager)
-                        if (cameraService != null) {
-                            Log.d(TAG, "Successfully accessed camera service")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to access camera service via reflection", e)
-                    }
-                }
-                
-                // Try releasing with Camera1 API as a fallback
-                try {
-                    @Suppress("DEPRECATION")
-                    val camera = android.hardware.Camera.open()
-                    try {
-                        // Wait just a moment
-                        Thread.sleep(100)
-                    } catch (e: InterruptedException) {
-                        // Ignore
-                    }
-                    camera.release()
-                    Log.d(TAG, "Released camera using Camera1 API")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error with Camera1 API release: ${e.message}")
-                }
+                Log.w(TAG, "Camera reset may not have fully succeeded")
             }
             
-            // Force garbage collection to ensure any lingering camera resources are released
-            System.gc()
-            // Short delay to let GC complete
-            Thread.sleep(100)
+            // Add a more aggressive cleanup with system commands
+            try {
+                // Force garbage collection to release lingering camera references
+                System.gc()
+                // Short delay to let GC complete
+                Thread.sleep(200)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in GC cleanup", e)
+            }
             
             Log.d(TAG, "Camera resources release attempt completed")
         } catch (e: Exception) {
