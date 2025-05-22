@@ -194,15 +194,31 @@ class HelloGeoRenderer(val context: Context) :
       virtualSceneFramebuffer = Framebuffer(render, /*width=*/ 1, /*height=*/ 1)
 
       // Virtual object to render (ARCore pawn)
-      virtualObjectMesh = Mesh.createFromAsset(render, "models/pawn.obj")
-      virtualObjectShader =
-        Shader.createFromAssets(
-          render,
-          "shaders/ar_unlit_object.vert",
-          "shaders/ar_unlit_object.frag",
-          /*defines=*/ null)
-          .setTexture("u_Texture", virtualObjectTexture)
-          
+      try {
+        virtualObjectMesh = Mesh.createFromAsset(render, "models/pawn.obj")
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to load pawn mesh, using fallback", e)
+        // Use backup approach - create a fallback
+        try {
+          virtualObjectMesh = Mesh.createFromAsset(render, "models/geospatial_marker.obj")
+        } catch (e2: Exception) {
+          Log.e(TAG, "Failed to load fallback mesh, app may crash", e2)
+          throw RuntimeException("Cannot create any mesh, AR cannot work", e2)
+        }
+      }
+      
+      try {
+        virtualObjectShader =
+          Shader.createFromAssets(
+            render,
+            "shaders/ar_unlit_object.vert",
+            "shaders/ar_unlit_object.frag",
+            /*defines=*/ null)
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to create shader, using emergency shader", e)
+        virtualObjectShader = createEmergencyShader(render)
+      }
+      
       // Create arrow mesh for navigation
       try {
         // Try to load arrow model 
@@ -213,54 +229,66 @@ class HelloGeoRenderer(val context: Context) :
         arrowMesh = virtualObjectMesh
       }
           
-      arrowShader = Shader.createFromAssets(
-        render,
-        "shaders/ar_unlit_object.vert",
-        "shaders/ar_unlit_object.frag",
-        /*defines=*/ null)
-        
-      // Create texture from android resource
       try {
-        virtualObjectTexture = Texture.createFromAsset(
+        arrowShader = Shader.createFromAssets(
           render,
-          "models/pawn_texture.png",
-          Texture.WrapMode.CLAMP_TO_EDGE,
-          Texture.ColorFormat.SRGB
-        )
-        
-        arrowTexture = Texture.createFromAsset(
-          render,
-          "models/arrow_texture.png",
-          Texture.WrapMode.CLAMP_TO_EDGE,
-          Texture.ColorFormat.SRGB
-        )
+          "shaders/ar_unlit_object.vert",
+          "shaders/ar_unlit_object.frag",
+          /*defines=*/ null)
       } catch (e: Exception) {
-        Log.e(TAG, "Failed to load textures", e)
-        // Create a simple placeholder texture
-        val width = 1
-        val height = 1
-        val bytes = ByteBuffer.allocateDirect(width * height * 4)
-        bytes.put(byteArrayOf(100.toByte(), 100.toByte(), 255.toByte(), 255.toByte())) // RGBA
-        bytes.rewind()
-        virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
-        
-        // Manually create texture using GLES30 since setImage isn't available
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
-        GLES30.glTexImage2D(
-          GLES30.GL_TEXTURE_2D,
-          0, // level
-          GLES30.GL_SRGB8_ALPHA8, // internalFormat
-          width, height,
-          0, // border
-          GLES30.GL_RGBA, // format 
-          GLES30.GL_UNSIGNED_BYTE, // type
-          bytes
-        )
-        arrowTexture = virtualObjectTexture
+        Log.e(TAG, "Failed to create arrow shader, using object shader as fallback", e)
+        arrowShader = virtualObjectShader
       }
       
-      arrowShader.setTexture("u_Texture", arrowTexture)
-
+      // Create texture from android resource
+      try {
+        // Create a fallback texture regardless of whether loading succeeds
+        // This ensures virtualObjectTexture is always initialized
+        createFallbackTexture(render)
+        
+        try {
+          // Try to load the texture files, but don't let failures crash the app
+          val loadedTexture = Texture.createFromAsset(
+            render,
+            "models/pawn_texture.png",
+            Texture.WrapMode.CLAMP_TO_EDGE,
+            Texture.ColorFormat.SRGB
+          )
+          // Only assign if successfully loaded
+          if (loadedTexture != null) {
+            virtualObjectTexture = loadedTexture
+          }
+          
+          val arrowLoadedTexture = Texture.createFromAsset(
+            render,
+            "models/arrow_texture.png",
+            Texture.WrapMode.CLAMP_TO_EDGE,
+            Texture.ColorFormat.SRGB
+          )
+          // Only assign if successfully loaded
+          if (arrowLoadedTexture != null) {
+            arrowTexture = arrowLoadedTexture
+          } else {
+            arrowTexture = virtualObjectTexture
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to load textures from assets, using fallback texture", e)
+          // Already created fallback texture above, so just continue
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to create textures", e)
+        // Final fallback - create an emergency texture
+        createEmergencyTexture(render)
+      }
+      
+      // Set texture on shader safely after all texture initialization
+      try {
+        virtualObjectShader.setTexture("u_Texture", virtualObjectTexture)
+        arrowShader.setTexture("u_Texture", arrowTexture)
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to set textures on shaders", e)
+      }
+      
       // Disable depth visualization and occlusion to ensure camera feed shows properly
       backgroundRenderer.setUseDepthVisualization(render, false)
       backgroundRenderer.setUseOcclusion(render, false) // Disable occlusion for better camera reliability
@@ -1823,6 +1851,113 @@ class HelloGeoRenderer(val context: Context) :
     } else {
       // Outdoor settings
       Log.d(TAG, "Setting renderer for outdoor environment")
+    }
+  }
+
+  // Create a fallback texture when asset loading fails
+  private fun createFallbackTexture(render: SampleRender) {
+    // Create a simple colored texture
+    val width = 64
+    val height = 64
+    val pixels = IntArray(width * height)
+    
+    // Fill with a gradient pattern
+    for (y in 0 until height) {
+      for (x in 0 until width) {
+        val r = 100 + (x * 155 / width)
+        val g = 100 + (y * 155 / height)
+        val b = 200
+        val a = 255
+        pixels[y * width + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
+      }
+    }
+    
+    // Create an RGBA byte buffer from the pixel data
+    val bytes = ByteBuffer.allocateDirect(width * height * 4)
+    for (pixel in pixels) {
+      bytes.put((pixel shr 16 and 0xFF).toByte()) // R
+      bytes.put((pixel shr 8 and 0xFF).toByte())  // G
+      bytes.put((pixel and 0xFF).toByte())        // B
+      bytes.put((pixel shr 24 and 0xFF).toByte()) // A
+    }
+    bytes.rewind()
+    
+    // Create texture
+    virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
+    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
+    GLES30.glTexImage2D(
+      GLES30.GL_TEXTURE_2D,
+      0, // level
+      GLES30.GL_SRGB8_ALPHA8, // internalFormat
+      width, height,
+      0, // border
+      GLES30.GL_RGBA, // format 
+      GLES30.GL_UNSIGNED_BYTE, // type
+      bytes
+    )
+    
+    // Generate mipmaps
+    GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
+    
+    // Use the same texture for arrow initially
+    arrowTexture = virtualObjectTexture
+    
+    Log.d(TAG, "Created fallback texture with ID: ${virtualObjectTexture.getTextureId()}")
+  }
+  
+  // Last-resort texture creation for emergency situations
+  private fun createEmergencyTexture(render: SampleRender) {
+    // Create the simplest possible 1x1 texture
+    val bytes = ByteBuffer.allocateDirect(4)
+    bytes.put(byteArrayOf(255.toByte(), 0.toByte(), 0.toByte(), 255.toByte())) // RGBA (red)
+    bytes.rewind()
+    
+    virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
+    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
+    GLES30.glTexImage2D(
+      GLES30.GL_TEXTURE_2D,
+      0, // level
+      GLES30.GL_SRGB8_ALPHA8, // internalFormat
+      1, 1, // width, height (1x1 pixel)
+      0, // border
+      GLES30.GL_RGBA, // format
+      GLES30.GL_UNSIGNED_BYTE, // type
+      bytes
+    )
+    
+    // Use same texture for arrow
+    arrowTexture = virtualObjectTexture
+    
+    Log.d(TAG, "Created emergency 1x1 texture with ID: ${virtualObjectTexture.getTextureId()}")
+  }
+
+  // Create an emergency shader if normal shader loading fails
+  private fun createEmergencyShader(render: SampleRender): Shader {
+    // Instead of creating a shader from source, just reuse the AR unlit shader
+    // but with a simpler approach
+    try {
+      // Try the same path but with different approach to prevent cascade failure
+      return Shader.createFromAssets(
+        render,
+        "shaders/ar_unlit_object.vert",
+        "shaders/ar_unlit_object.frag",
+        null
+      )
+    } catch (e: Exception) {
+      // Create a truly minimal emergency shader with hardcoded paths
+      // Fall back to a built-in shader if possible
+      try {
+        return Shader.createFromAssets(
+          render,
+          "shaders/background_show_camera.vert",
+          "shaders/background_show_camera.frag",
+          null
+        )
+      } catch (e: Exception) {
+        // Last resort: log the error and return a placeholder
+        Log.e(TAG, "Failed to create any shader", e)
+        throw RuntimeException("Cannot create any shader, AR might not work", e)
+      }
     }
   }
 }
