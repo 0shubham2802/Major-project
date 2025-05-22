@@ -67,6 +67,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import com.google.ar.core.codelabs.hellogeospatial.helpers.configureSessionForEnvironment
 import com.google.ar.core.codelabs.hellogeospatial.helpers.resetCamera
+import com.google.ar.core.codelabs.hellogeospatial.helpers.forceCameraReset
 import com.google.ar.core.LightEstimate
 
 /**
@@ -1728,60 +1729,95 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                 // Force release camera resources first to ensure clean state
                 forceReleaseCamera()
                 
-                // Resume AR session
-                if (this::arCoreSessionHelper.isInitialized) {
-                    Log.d(TAG, "Resuming AR session")
-                    
-                    // CRITICAL: Try to resume session with better error handling
-                    try {
-                        arCoreSessionHelper.onResume()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error in arCoreSessionHelper.onResume()", e)
-                        // Just log error and continue - will try to recover later
-                    }
-                    
-                    // Explicitly ensure camera texture is created and set
-                    val session = arCoreSessionHelper.session
-                    if (session != null) {
+                // Add a small delay to ensure camera resources are fully released
+                Handler(Looper.getMainLooper()).postDelayed({
+                    // Resume AR session
+                    if (this::arCoreSessionHelper.isInitialized) {
+                        Log.d(TAG, "Resuming AR session")
+                        
+                        // CRITICAL: Try to resume session with better error handling
                         try {
-                            // Make sure camera texture is set to ensure camera feed appears
-                            val backgroundRenderer = renderer.accessBackgroundRenderer()
-                            if (backgroundRenderer != null) {
-                                // CRITICAL: Create texture if needed
-                                try {
-                                    backgroundRenderer.createCameraTexture(this)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error creating camera texture", e)
-                                }
-                                
-                                // IMPORTANT: Set texture ID
-                                val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-                                session.setCameraTextureName(textureId)
-                                Log.d(TAG, "Set camera texture ID to: $textureId")
-                                
-                                // Force camera configuration to ensure proper setup
-                                configureSession(session)
-                            }
+                            arCoreSessionHelper.onResume()
                         } catch (e: Exception) {
-                            Log.e(TAG, "Failed to set camera texture name", e)
+                            Log.e(TAG, "Error in arCoreSessionHelper.onResume()", e)
+                            // Try again with the force camera reset
+                            forceCameraReset(this)
+                            try {
+                                Thread.sleep(500)
+                                arCoreSessionHelper.onResume()
+                            } catch (e2: Exception) {
+                                Log.e(TAG, "Retry also failed", e2)
+                            }
+                        }
+                        
+                        // Explicitly ensure camera texture is created and set
+                        val session = arCoreSessionHelper.session
+                        if (session != null) {
+                            try {
+                                // Make sure camera texture is set to ensure camera feed appears
+                                val backgroundRenderer = renderer.accessBackgroundRenderer()
+                                if (backgroundRenderer != null) {
+                                    // CRITICAL: Create texture if needed with our improved method
+                                    try {
+                                        val success = backgroundRenderer.createCameraTexture(this)
+                                        Log.d(TAG, "Camera texture creation success: $success")
+                                        
+                                        if (!success) {
+                                            // Try again with a delay if it failed
+                                            Handler(Looper.getMainLooper()).postDelayed({
+                                                try {
+                                                    backgroundRenderer.createCameraTexture(this)
+                                                    // Set texture ID after retry
+                                                    val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                                    session.setCameraTextureName(textureId)
+                                                    Log.d(TAG, "Retry set camera texture ID to: $textureId")
+                                                    
+                                                    // Force a render after retry
+                                                    if (this::surfaceView.isInitialized) {
+                                                        surfaceView.requestRender()
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e(TAG, "Retry texture creation failed", e)
+                                                }
+                                            }, 1000)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error creating camera texture", e)
+                                    }
+                                    
+                                    // IMPORTANT: Set texture ID
+                                    try {
+                                        val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                        session.setCameraTextureName(textureId)
+                                        Log.d(TAG, "Set camera texture ID to: $textureId")
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to get/set texture ID", e)
+                                    }
+                                    
+                                    // Force camera configuration to ensure proper setup
+                                    configureSession(session)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to set camera texture name", e)
+                            }
                         }
                     }
-                }
-                
-                // Resume GL surface
-                if (this::surfaceView.isInitialized) {
-                    surfaceView.onResume()
                     
-                    // Force a render
-                    surfaceView.requestRender()
-                }
-                
-                // Register light sensor
-                lightSensor?.let {
-                    sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-                }
-                
-                Log.d(TAG, "AR session resumed successfully")
+                    // Resume GL surface
+                    if (this::surfaceView.isInitialized) {
+                        surfaceView.onResume()
+                        
+                        // Force a render
+                        surfaceView.requestRender()
+                    }
+                    
+                    // Register light sensor
+                    lightSensor?.let {
+                        sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+                    }
+                    
+                    Log.d(TAG, "AR session resumed successfully")
+                }, 500) // 500ms delay for camera reset
             } else {
                 Log.e(TAG, "Camera permission not granted - can't resume AR")
                 requestCameraPermission()
@@ -1871,44 +1907,52 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
         try {
             Log.d(TAG, "Attempting to force release camera resources")
             
-            // Try to release resources through Camera2 API if available
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            // Use our improved camera reset function
+            val result = forceCameraReset(this)
+            if (result) {
+                Log.d(TAG, "Camera reset performed successfully")
+            } else {
+                Log.w(TAG, "Camera reset may not have fully succeeded, trying backup method")
                 
-                // Try to explicitly close any open cameras
-                val cameraIdList = cameraManager.cameraIdList
-                Log.d(TAG, "Found ${cameraIdList.size} cameras")
-                
-                // Use reflection to access CameraManager's internal methods
-                try {
-                    val cameraManagerClass = Class.forName("android.hardware.camera2.CameraManager")
-                    val getCameraServiceMethod = cameraManagerClass.getDeclaredMethod("getCameraService")
-                    getCameraServiceMethod.isAccessible = true
+                // Backup approach with Camera2 API
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
                     
-                    // Get CameraService object
-                    val cameraService = getCameraServiceMethod.invoke(cameraManager)
-                    if (cameraService != null) {
-                        Log.d(TAG, "Successfully accessed camera service")
+                    // Try to explicitly close any open cameras
+                    val cameraIdList = cameraManager.cameraIdList
+                    Log.d(TAG, "Found ${cameraIdList.size} cameras")
+                    
+                    // Use reflection to access CameraManager's internal methods
+                    try {
+                        val cameraManagerClass = Class.forName("android.hardware.camera2.CameraManager")
+                        val getCameraServiceMethod = cameraManagerClass.getDeclaredMethod("getCameraService")
+                        getCameraServiceMethod.isAccessible = true
+                        
+                        // Get CameraService object
+                        val cameraService = getCameraServiceMethod.invoke(cameraManager)
+                        if (cameraService != null) {
+                            Log.d(TAG, "Successfully accessed camera service")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to access camera service via reflection", e)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to access camera service via reflection", e)
                 }
-            }
-            
-            // Try releasing with Camera1 API as a fallback
-            try {
-                @Suppress("DEPRECATION")
-                val camera = android.hardware.Camera.open()
+                
+                // Try releasing with Camera1 API as a fallback
                 try {
-                    // Wait just a moment
-                    Thread.sleep(100)
-                } catch (e: InterruptedException) {
-                    // Ignore
+                    @Suppress("DEPRECATION")
+                    val camera = android.hardware.Camera.open()
+                    try {
+                        // Wait just a moment
+                        Thread.sleep(100)
+                    } catch (e: InterruptedException) {
+                        // Ignore
+                    }
+                    camera.release()
+                    Log.d(TAG, "Released camera using Camera1 API")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error with Camera1 API release: ${e.message}")
                 }
-                camera.release()
-                Log.d(TAG, "Released camera using Camera1 API")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error with Camera1 API release: ${e.message}")
             }
             
             // Force garbage collection to ensure any lingering camera resources are released
