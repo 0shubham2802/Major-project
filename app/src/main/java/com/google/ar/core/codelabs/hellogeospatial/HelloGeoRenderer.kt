@@ -318,44 +318,6 @@ class HelloGeoRenderer(val context: Context) :
 
   override fun onDrawFrame(render: SampleRender) {
     val session = arSession ?: return
-    
-    // Handle tracking failure more gracefully
-    try {
-      // Check if session is in a valid state
-      try {
-        // There's no direct isPaused property, but we can check if we're tracking
-        val camera = session.update().camera
-        if (camera.trackingState != TrackingState.TRACKING) {
-          Log.d(TAG, "Camera not tracking, skipping frame")
-          return
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Error checking session state", e)
-        return
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Error checking session state", e)
-      return
-    }
-
-    // Texture names should be set at this point
-    if (!hasSetTextureNames) {
-      try {
-        // Recover texture name setting if it failed earlier
-        val textureId = backgroundRenderer.getCameraColorTexture().textureId
-        session.setCameraTextureName(textureId)
-        hasSetTextureNames = true
-        Log.d(TAG, "Set camera texture name: $textureId")
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to set camera texture name on draw frame", e)
-      }
-    }
-
-    // Surface must be created
-    if (!::virtualSceneFramebuffer.isInitialized) {
-      Log.w(TAG, "Surface not yet created, skipping frame")
-      return
-    }
 
     // Update session to get current frame
     displayRotationHelper.updateSessionIfNeeded(session)
@@ -380,7 +342,19 @@ class HelloGeoRenderer(val context: Context) :
       // This must be called every frame
       backgroundRenderer.updateDisplayGeometry(currentFrame)
 
-      // Let the camera adapt to environment light conditions
+      // Force draw the background camera feed in split screen mode
+      // This ensures the camera is always visible, even if AR features aren't tracking
+      if (isSplitScreenMode) {
+        try {
+          // In split screen mode, always draw camera background first
+          backgroundRenderer.drawBackground(render)
+        } catch (e: Exception) {
+          Log.e(TAG, "Error drawing camera background in split mode", e)
+          // Continue with the rest of the rendering
+        }
+      }
+
+      // Adapt to environment light conditions if available
       if (currentFrame.lightEstimate.state != LightEstimate.State.NOT_VALID) {
         // Use light estimation from ARCore to adjust rendering
         val lightEstimate = currentFrame.lightEstimate
@@ -435,11 +409,25 @@ class HelloGeoRenderer(val context: Context) :
           
           // Reduce rendering frequency in split screen mode to save battery and improve performance
           if (isSplitScreenMode && System.currentTimeMillis() % 2 == 0L) {
-            // Skip some frames in split screen mode
+            // Skip some frames in split screen mode but still draw the camera background
+            try {
+              backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+            } catch (e: Exception) {
+              Log.e(TAG, "Error drawing virtual scene in split mode skip", e)
+            }
             return
           }
         }
       } else {
+        // Still draw camera background when Earth is not tracking
+        if (isSplitScreenMode) {
+          try {
+            backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+          } catch (e: Exception) {
+            Log.e(TAG, "Error drawing virtual scene when Earth not tracking", e)
+          }
+        }
+        
         if (earth == null) {
           // First check how long we've been trying to initialize Earth
           val currentTime = System.currentTimeMillis()
@@ -461,6 +449,15 @@ class HelloGeoRenderer(val context: Context) :
       }
     } catch (e: Exception) {
       Log.e(TAG, "Exception on GL thread", e)
+      
+      // If in split screen mode, still try to draw camera background
+      if (isSplitScreenMode) {
+        try {
+          backgroundRenderer.drawBackground(render)
+        } catch (innerEx: Exception) {
+          Log.e(TAG, "Failed to draw background in exception handler", innerEx)
+        }
+      }
     }
 
     try {  
@@ -1773,28 +1770,59 @@ class HelloGeoRenderer(val context: Context) :
   private var currentLocation: LatLng? = null
 
   /**
-   * Access the background renderer for camera texture setup
+   * Access the background renderer for direct camera texture manipulation
    */
   fun accessBackgroundRenderer(): BackgroundRenderer? {
-    return if (::backgroundRenderer.isInitialized) backgroundRenderer else null
+    if (::backgroundRenderer.isInitialized) {
+      return backgroundRenderer
+    }
+    return null
   }
 
   /**
-   * Set rendering mode based on environment
+   * Explicitly re-create camera texture to fix camera feed issues
    */
-  fun setRenderingForEnvironment(indoor: Boolean) {
-    try {
-      if (indoor) {
-        // Indoor rendering optimizations
-        // Adjust for typically lower light and more constrained space
-        Log.d(TAG, "Setting indoor rendering mode")
-      } else {
-        // Outdoor rendering optimizations
-        // Adjust for bright light, greater distances, etc.
-        Log.d(TAG, "Setting outdoor rendering mode")
+  fun recreateCameraTexture(context: Context): Boolean {
+    if (::backgroundRenderer.isInitialized) {
+      try {
+        // Use the improved createCameraTexture method that returns success status
+        val success = backgroundRenderer.createCameraTexture(context)
+        
+        if (success) {
+          // Set texture ID on session
+          val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+          arSession?.setCameraTextureName(textureId)
+          Log.d(TAG, "Recreated camera texture with ID: $textureId")
+          
+          // Force a redraw
+          hasSetTextureNames = true
+          return true
+        } else {
+          Log.e(TAG, "Failed to recreate camera texture")
+          return false
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Error recreating camera texture", e)
+        return false
       }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to set rendering environment", e)
+    } else {
+      Log.e(TAG, "Cannot recreate texture - renderer not initialized")
+      return false
+    }
+  }
+  
+  /**
+   * Set rendering parameters for different environments
+   */
+  fun setRenderingForEnvironment(isIndoor: Boolean) {
+    // Adjust rendering parameters based on environment
+    // For indoor environments, we might want different handling
+    if (isIndoor) {
+      // Indoor environment may need different light settings
+      Log.d(TAG, "Setting renderer for indoor environment")
+    } else {
+      // Outdoor settings
+      Log.d(TAG, "Setting renderer for outdoor environment")
     }
   }
 }

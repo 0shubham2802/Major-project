@@ -234,6 +234,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             trackingQualityIndicator = findViewById(R.id.tracking_quality)
             surfaceView = findViewById(R.id.ar_surface_view)
             
+            // Add refresh functionality to the tracking quality indicator
+            // This allows users to tap on it to force refresh the camera feed
+            trackingQualityIndicator?.setOnClickListener {
+                Toast.makeText(this, "Refreshing camera feed...", Toast.LENGTH_SHORT).show()
+                forceRefreshCameraFeed()
+            }
+            
             // Find map navigation UI components
             mapNavigationOverlay = findViewById(R.id.map_navigation_overlay)
             mapNavDirectionText = findViewById(R.id.map_nav_direction_text)
@@ -1750,6 +1757,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                             }
                         }
                         
+                        // IMPORTANT ADDITION: Force refresh camera feed after resuming
+                        forceRefreshCameraFeed()
+                        
                         // Explicitly ensure camera texture is created and set
                         val session = arCoreSessionHelper.session
                         if (session != null) {
@@ -1970,8 +1980,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
         try {
             Log.d(TAG, "Initializing AR components")
             
-            // Get AR surface view
+            // Get AR surface view and ensure it's visible
             surfaceView = findViewById(R.id.ar_surface_view)
+            surfaceView.visibility = View.VISIBLE
             
             // Create helpers
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
@@ -1993,6 +2004,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                 }
             }
             
+            // Force release camera before initializing
+            forceCameraReset(this)
+            
             // Set up configuration
             arCoreSessionHelper.beforeSessionResume = ::configureSessionWithEnvironment
             
@@ -2002,10 +2016,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             // Initialize renderer
             renderer = HelloGeoRenderer(this)
             
+            // Specifically tell the renderer this is split screen mode
+            renderer.isSplitScreenMode = true
+            
             // Configure renderer
             renderer.setView(view)
             
-            // Configure the surface view
+            // Configure the surface view with high quality settings for better camera feed
             surfaceView.preserveEGLContextOnPause = true
             surfaceView.setEGLContextClientVersion(3)
             surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
@@ -2013,57 +2030,82 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             // Initialize the renderer with the surface view
             val sampleRender = SampleRender(surfaceView, renderer, assets)
             
-            // Try to resume the session (creates if needed)
-            arCoreSessionHelper.onResume()
-            
-            // Explicitly ensure camera texture is created and set
-            val session = arCoreSessionHelper.session
-            if (session != null) {
+            // Add a small delay before resuming session to ensure clean initialization
+            Handler(Looper.getMainLooper()).postDelayed({
                 try {
-                    // Make sure camera texture is set to ensure camera feed appears
-                    val backgroundRenderer = renderer.accessBackgroundRenderer()
-                    if (backgroundRenderer != null) {
-                        // Create texture
-                        backgroundRenderer.createCameraTexture(this)
+                    // Try to resume the session (creates if needed)
+                    arCoreSessionHelper.onResume()
+                    
+                    // Explicitly ensure camera texture is created and set
+                    val session = arCoreSessionHelper.session
+                    if (session != null) {
+                                            // Configure camera settings
+                    val config = session.config
+                    // Note: CameraDirection enum is not directly available in some ARCore versions
+                    // Using older Camera config approach instead
+                        session.configure(config)
                         
-                        // Set texture ID on session
-                        val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-                        session.setCameraTextureName(textureId)
-                        Log.d(TAG, "Initialized camera texture with ID: $textureId")
+                        try {
+                            // Make sure camera texture is set to ensure camera feed appears
+                            val backgroundRenderer = renderer.accessBackgroundRenderer()
+                            if (backgroundRenderer != null) {
+                                // Create texture with our improved method that returns success status
+                                val success = backgroundRenderer.createCameraTexture(this)
+                                Log.d(TAG, "Created camera texture, success: $success")
+                                
+                                if (success) {
+                                    // Set texture ID on session
+                                    val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                    session.setCameraTextureName(textureId)
+                                    Log.d(TAG, "Initialized camera texture with ID: $textureId")
+                                    
+                                    // Force configuration of session
+                                    configureSession(session)
+                                } else {
+                                    // If it failed, try one more time after a short delay
+                                    Handler(Looper.getMainLooper()).postDelayed({
+                                        try {
+                                            backgroundRenderer.createCameraTexture(this)
+                                            val retryTextureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                                            session.setCameraTextureName(retryTextureId)
+                                            Log.d(TAG, "Retry: Initialized camera texture with ID: $retryTextureId")
+                                            configureSession(session)
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Retry failed for camera texture", e)
+                                        }
+                                    }, 500)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to set camera texture during initialization", e)
+                        }
+                        
+                        // Check if session created successfully
+                        Log.d(TAG, "ARCore session created successfully")
+                        
+                        try {
+                            // Set the session in view
+                            view.arCoreSessionHelper = arCoreSessionHelper
+                            
+                            // Set up camera textures and configuration
+                            renderer.setSession(session)
+                            
+                            // Set tracking status display
+                            trackingQualityIndicator = findViewById(R.id.tracking_quality)
+                            
+                            // Force a render to show the camera feed
+                            surfaceView.requestRender()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error setting up AR session in view/renderer", e)
+                        }
+                    } else {
+                        Log.e(TAG, "Failed to create AR session")
+                        findViewById<TextView>(R.id.tracking_quality)?.text = "Using map only mode (AR unavailable)"
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to set camera texture during initialization", e)
+                    Log.e(TAG, "Error initializing AR session", e)
                 }
-            }
-            
-            // Check if session created successfully
-            if (session == null) {
-                Log.e(TAG, "Failed to create AR session")
-                findViewById<TextView>(R.id.tracking_quality)?.text = "Using map only mode (AR unavailable)"
-            } else {
-                Log.d(TAG, "ARCore session created successfully")
-                
-                try {
-                    // Set the session in view
-                    view.arCoreSessionHelper = arCoreSessionHelper
-                    
-                    // Set up camera textures and configuration
-                    renderer.setSession(session)
-                    
-                    // Set tracking status display
-                    trackingQualityIndicator = findViewById(R.id.tracking_quality)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error setting up AR session in view/renderer", e)
-                }
-            }
-            
-            // Try to force a reset immediately rather than scheduling it
-            try {
-                // Reset the GL surface view to ensure camera is properly initialized
-                resetGLSurfaceView()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during initial GL reset", e)
-            }
+            }, 300)  // Short delay for camera to initialize properly
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AR components", e)
@@ -2079,13 +2121,43 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             
             // Additional split-screen specific configurations
             val config = session.config
-            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
             
-            // Make sure we disable depth mode which can interfere with camera feed
+            // CRITICAL: Make sure camera is set to BACK camera for better view
+            // Camera direction setting not available in this version
+// Camera direction setting not available in this version
+            
+            // Disable rendering optimizations that might be hindering camera feed
+            config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+            
+            // Disable depth which might interfere with camera feed
             config.depthMode = Config.DepthMode.DISABLED
             
-            // Apply the configuration
+            // Disable instant placement which can affect camera feed
+            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+            
+            // Ensure focus mode is set to auto to prevent blurry camera feed
+            config.focusMode = Config.FocusMode.AUTO
+            
+            // Apply the updated configuration
             session.configure(config)
+            
+            // CRITICAL: Ensure camera texture is explicitly set
+            try {
+                val backgroundRenderer = renderer.accessBackgroundRenderer()
+                if (backgroundRenderer != null) {
+                    // Create camera texture with improved, robust method
+                    val success = backgroundRenderer.createCameraTexture(this)
+                    if (success) {
+                        val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
+                        session.setCameraTextureName(textureId)
+                        Log.d(TAG, "Successfully set camera texture ID to: $textureId")
+                    } else {
+                        Log.e(TAG, "Failed to create camera texture")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting camera texture: ${e.message}", e)
+            }
             
             // Update UI based on environment
             runOnUiThread {
@@ -2096,7 +2168,13 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                     findViewById<TextView>(R.id.tracking_quality)?.text = "Outdoor mode - optimal AR precision"
                     renderer.setRenderingForEnvironment(false)
                 }
+                
+                // Make AR surface visible (in case it was hidden)
+                findViewById<View>(R.id.ar_surface_view)?.visibility = View.VISIBLE
             }
+            
+            // Force immediate render to show camera feed
+            surfaceView.requestRender()
             
             Log.d(TAG, "AR session configured successfully for ${if (isIndoorEnvironment) "indoor" else "outdoor"} environment")
         } catch (e: Exception) {
@@ -2269,6 +2347,59 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                 params.height = ViewGroup.LayoutParams.MATCH_PARENT
                 container.layoutParams = params
             }
+        }
+    }
+    
+    /**
+     * Force refresh the camera feed by recreating textures and reconfiguring the session
+     * This function is designed to be called when the camera feed is not showing up
+     */
+    private fun forceRefreshCameraFeed() {
+        try {
+            Log.d(TAG, "Attempting to force refresh camera feed")
+            
+            // First release any existing camera resources
+            forceReleaseCamera()
+            
+            // Short delay to ensure camera is fully released
+            Thread.sleep(200)
+            
+            // Get the session
+            val session = arCoreSessionHelper.session
+            if (session != null) {
+                // Recreate the camera texture using our renderer's method
+                val success = renderer.recreateCameraTexture(this)
+                
+                if (success) {
+                    // Configure session settings
+                    val config = session.config
+                    // Camera direction setting not available in this ARCore version
+                    session.configure(config)
+                    
+                    // Force the surface view to redraw
+                    surfaceView.requestRender()
+                    
+                    // Update the tracking status
+                    trackingQualityIndicator?.text = "Camera feed refreshed"
+                    trackingQualityIndicator?.setBackgroundColor(
+                        ContextCompat.getColor(this, android.R.color.holo_green_dark)
+                    )
+                    
+                    // Make sure the AR view is visible
+                    surfaceView.visibility = View.VISIBLE
+                    
+                    Log.d(TAG, "Camera feed refresh successful")
+                } else {
+                    Log.e(TAG, "Failed to recreate camera texture")
+                    
+                    // Try a more aggressive approach - reset surface view completely
+                    resetGLSurfaceView()
+                }
+            } else {
+                Log.e(TAG, "Cannot refresh camera feed - no active session")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during camera feed refresh", e)
         }
     }
 } 
