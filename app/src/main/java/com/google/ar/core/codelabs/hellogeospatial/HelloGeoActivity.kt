@@ -120,6 +120,27 @@ class HelloGeoActivity : AppCompatActivity() {
   private val WATCHDOG_TIMEOUT_MS = 8000L // 8 seconds - increased from 5
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // Add emergency handler for stability
+    val emergencyHandler = Handler(Looper.getMainLooper())
+    val emergencyRunnable = object : Runnable {
+      override fun run() {
+        // Check if app is still responding by monitoring key operations
+        try {
+          if (::surfaceView.isInitialized && surfaceView.isAttachedToWindow) {
+            Log.d(TAG, "Emergency health check - app functioning normally")
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error in emergency health check", e)
+        }
+        
+        // Schedule next check (every 5 seconds)
+        emergencyHandler.postDelayed(this, 5000)
+      }
+    }
+    
+    // Start emergency monitoring
+    emergencyHandler.postDelayed(emergencyRunnable, 5000)
+    
     super.onCreate(savedInstanceState)
     
     try {
@@ -951,30 +972,8 @@ class HelloGeoActivity : AppCompatActivity() {
     }
   }
 
-  /**
-   * Called by the renderer when it detects critical performance issues
-   */
-  fun onRendererPoorPerformance() {
-    // Switch to a handler to avoid blocking the renderer thread
-    Handler(Looper.getMainLooper()).post {
-      try {
-        Log.w(TAG, "Critical renderer performance issue detected, switching to fallback mode")
-        
-        // Show a toast to inform the user
-        Toast.makeText(
-          this,
-          "Performance issue detected with AR view, switching to map view",
-          Toast.LENGTH_LONG
-        ).show()
-        
-        // Switch to fallback activity for better performance
-        val fallbackIntent = Intent(this, FallbackActivity::class.java)
-        fallbackIntent.putExtra("FROM_PERFORMANCE_ISSUE", true)
-        startActivity(fallbackIntent)
-        finish()
-      } catch (e: Exception) {
-        Log.e(TAG, "Error handling poor renderer performance", e)
-      }
-    }
+  override fun onDestroy() {
+    // Clean up resources
+    super.onDestroy()
   }
 }

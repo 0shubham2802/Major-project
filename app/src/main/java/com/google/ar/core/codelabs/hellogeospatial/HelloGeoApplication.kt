@@ -26,8 +26,49 @@ class HelloGeoApplication : Application() {
         // Static instance for global access
         private lateinit var instance: HelloGeoApplication
         
+        // Memory and performance flags
+        const val LOW_RESOURCE_MODE = "low_resource_mode"
+        const val LOW_RESOURCE_MODE_AUTO = "auto"
+        const val LOW_RESOURCE_MODE_FORCED = "forced"
+        const val LOW_RESOURCE_MODE_DISABLED = "disabled"
+        
+        // For adjusting performance based on device capability
+        private var lowResourceMode = LOW_RESOURCE_MODE_AUTO
+        
         fun getInstance(): HelloGeoApplication {
             return instance
+        }
+        
+        // Check if we should use low resource mode based on device specs
+        fun shouldUseLowResourceMode(): Boolean {
+            // Auto-detect based on device specs
+            val runtime = Runtime.getRuntime()
+            val maxMemory = runtime.maxMemory() / (1024 * 1024)
+            
+            // Consider low resource if < 512MB max heap
+            if (maxMemory < 512) {
+                return true
+            }
+            
+            // Check if device is known to have issues
+            val model = Build.MODEL.lowercase()
+            val manufacturer = Build.MANUFACTURER.lowercase()
+            
+            // List of known low-end device keywords
+            val lowEndKeywords = listOf("go", "lite", "a10", "a20", "j2", "j3", "j7")
+            
+            for (keyword in lowEndKeywords) {
+                if (model.contains(keyword) || manufacturer.contains(keyword)) {
+                    return true
+                }
+            }
+            
+            return false
+        }
+        
+        // For forcing low resource mode for testing
+        fun setLowResourceMode(mode: String) {
+            lowResourceMode = mode
         }
     }
     
@@ -39,6 +80,9 @@ class HelloGeoApplication : Application() {
     
     // For tracking and reporting crashes
     private var lastCrashTime = 0L
+    
+    // For storing detected device capability
+    private var isLowResourceDevice = false
     
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
@@ -63,6 +107,26 @@ class HelloGeoApplication : Application() {
         
         // Configure memory usage optimization
         setupMemoryOptimizations()
+        
+        // Check device compatibility early
+        isLowResourceDevice = shouldUseLowResourceMode()
+        Log.i(TAG, "Device running in ${if (isLowResourceDevice) "LOW RESOURCE" else "NORMAL"} mode")
+        
+        // For low resource devices, apply aggressive optimizations immediately
+        if (isLowResourceDevice) {
+            Log.i(TAG, "Applying aggressive optimizations for low-resource device")
+            // Force GC to clear memory
+            System.gc()
+            
+            // Show a notification to the user
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(
+                    this,
+                    "Running in compatibility mode for better performance",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
         
         // Log device information for debugging
         logDeviceInfo()
@@ -91,7 +155,7 @@ class HelloGeoApplication : Application() {
             Thread.getDefaultUncaughtExceptionHandler()?.uncaughtException(thread, throwable)
         }
         
-        // Initialize ANR watchdog
+        // Initialize ANR watchdog with longer timeout for low-resource devices
         setupANRWatchdog()
         
         Log.d(TAG, "Application initialized")
@@ -156,7 +220,10 @@ class HelloGeoApplication : Application() {
      */
     private fun setupANRWatchdog() {
         try {
-            anrWatchDog = ANRWatchDog(15000) // 15 second timeout (increased from 10)
+            // For low resource devices, use longer timeout
+            val timeoutMs = if (isLowResourceDevice) 20000 else 15000
+            
+            anrWatchDog = ANRWatchDog(timeoutMs)
             
             // Set ANR listener to handle freezes
             anrWatchDog.setANRListener { anrError ->
@@ -178,6 +245,9 @@ class HelloGeoApplication : Application() {
                         
                         // Cancel any pending operations
                         cancelPendingOperations()
+                        
+                        // Give the UI thread a chance to breathe
+                        Thread.sleep(100)
                         
                         // Launch fallback activity to recover
                         val fallbackIntent = Intent(applicationContext, FallbackActivity::class.java)
@@ -213,7 +283,7 @@ class HelloGeoApplication : Application() {
             
             // Start the watchdog
             anrWatchDog.start()
-            Log.d(TAG, "ANR watchdog started")
+            Log.d(TAG, "ANR watchdog started with ${timeoutMs}ms timeout")
         } catch (e: Exception) {
             Log.e(TAG, "Error setting up ANR watchdog", e)
         }

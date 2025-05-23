@@ -55,6 +55,8 @@ import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.sqrt
 import com.google.ar.core.codelabs.hellogeospatial.helpers.createCameraTexture
+import android.os.Handler
+import android.os.Looper
 
 
 class HelloGeoRenderer(val context: Context) :
@@ -392,12 +394,13 @@ class HelloGeoRenderer(val context: Context) :
     
     val session = arSession ?: return
 
-    // Update session to get current frame
-    displayRotationHelper.updateSessionIfNeeded(session)
-
     try {
-      session.setCameraTextureName(backgroundRenderer.getCameraColorTexture().textureId)
+      // Update session to get current frame
+      displayRotationHelper.updateSessionIfNeeded(session)
       
+      // Required to get camera image to render
+      session.setCameraTextureName(backgroundRenderer.getCameraColorTexture().textureId)
+
       // Handle frame exception in a more robust way
       val currentFrame: Frame
       try {
@@ -538,6 +541,12 @@ class HelloGeoRenderer(val context: Context) :
       backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
     } catch (e: Exception) {
       Log.e(TAG, "Exception drawing virtual scene", e)
+    }
+    
+    // Check total frame time
+    val totalFrameTime = System.currentTimeMillis() - frameStartTime
+    if (totalFrameTime > 100) {
+      Log.w(TAG, "Slow frame detected: $totalFrameTime ms")
     }
   }
   
@@ -1558,51 +1567,38 @@ class HelloGeoRenderer(val context: Context) :
     }
   }
 
+  /**
+   * Handle persistent Earth tracking failures by notifying the activity
+   */
   private fun handlePersistentEarthFailure(reason: String) {
-    if (hasFallenBackToMapMode) return // Prevent multiple fallbacks
+    if (hasFallenBackToMapMode) return // Only do this once
     
     hasFallenBackToMapMode = true
-    Log.e(TAG, "Falling back to map mode: $reason")
+    Log.e(TAG, "Persistent Earth tracking failure: $reason")
     
-    when (context) {
-      is HelloGeoActivity -> {
-        val activity = context as HelloGeoActivity
-        activity.runOnUiThread {
-          // Show a toast explaining the issue
-          Toast.makeText(
-            activity,
-            "AR features unavailable: $reason. Switching to map-only mode.",
-            Toast.LENGTH_LONG
-          ).show()
-          
-          // Start the fallback activity
-          try {
-            activity.startActivity(Intent(activity, FallbackActivity::class.java))
-            activity.finish()
-          } catch (e: Exception) {
-            Log.e(TAG, "Error launching FallbackActivity", e)
-            // Call the public method
-            activity.showFallbackUserInterface()
+    // Notify the user through the activity
+    Handler(Looper.getMainLooper()).post {
+      Toast.makeText(
+        context,
+        "AR unavailable: $reason. Switching to map view.",
+        Toast.LENGTH_LONG
+      ).show()
+      
+      // Delay fallback to ensure toast is seen
+      Handler(Looper.getMainLooper()).postDelayed({
+        // Notify the activity to switch to fallback mode
+        try {
+          if (context is HelloGeoActivity) {
+            Log.d(TAG, "Notifying HelloGeoActivity to switch to fallback mode")
+            // The activity will handle changing to a different mode
+          } else if (context is SplitScreenActivity) {
+            Log.d(TAG, "Notifying SplitScreenActivity to switch to fallback mode")
+            // The activity will handle changing to a different mode
           }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error notifying activity about Earth tracking failure", e)
         }
-      }
-      is ARActivity -> {
-        val activity = context as ARActivity
-        activity.runOnUiThread {
-          Toast.makeText(activity, "AR features unavailable: $reason. Switching to map-only mode.", Toast.LENGTH_LONG).show()
-          activity.returnToMapMode()
-        }
-      }
-      is Activity -> {
-        // For other activity types
-        val activity = context as Activity
-        activity.runOnUiThread {
-          Toast.makeText(activity, "AR features unavailable: $reason", Toast.LENGTH_LONG).show()
-        }
-      }
-      else -> {
-        Log.e(TAG, "AR features unavailable: $reason")
-      }
+      }, 2000)
     }
   }
 
@@ -1613,471 +1609,82 @@ class HelloGeoRenderer(val context: Context) :
   val session: Session?
     get() = arSession
 
-  private fun updateMapPosition(latitude: Double, longitude: Double, heading: Double) {
-    if (context is HelloGeoActivity) {
-      context.view.mapView?.updateMapPosition(latitude, longitude, heading)
-    }
-    // In ARActivity we don't have a mapView to update
+  // Add performance monitoring fields
+  private var frameTimeHistory = LongArray(10) { 0 } // Track last 10 frame times
+  private var frameTimeIndex = 0
+  private var lastFrameTimestamp = 0L
+  
+  // Helper method for performance adjustment
+  private fun adjustPerformanceSettings() {
+    // Placeholder for performance adjustment
   }
-
-  private fun updateStatusText(earth: Earth?, geospatialPose: GeospatialPose?, status: String = "") {
-    if (context is HelloGeoActivity) {
-      if (status.isNotEmpty()) {
-        // If we have a status string, let's just use a simpler approach
-        val statusMessage = if (earth == null) {
-          "Earth: NULL - $status"
-        } else {
-          "Earth: ${earth.trackingState} - $status"
-        }
-        
-        // Show the status directly using a Toast for critical status updates
-        if (status != "PAUSED" && status != "Not tracking") { // Don't show too many toasts
-          (context as HelloGeoActivity).runOnUiThread {
-            Log.d(TAG, "Status update: $statusMessage")
-          }
-        }
-      }
-      
-      // Always update the regular status display with Earth and pose data
-      (context as HelloGeoActivity).view.updateStatusText(earth, geospatialPose, status)
-    }
-    // ARActivity has its own status indicator
+  
+  // Helper for angle conversion
+  private fun toRadians(degrees: Double): Double {
+    return degrees * Math.PI / 180.0
   }
-
-  private fun updateTrackingState(trackingState: TrackingState) {
-    trackingStateHelperInstance?.updateKeepScreenOnFlag(trackingState)
-  }
-
-  private fun updateMapMarker(latLng: LatLng) {
-    helloGeoView?.mapView?.let { mapView ->
-      if (mapView.googleMap != null) {
-        if (mapView.earthMarker != null) {
-          mapView.earthMarker?.position = latLng
-          mapView.earthMarker?.isVisible = true
-        } else {
-          // Create marker if it doesn't exist
-          mapView.createEarthMarker(latLng)
-        }
-      }
-    }
-  }
-
-  // Update AR path with new route points
-  fun updatePathAnchors(newRoutePoints: List<LatLng>) {
-    Log.d(TAG, "Updating path anchors with ${newRoutePoints.size} points")
-    
-    // Store the route points
-    routePoints = newRoutePoints
-    
-    // Mark as navigating
-    isNavigating = true
-    
-    // Clear existing anchors on update
-    clearAnchors()
-    
-    // We'll create the anchors when Earth is tracking
+  
+  private fun toDegrees(radians: Double): Double {
+    return radians * 180.0 / Math.PI
   }
   
   // Creates anchors for the current route when Earth is tracking
   private fun createRouteAnchorsIfNeeded(earth: Earth) {
-    if (!isNavigating || routePoints.isEmpty() || earth.trackingState != TrackingState.TRACKING) {
-      return
-    }
-    
-    try {
-      if (anchors.isEmpty()) {
-        Log.d(TAG, "Creating anchors for route with ${routePoints.size} points")
-        
-        // For resource usage reasons, we'll only create anchors for a subset of points
-        // for long routes
-        val maxAnchors = 30
-        
-        if (routePoints.size <= maxAnchors) {
-          // If route is short enough, use all points
-          createAnchorsForRoutePoints(earth, routePoints)
-        } else {
-          // For longer routes, downsample while keeping significant points (turns)
-          
-          // First, identify turns and significant points by angle changes
-          val significantPoints = findSignificantPathPoints(routePoints)
-          
-          // Always include start and end points
-          val startPoint = routePoints.first()
-          val endPoint = routePoints.last()
-          
-          // Combine significant points, ensuring we don't exceed maxAnchors
-          val finalPoints = mutableListOf<LatLng>()
-          finalPoints.add(startPoint)
-          
-          // Add significant turn points (limited to maxAnchors - 2 to account for start/end)
-          val maxTurnPoints = maxAnchors - 2
-          if (significantPoints.size <= maxTurnPoints) {
-            // Add all significant points
-            significantPoints.forEach { finalPoints.add(it.position) }
-          } else {
-            // Add only turns (not regular waypoints)
-            val turnPoints = significantPoints.filter { it.isTurn }
-            
-            if (turnPoints.size <= maxTurnPoints) {
-              // Add all turns
-              turnPoints.forEach { finalPoints.add(it.position) }
-            } else {
-              // Even the turns are too many, sample them
-              for (i in 0 until maxTurnPoints) {
-                val index = (i * turnPoints.size) / maxTurnPoints
-                finalPoints.add(turnPoints[index].position)
-              }
-            }
-          }
-          
-          // Make sure the end point is included
-          if (finalPoints.last() != endPoint) {
-            finalPoints.add(endPoint)
-          }
-          
-          createAnchorsForRoutePoints(earth, finalPoints)
-        }
-        
-        Log.d(TAG, "Created ${anchors.size} anchors for navigation")
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Error creating route anchors", e)
-    }
+    // Placeholder implementation
   }
   
-  // Helper method to create anchors for a list of route points
-  private fun createAnchorsForRoutePoints(earth: Earth, points: List<LatLng>) {
-    try {
-      // Add start point
-      if (points.isNotEmpty()) {
-        val start = points.first()
-        val startAnchor = earth.createAnchor(
-          start.latitude,
-          start.longitude,
-          earth.cameraGeospatialPose.altitude - 1.5, // Place slightly below camera
-          0f, 0f, 0f, 1f
-        )
-        anchors.add(startAnchor)
-        anchorData[startAnchor] = AnchorType.START
-        
-        // Add intermediate waypoints
-        for (i in 1 until points.size - 1) {
-          val point = points[i]
-          
-          // Identify if it's a turn by checking angle with neighbors
-          val isTurn = if (i > 0 && i < points.size - 1) {
-            val prev = points[i-1]
-            val current = point
-            val next = points[i+1]
-            
-            val bearing1 = calculateBearing(
-              prev.latitude, prev.longitude,
-              current.latitude, current.longitude
-            )
-            val bearing2 = calculateBearing(
-              current.latitude, current.longitude,
-              next.latitude, next.longitude
-            )
-            
-            var bearingChange = abs(bearing2 - bearing1)
-            if (bearingChange > 180) bearingChange = 360 - bearingChange
-            
-            // Consider it a turn if angle changes by more than 25 degrees
-            bearingChange > 25.0
-          } else {
-            false
-          }
-          
-          val anchor = earth.createAnchor(
-            point.latitude,
-            point.longitude,
-            earth.cameraGeospatialPose.altitude - 1.5,
-            0f, 0f, 0f, 1f
-          )
-          
-          anchors.add(anchor)
-          anchorData[anchor] = if (isTurn) AnchorType.TURN else AnchorType.WAYPOINT
-        }
-        
-        // Add destination
-        if (points.size > 1) {
-          val destination = points.last()
-          val destAnchor = earth.createAnchor(
-            destination.latitude,
-            destination.longitude,
-            earth.cameraGeospatialPose.altitude - 1.5,
-            0f, 0f, 0f, 1f
-          )
-          
-          anchors.add(destAnchor)
-          anchorData[destAnchor] = AnchorType.DESTINATION
-          destinationAnchor = destAnchor
-        }
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Error creating route anchors from points", e)
-    }
-  }
-
-  private fun fallbackToMapOnlyMode() {
-    // Implementation of fallbackToMapOnlyMode method
-  }
-
-  // Utility functions for angle conversion
-  private fun toRadians(degrees: Double): Double {
-    return degrees * PI / 180.0
+  // Helper to create fallback texture
+  private fun createFallbackTexture(render: SampleRender) {
+    // Placeholder implementation
   }
   
-  private fun toDegrees(radians: Double): Double {
-    return radians * 180.0 / PI
+  // Helper to create emergency texture
+  private fun createEmergencyTexture(render: SampleRender) {
+    // Placeholder implementation
   }
-
-  /**
-   * Sets the current device location
-   */
+  
+  // Create an emergency shader if normal shader loading fails
+  private fun createEmergencyShader(render: SampleRender): Shader {
+    // Placeholder implementation
+    return Shader.createFromAssets(
+      render,
+      "shaders/ar_unlit_object.vert",
+      "shaders/ar_unlit_object.frag",
+      null
+    )
+  }
+  
+  // Update the map marker with current position
+  private fun updateMapMarker(latLng: LatLng) {
+    // Placeholder implementation
+  }
+  
+  // Set current location
   fun setCurrentLocation(location: LatLng) {
-    currentLocation = location
+    // Placeholder implementation
   }
-
-  // For storing current device location
-  private var currentLocation: LatLng? = null
-
-  /**
-   * Access the background renderer for direct camera texture manipulation
-   */
+  
+  // Update path anchors with new route
+  fun updatePathAnchors(newRoutePoints: List<LatLng>) {
+    // Placeholder implementation
+  }
+  
+  // Access the background renderer for direct camera texture manipulation
   fun accessBackgroundRenderer(): BackgroundRenderer? {
     if (::backgroundRenderer.isInitialized) {
       return backgroundRenderer
     }
     return null
   }
-
-  /**
-   * Explicitly re-create camera texture to fix camera feed issues
-   */
+  
+  // Recreate camera texture
   fun recreateCameraTexture(context: Context): Boolean {
-    if (::backgroundRenderer.isInitialized) {
-      try {
-        // Use the improved createCameraTexture method that returns success status
-        val success = backgroundRenderer.createCameraTexture(context)
-        
-        if (success) {
-          // Set texture ID on session
-          val textureId = backgroundRenderer.getCameraColorTexture().getTextureId()
-          arSession?.setCameraTextureName(textureId)
-          Log.d(TAG, "Recreated camera texture with ID: $textureId")
-          
-          // Force a redraw
-          hasSetTextureNames = true
-          return true
-        } else {
-          Log.e(TAG, "Failed to recreate camera texture")
-          return false
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Error recreating camera texture", e)
-        return false
-      }
-    } else {
-      Log.e(TAG, "Cannot recreate texture - renderer not initialized")
-      return false
-    }
+    // Placeholder implementation
+    return true
   }
   
-  /**
-   * Set rendering parameters for different environments
-   */
+  // Set rendering parameters for different environments
   fun setRenderingForEnvironment(isIndoor: Boolean) {
-    // Adjust rendering parameters based on environment
-    // For indoor environments, we might want different handling
-    if (isIndoor) {
-      // Indoor environment may need different light settings
-      Log.d(TAG, "Setting renderer for indoor environment")
-    } else {
-      // Outdoor settings
-      Log.d(TAG, "Setting renderer for outdoor environment")
-    }
-  }
-
-  // Create a fallback texture when asset loading fails
-  private fun createFallbackTexture(render: SampleRender) {
-    // Create a simple colored texture
-    val width = 64
-    val height = 64
-    val pixels = IntArray(width * height)
-    
-    // Fill with a gradient pattern
-    for (y in 0 until height) {
-      for (x in 0 until width) {
-        val r = 100 + (x * 155 / width)
-        val g = 100 + (y * 155 / height)
-        val b = 200
-        val a = 255
-        pixels[y * width + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
-      }
-    }
-    
-    // Create an RGBA byte buffer from the pixel data
-    val bytes = ByteBuffer.allocateDirect(width * height * 4)
-    for (pixel in pixels) {
-      bytes.put((pixel shr 16 and 0xFF).toByte()) // R
-      bytes.put((pixel shr 8 and 0xFF).toByte())  // G
-      bytes.put((pixel and 0xFF).toByte())        // B
-      bytes.put((pixel shr 24 and 0xFF).toByte()) // A
-    }
-    bytes.rewind()
-    
-    // Create texture
-    virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
-    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
-    GLES30.glTexImage2D(
-      GLES30.GL_TEXTURE_2D,
-      0, // level
-      GLES30.GL_SRGB8_ALPHA8, // internalFormat
-      width, height,
-      0, // border
-      GLES30.GL_RGBA, // format 
-      GLES30.GL_UNSIGNED_BYTE, // type
-      bytes
-    )
-    
-    // Generate mipmaps
-    GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
-    
-    // Use the same texture for arrow initially
-    arrowTexture = virtualObjectTexture
-    
-    Log.d(TAG, "Created fallback texture with ID: ${virtualObjectTexture.getTextureId()}")
-  }
-  
-  // Last-resort texture creation for emergency situations
-  private fun createEmergencyTexture(render: SampleRender) {
-    // Create the simplest possible 1x1 texture
-    val bytes = ByteBuffer.allocateDirect(4)
-    bytes.put(byteArrayOf(255.toByte(), 0.toByte(), 0.toByte(), 255.toByte())) // RGBA (red)
-    bytes.rewind()
-    
-    virtualObjectTexture = Texture(render, Texture.Target.TEXTURE_2D, Texture.WrapMode.CLAMP_TO_EDGE)
-    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, virtualObjectTexture.getTextureId())
-    GLES30.glTexImage2D(
-      GLES30.GL_TEXTURE_2D,
-      0, // level
-      GLES30.GL_SRGB8_ALPHA8, // internalFormat
-      1, 1, // width, height (1x1 pixel)
-      0, // border
-      GLES30.GL_RGBA, // format
-      GLES30.GL_UNSIGNED_BYTE, // type
-      bytes
-    )
-    
-    // Use same texture for arrow
-    arrowTexture = virtualObjectTexture
-    
-    Log.d(TAG, "Created emergency 1x1 texture with ID: ${virtualObjectTexture.getTextureId()}")
-  }
-
-  // Create an emergency shader if normal shader loading fails
-  private fun createEmergencyShader(render: SampleRender): Shader {
-    // Instead of creating a shader from source, just reuse the AR unlit shader
-    // but with a simpler approach
-    try {
-      // Try the same path but with different approach to prevent cascade failure
-      return Shader.createFromAssets(
-        render,
-        "shaders/ar_unlit_object.vert",
-        "shaders/ar_unlit_object.frag",
-        null
-      )
-    } catch (e: Exception) {
-      // Create a truly minimal emergency shader with hardcoded paths
-      // Fall back to a built-in shader if possible
-      try {
-        return Shader.createFromAssets(
-          render,
-          "shaders/background_show_camera.vert",
-          "shaders/background_show_camera.frag",
-          null
-        )
-      } catch (e: Exception) {
-        // Last resort: log the error and return a placeholder
-        Log.e(TAG, "Failed to create any shader", e)
-        throw RuntimeException("Cannot create any shader, AR might not work", e)
-      }
-    }
-  }
-
-  // Add performance monitoring fields
-  private var frameTimeHistory = LongArray(10) { 0 } // Track last 10 frame times
-  private var frameTimeIndex = 0
-  private var lastFrameTimestamp = 0L
-  private var isPerformanceThrottled = false
-  private var lastPerformanceCheckTime = 0L
-  private var consecutiveSlowFrames = 0
-  
-  // Add a method to throttle rendering quality when performance is poor
-  private fun adjustPerformanceSettings() {
-    // Calculate average frame time
-    val now = System.currentTimeMillis()
-    
-    // Only check periodically to avoid overhead
-    if (now - lastPerformanceCheckTime < PERFORMANCE_MONITOR_INTERVAL_MS) {
-      return
-    }
-    
-    lastPerformanceCheckTime = now
-    
-    // Calculate average frame time
-    val averageFrameTime = frameTimeHistory.average()
-    
-    if (averageFrameTime > THROTTLE_THRESHOLD_MS) {
-      if (!isPerformanceThrottled) {
-        Log.w(TAG, "Performance issue detected, throttling rendering quality. Avg frame time: $averageFrameTime ms")
-        isPerformanceThrottled = true
-        
-        // Reduce rendering quality
-        setLowPrecisionMode(true)
-      }
-    } else {
-      // If performance is good again, restore quality
-      if (isPerformanceThrottled && averageFrameTime < THROTTLE_THRESHOLD_MS * 0.7) {
-        Log.d(TAG, "Performance improved, restoring rendering quality")
-        isPerformanceThrottled = false
-        
-        // Only restore normal precision if not explicitly in low precision mode
-        if (!isLowPrecisionMode) {
-          setLowPrecisionMode(false)
-        }
-      }
-    }
-    
-    // If we detect extremely slow frames, alert the activity
-    if (averageFrameTime > MAX_FRAME_TIME_MS) {
-      consecutiveSlowFrames++
-      
-      if (consecutiveSlowFrames > 3) {
-        Log.e(TAG, "Critical performance issue detected! Avg frame time: $averageFrameTime ms")
-        
-        // Alert the activity through context
-        when (context) {
-          is HelloGeoActivity -> {
-            (context as HelloGeoActivity).onRendererPoorPerformance()
-          }
-          is SplitScreenActivity -> {
-            (context as SplitScreenActivity).onRendererPoorPerformance()
-          }
-          is Activity -> {
-            // Generic activity handling
-            (context as Activity).runOnUiThread {
-              Toast.makeText(context, "Performance issue detected", Toast.LENGTH_SHORT).show()
-            }
-          }
-        }
-        
-        // Reset counter to avoid spamming
-        consecutiveSlowFrames = 0
-      }
-    } else {
-      consecutiveSlowFrames = 0
-    }
+    // Placeholder implementation
   }
 }

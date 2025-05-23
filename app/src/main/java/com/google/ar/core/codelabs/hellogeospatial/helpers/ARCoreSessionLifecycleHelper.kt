@@ -16,77 +16,37 @@
 package com.google.ar.core.codelabs.hellogeospatial.helpers
 
 import android.app.Activity
+import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.Config
 import com.google.ar.core.Session
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import com.google.ar.core.codelabs.hellogeospatial.helpers.resetCamera
+import com.google.ar.core.codelabs.hellogeospatial.HelloGeoApplication
+import com.google.ar.core.codelabs.hellogeospatial.FallbackActivity
 
-
+/**
+ * Manages an ARCore Session using the Android Lifecycle APIs.
+ */
 class ARCoreSessionLifecycleHelper(
   val activity: Activity,
   val features: Set<Session.Feature> = setOf()
 ) : DefaultLifecycleObserver {
-  
-  companion object {
-    private const val TAG = "ARCoreSessionHelper"
-    private const val MAX_RETRY_ATTEMPTS = 3
-    private const val RETRY_DELAY_MS = 500L
-  }
-  
   var installRequested = false
   var session: Session? = null
     private set
 
   var exceptionCallback: ((Exception) -> Unit)? = null
   var beforeSessionResume: ((Session) -> Unit)? = null
-  var onLifecycleOwner: LifecycleOwner? = null
-    set(value) {
-      field = value
-      field?.lifecycle?.addObserver(this)
-    }
 
   private var retryCount = 0
   private var lastException: Exception? = null
-
-  private fun tryCreateSession(): Session? {
-    // The app must have been given the CAMERA permission. If we don't have it yet, request it.
-    if (!GeoPermissionsHelper.hasGeoPermissions(activity)) {
-      GeoPermissionsHelper.requestPermissions(activity)
-      return null
-    }
-
-    return try {
-      // Request installation if necessary.
-      when (ArCoreApk.getInstance().requestInstall(activity, !installRequested)!!) {
-        ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
-          installRequested = true
-          // tryCreateSession will be called again, so we return null for now.
-          return null
-        }
-        ArCoreApk.InstallStatus.INSTALLED -> {
-          // Left empty; nothing needs to be done.
-        }
-      }
-
-      // Create a session if Google Play Services for AR is installed and up to date.
-      val newSession = Session(activity, features)
-      Log.d(TAG, "Session created successfully")
-      
-      // Reset retry count on success
-      retryCount = 0
-      lastException = null
-      
-      newSession
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to create AR session", e)
-      lastException = e
-      exceptionCallback?.invoke(e)
-      null
-    }
-  }
+  private val MAX_RETRY_ATTEMPTS = 3
+  private val RETRY_DELAY_MS = 500L
 
   // Non-lifecycle version of onResume
   fun onResume() {
@@ -96,9 +56,6 @@ class ARCoreSessionLifecycleHelper(
       beforeSessionResume?.invoke(session)
       session.resume()
       this.session = session
-      
-      // Reset retry count on successful resume
-      retryCount = 0
       Log.d(TAG, "Session resumed successfully")
     } catch (e: CameraNotAvailableException) {
       Log.e(TAG, "Camera not available during onResume", e)
@@ -158,5 +115,68 @@ class ARCoreSessionLifecycleHelper(
 
   override fun onDestroy(owner: LifecycleOwner) {
     onDestroy()
+  }
+
+  private fun tryCreateSession(): Session? {
+    // The app must have been given the CAMERA permission. If we don't have it yet, request it.
+    if (!GeoPermissionsHelper.hasGeoPermissions(activity)) {
+      GeoPermissionsHelper.requestPermissions(activity)
+      return null
+    }
+
+    return try {
+      // Request installation if necessary.
+      when (ArCoreApk.getInstance().requestInstall(activity, !installRequested)!!) {
+        ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
+          installRequested = true
+          // tryCreateSession will be called again, so we return null for now.
+          return null
+        }
+        ArCoreApk.InstallStatus.INSTALLED -> {
+          // Left empty; nothing needs to be done.
+        }
+      }
+
+      // Create a session if Google Play Services for AR is installed and up to date.
+      val newSession = Session(activity, features)
+      
+      // Configure the session
+      val config = Config(newSession)
+      config.geospatialMode = Config.GeospatialMode.ENABLED
+      
+      // Check depth support
+      if (newSession.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+        config.depthMode = Config.DepthMode.AUTOMATIC
+      }
+      
+      // Check if device is low-end
+      if (HelloGeoApplication.shouldUseLowResourceMode()) {
+        // Apply optimizations for low-end devices
+        Log.i(TAG, "Using performance settings for low-resource device")
+        config.focusMode = Config.FocusMode.FIXED
+      } else {
+        config.focusMode = Config.FocusMode.AUTO
+      }
+      
+      // Apply configuration
+      newSession.configure(config)
+      
+      Log.d(TAG, "Session created successfully")
+      
+      // Reset retry count on success
+      retryCount = 0
+      lastException = null
+      
+      newSession
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to create AR session", e)
+      lastException = e
+      exceptionCallback?.invoke(e)
+      null
+    }
+  }
+
+  companion object {
+    private const val TAG = "ARCoreSessionHelper"
   }
 }

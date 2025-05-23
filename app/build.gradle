@@ -28,46 +28,23 @@ android {
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments = [
-                    disableProcessing: 'true'
+                    'room.incremental': 'true',
                 ]
             }
         }
     }
     
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }
-    
-    kotlinOptions {
-        jvmTarget = '1.8'
-    }
-    
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            // Enable memory and performance optimizations for debugging
-            debuggable true
+            // Disable optimization for debug to ensure easier testing
             minifyEnabled false
-            // Optimize dex for faster app startup in debug mode
-            crunchPngs false
-            renderscriptDebuggable false
-            renderscriptOptimLevel 3
+            shrinkResources false
         }
-    }
-    
-    // Add dexOptions for better memory usage during builds
-    dexOptions {
-        javaMaxHeapSize "2g"
-        preDexLibraries true
-        incremental true
-    }
-    
-    lintOptions {
-        abortOnError false
     }
     
     // Add splits for better APK size management
@@ -75,15 +52,37 @@ android {
         abi {
             enable true
             reset()
-            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
-            universalApk true
+            include 'arm64-v8a'
+            universalApk false
         }
     }
     
+    // Better resource optimization
+    aaptOptions {
+        cruncherEnabled = true
+    }
+    
+    lintOptions {
+        abortOnError false
+    }
+    
     packagingOptions {
-        resources {
-            excludes += ['META-INF/LICENSE', 'META-INF/NOTICE']
-        }
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
     }
 }
 
