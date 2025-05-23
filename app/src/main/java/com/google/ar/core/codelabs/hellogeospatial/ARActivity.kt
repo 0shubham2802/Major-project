@@ -51,6 +51,8 @@ import com.google.ar.core.codelabs.hellogeospatial.helpers.configureSessionForEn
 import com.google.ar.core.codelabs.hellogeospatial.helpers.resetCamera
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
+import android.widget.FrameLayout
+import android.view.Gravity
 
 class ARActivity : AppCompatActivity(), SensorEventListener {
     companion object {
@@ -198,106 +200,75 @@ class ARActivity : AppCompatActivity(), SensorEventListener {
             view = HelloGeoView(this)
             
             // Set the surfaceView in our custom view
-            // Need to access the view's surfaceView property to set it
-            val field = HelloGeoView::class.java.getDeclaredField("surfaceView")
-            field.isAccessible = true
-            field.set(view, surfaceView)
+            view.initialize(surfaceView)
             
-            // Initialize renderer
-            renderer = HelloGeoRenderer(this)
-            
-            // Set the renderer's view reference
-            renderer.setView(view)
-            
-            // Create and initialize ARCore session
+            // Create ARCore session if possible - with improved error handling
             arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
-            
-            // Configure ARCore session - we'll use our environment detection
-            arCoreSessionHelper.beforeSessionResume = { session ->
-                configureSession(session)
-            }
-            
-            // Set lifecycle owner for session helper
-            arCoreSessionHelper.onLifecycleOwner = this
-            
-            // Set enhanced exception handler with recovery options
             arCoreSessionHelper.exceptionCallback = { exception ->
                 val message = when (exception) {
-                    is UnavailableUserDeclinedInstallationException -> "Please install ARCore"
-                    is UnavailableApkTooOldException -> "Please update ARCore"
-                    is UnavailableSdkTooOldException -> "Please update this app"
-                    is UnavailableDeviceNotCompatibleException -> "This device does not support AR"
-                    is CameraNotAvailableException -> "Camera is not available - may be in use by another app"
-                    else -> "Failed to initialize AR: $exception"
+                    is UnavailableDeviceNotCompatibleException -> 
+                        "This device does not support AR"
+                    is UnavailableApkTooOldException ->
+                        "Please update ARCore"
+                    is UnavailableSdkTooOldException ->
+                        "Please update the app"
+                    is UnavailableUserDeclinedInstallationException ->
+                        "Please install ARCore"
+                    is CameraNotAvailableException -> {
+                        // If camera is not available, try to reset it
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            retryCameraAccess()
+                        }, 1000)
+                        "Camera not available - trying to reset"
+                    }
+                    else -> 
+                        "Failed to create AR session: ${exception.message}"
                 }
-                Log.e(TAG, "ARCore threw an exception", exception)
+                
+                Log.e(TAG, "ARCore error: $message", exception)
                 arStatusMessage = message
                 
-                // Special handling for camera issues
-                if (exception is CameraNotAvailableException) {
-                    runOnUiThread {
-                        // Offer camera recovery options
-                        AlertDialog.Builder(this)
-                            .setTitle("Camera Not Available")
-                            .setMessage("The camera appears to be in use by another app. Would you like to attempt recovery?")
-                            .setPositiveButton("EMERGENCY RESET") { dialog, _ ->
-                                dialog.dismiss()
-                                emergencyCameraReset()
-                            }
-                            .setNegativeButton("MAP MODE") { dialog, _ ->
-                                dialog.dismiss()
-                                returnToMapMode()
-                            }
-                            .setCancelable(false)
-                            .show()
+                // Update UI to show the error
+                runOnUiThread {
+                    updateStatusText(message)
+                    
+                    // Always try to show something rather than a blank screen
+                    if (exception is CameraNotAvailableException) {
+                        // Transparent background to show at least the map
+                        surfaceView.setBackgroundColor(Color.TRANSPARENT)
                     }
-                } else {
-                    // For other errors, just return to map mode
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            // Create the renderer using our current context
+            renderer = HelloGeoRenderer(this)
+            renderer.setView(view)
+            
+            // Set up the renderer to be used by the view
+            view.setRenderer(renderer)
+            
+            // Set AR initialization timeout
+            arInitializationTimeoutHandler.postDelayed({
+                if (!view.isArSessionCreated()) {
+                    Log.w(TAG, "AR initialization timeout - falling back to map mode")
+                    Toast.makeText(this, "AR initialization timed out", Toast.LENGTH_LONG).show()
                     returnToMapMode()
                 }
-            }
+            }, AR_INITIALIZATION_TIMEOUT)
             
-            // Register the renderer as a lifecycle observer
-            lifecycle.addObserver(renderer)
+            // Reset camera on start to ensure clean state
+            forceCameraReset()
             
-            // Need to call onResume to potentially create the session
-            arCoreSessionHelper.onResume()
-            
-            // Now try to get the session - it might be available after onResume
-            val session = arCoreSessionHelper.session
-
-            if (session != null) {
-                Log.d(TAG, "Session created successfully")
-                // We have a session, set it up in the view and renderer
-                view.setupSession(session)
-                renderer.setSession(session)
-                
-                // Set up SampleRender to draw the AR scene
-                SampleRender(surfaceView, renderer, assets)
-                
-                // Set timeout for AR initialization
-                startARInitializationTimeout()
-                
-                // Set navigation state
-                if (destinationLatLng != null) {
-                    // Start navigation to provided destination
-                    setARDestination(destinationLatLng!!)
-                }
-            } else {
-                Log.e(TAG, "Failed to create ARCore session")
-                Toast.makeText(this, "Could not initialize AR - please try again", Toast.LENGTH_SHORT).show()
-                returnToMapMode()
-                return
-            }
-            
-            // Set up ARCore session lifecycle
-            lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+            // Start tracking device orientation
+            setupSensors()
             
         } catch (e: Exception) {
             Log.e(TAG, "Error in onCreate", e)
-            showError("Failed to initialize AR: ${e.message}")
+            Toast.makeText(this, "Error starting AR: ${e.message}", Toast.LENGTH_LONG).show()
+            returnToMapMode()
         }
+        
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
     }
     
     private fun initNavigationUI() {
@@ -806,10 +777,27 @@ class ARActivity : AppCompatActivity(), SensorEventListener {
     }
     
     fun returnToMapMode() {
-        // Exit AR mode and return to map mode
-        val intent = Intent(this, FallbackActivity::class.java)
-        startActivity(intent)
-        finish()
+        try {
+            Log.d(TAG, "Returning to map mode due to AR failure")
+            
+            // Create intent to return to main activity with fallback flag
+            val intent = Intent(this, HelloGeoActivity::class.java)
+            intent.putExtra("FALLBACK_FROM_AR", true)
+            
+            // If we have a destination, pass it back
+            destinationLatLng?.let { destination ->
+                intent.putExtra("DESTINATION_LAT", destination.latitude)
+                intent.putExtra("DESTINATION_LNG", destination.longitude)
+            }
+            
+            startActivity(intent)
+            finish()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error returning to map mode", e)
+            
+            // Last resort if even returning to map fails
+            finishAffinity()
+        }
     }
     
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -953,37 +941,147 @@ class ARActivity : AppCompatActivity(), SensorEventListener {
     }
 
     /**
-     * Emergency camera reset to recover from stubborn camera-in-use issues
+     * Emergency camera reset when things go wrong
      */
     private fun emergencyCameraReset() {
-        // Completely reset camera subsystem
         try {
-            // Force release any camera resources
-            arCoreSessionHelper.session?.close()
+            Log.d(TAG, "Performing emergency camera reset")
             
-            // Reset camera in the OS
+            // First try to forcibly reset camera
+            if (forceCameraReset()) {
+                // Show progress to user
+                val progressBar = findViewById<ProgressBar>(R.id.progress_circular)
+                progressBar?.visibility = View.VISIBLE
+                
+                // Create a status card dynamically
+                val cardView = createStatusCard()
+                cardView.visibility = View.VISIBLE
+                
+                Toast.makeText(this, "Camera reconnection in progress...", Toast.LENGTH_LONG).show()
+                
+                // Wait a bit then retry the session
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        // Recreate the session after reset
+                        arCoreSessionHelper.session?.close()
+                        arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
+                        
+                        // Update UI
+                        progressBar?.visibility = View.GONE
+                        Toast.makeText(this, "Camera reconnected", Toast.LENGTH_SHORT).show()
+                        
+                        // Keep the status card visible for a bit longer
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            cardView.visibility = View.GONE
+                        }, 3000)
+                        
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to recreate session after camera reset", e)
+                        Toast.makeText(this, "Failed to restart AR - returning to map", Toast.LENGTH_LONG).show()
+                        returnToMapMode()
+                    }
+                }, 2000)
+            } else {
+                // If camera reset failed, go back to map mode
+                Toast.makeText(this, "Camera reset failed - returning to map mode", Toast.LENGTH_LONG).show()
+                returnToMapMode()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in emergency camera reset", e)
+            returnToMapMode()
+        }
+    }
+    
+    /**
+     * Create a status card dynamically for showing camera reset progress
+     */
+    private fun createStatusCard(): CardView {
+        val cardView = CardView(this).apply {
+            id = View.generateViewId()
+            radius = 16f
+            cardElevation = 8f
+            setCardBackgroundColor(Color.argb(200, 0, 0, 0))
+            
+            val params = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP
+                setMargins(32, 160, 32, 0)
+            }
+            
+            layoutParams = params
+        }
+        
+        // Add status text
+        val statusText = TextView(this).apply {
+            text = "Camera reconnection in progress..."
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(24, 24, 24, 24)
+        }
+        
+        cardView.addView(statusText)
+        
+        // Add to the root layout
+        val rootLayout = findViewById<FrameLayout>(android.R.id.content)
+        rootLayout.addView(cardView)
+        
+        return cardView
+    }
+    
+    /**
+     * Retry camera access with improved error handling
+     */
+    private fun retryCameraAccess() {
+        try {
+            cameraRetryCount++
+            Log.d(TAG, "Attempting to retry camera access (attempt $cameraRetryCount)")
+            
+            // If we've tried too many times, fall back to map mode
+            if (cameraRetryCount >= MAX_CAMERA_RETRIES) {
+                Log.w(TAG, "Exceeded maximum camera retries, falling back to map mode")
+                Toast.makeText(
+                    this,
+                    "Camera reconnection failed after $MAX_CAMERA_RETRIES attempts",
+                    Toast.LENGTH_LONG
+                ).show()
+                returnToMapMode()
+                return
+            }
+            
+            // First reset the camera to ensure a clean state
             resetCamera(this)
             
-            // Recreate session after short delay
-            Handler(Looper.getMainLooper()).postDelayed({
-                // Configure the session for the detected environment
-                arCoreSessionHelper.onDestroy()
-                
-                // Create new helper
-                arCoreSessionHelper = ARCoreSessionLifecycleHelper(this)
-                arCoreSessionHelper.beforeSessionResume = { session ->
-                    configureSession(session)
+            // Show status to user
+            Toast.makeText(
+                this,
+                "Retrying camera connection (${cameraRetryCount}/${MAX_CAMERA_RETRIES})",
+                Toast.LENGTH_SHORT
+            ).show()
+            
+            // Try to recreate the session
+            arCoreSessionHelper.session?.let { session ->
+                try {
+                    session.resume()
+                    Log.d(TAG, "Successfully resumed existing session")
+                } catch (e: CameraNotAvailableException) {
+                    Log.e(TAG, "Failed to resume session", e)
+                    
+                    // More aggressive approach - restart camera subsystem
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        emergencyCameraReset()
+                    }, 500)
                 }
-                
-                // Resume with new configuration
-                arCoreSessionHelper.onResume()
-                
-                Toast.makeText(this, "Camera reset complete", Toast.LENGTH_SHORT).show()
-            }, 2000)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Emergency camera reset failed", e)
-            Toast.makeText(this, "Emergency reset failed: ${e.message}", Toast.LENGTH_LONG).show()
-            returnToMapMode()
+            Log.e(TAG, "Error retrying camera access", e)
+            Toast.makeText(this, "Camera retry failed: ${e.message}", Toast.LENGTH_LONG).show()
+            
+            if (cameraRetryCount >= MAX_CAMERA_RETRIES) {
+                returnToMapMode()
+            }
         }
     }
     
@@ -1043,37 +1141,6 @@ class ARActivity : AppCompatActivity(), SensorEventListener {
         // Simplified to avoid potential issues
     }
 
-    /**
-     * Attempts to retry camera access with progressive approaches
-     */
-    private fun retryCameraAccess() {
-        if (cameraRetryCount < MAX_CAMERA_RETRIES) {
-            cameraRetryCount++
-            
-            // First reset camera access
-            val wasReset = resetCamera(this)
-            
-            // Then try to recreate the session
-            if (wasReset) {
-                Toast.makeText(this, "Retrying camera setup...", Toast.LENGTH_SHORT).show()
-                
-                // Force release the current session
-                arCoreSessionHelper.session?.close()
-                
-                // Create a new session with a delay
-                Handler(Looper.getMainLooper()).postDelayed({
-                    arCoreSessionHelper.onDestroy()
-                    arCoreSessionHelper.onResume()
-                }, 1000)
-            } else {
-                Toast.makeText(this, "Camera reset failed. Please restart app.", Toast.LENGTH_LONG).show()
-            }
-        } else {
-            Toast.makeText(this, "Maximum camera retry attempts reached", Toast.LENGTH_LONG).show()
-            returnToMapMode()
-        }
-    }
-
     // Add method to get camera permission if missing
     private fun requestCameraPermission() {
         ActivityCompat.requestPermissions(
@@ -1114,5 +1181,59 @@ class ARActivity : AppCompatActivity(), SensorEventListener {
     
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
         // Not used
+    }
+
+    // Update status text displayed to the user
+    private fun updateStatusText(message: String) {
+        runOnUiThread {
+            trackingQualityIndicator?.let {
+                it.text = message
+                it.visibility = View.VISIBLE
+            } ?: run {
+                Log.w(TAG, "Could not update status text - view is null")
+            }
+        }
+    }
+    
+    // Setup sensors for device orientation tracking
+    private fun setupSensors() {
+        try {
+            // Register the light sensor for environment detection
+            lightSensor?.let { sensor ->
+                sensorManager.registerListener(
+                    this,
+                    sensor,
+                    SensorManager.SENSOR_DELAY_NORMAL
+                )
+                Log.d(TAG, "Light sensor registered")
+            } ?: run {
+                Log.w(TAG, "Light sensor not available on this device")
+            }
+            
+            // Other sensor registration can be added here
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting up sensors", e)
+        }
+    }
+    
+    // Force camera reset when needed
+    private fun forceCameraReset(): Boolean {
+        try {
+            // Call the helper function to reset camera
+            val wasReset = com.google.ar.core.codelabs.hellogeospatial.helpers.forceCameraReset(this)
+            
+            if (!wasReset) {
+                Log.w(TAG, "Camera reset failed")
+                Toast.makeText(this, "Camera reset failed", Toast.LENGTH_SHORT).show()
+            } else {
+                Log.d(TAG, "Camera reset succeeded")
+            }
+            return wasReset
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during camera reset", e)
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            return false
+        }
     }
 } 

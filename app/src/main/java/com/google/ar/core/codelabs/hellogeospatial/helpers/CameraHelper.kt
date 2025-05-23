@@ -8,6 +8,8 @@ import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRen
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "CameraHelper"
 
@@ -103,66 +105,101 @@ fun resetCamera(context: Context): Boolean {
  * Enhanced with more aggressive recovery options for outdoor use
  */
 fun forceCameraReset(context: Context): Boolean {
+  val executor = Executors.newSingleThreadExecutor()
+  
   try {
     Log.d(TAG, "Forcing aggressive camera reset to recover from CAMERA_ERROR")
     
-    // First do a basic reset
-    resetCamera(context)
-    
-    // Force garbage collection to release camera resources
-    System.gc()
-    Thread.sleep(100)
-    
-    // Try multiple approaches to reset camera
-    var success = false
-    
-    // Approach 1: Basic Camera1 reset
-    try {
-      @Suppress("DEPRECATION")
-      val camera = android.hardware.Camera.open()
-      camera.release()
-      success = true
-      Log.d(TAG, "Basic camera reset successful")
-    } catch (e: Exception) {
-      Log.e(TAG, "Error with basic camera reset: ${e.message}")
-    }
-    
-    // Approach 2: Camera service reset - more aggressive
-    if (!success) {
-      try {
-        val process = Runtime.getRuntime().exec("dumpsys media.camera reset")
-        process.waitFor()
-        success = true
-        Log.d(TAG, "Camera service reset successful")
-      } catch (e: Exception) {
-        Log.e(TAG, "Camera service reset failed: ${e.message}")
-      }
-    }
-    
-    // Approach 3: Camera kill - most aggressive (requires root, will fail gracefully)
-    if (!success) {
-      try {
-        Runtime.getRuntime().exec("killall -9 android.hardware.camera")
-        Thread.sleep(200)
-        success = true
-        Log.d(TAG, "Camera process kill attempted")
-      } catch (e: Exception) {
-        // Expected to fail on non-rooted devices
-        Log.d(TAG, "Camera process kill failed (expected on non-rooted devices)")
-      }
-    }
-    
-    // Final delay to let camera system recover
-    Thread.sleep(200)
-    
-    // Show toast message for user feedback on outdoor recovery attempt
+    // Show toast immediately to inform user
     Handler(Looper.getMainLooper()).post {
       Toast.makeText(context, 
           "Camera reconnection in progress...", 
-          Toast.LENGTH_SHORT).show()
+          Toast.LENGTH_LONG).show()
     }
     
-    return true
+    // Run camera reset in background thread with timeout
+    val future = executor.submit<Boolean> {
+      try {
+        // First do a basic reset
+        resetCamera(context)
+        
+        // Force garbage collection to release camera resources
+        System.gc()
+        Thread.sleep(100)
+        
+        // Try multiple approaches to reset camera
+        var success = false
+        
+        // Approach 1: Basic Camera1 reset
+        try {
+          @Suppress("DEPRECATION")
+          val camera = android.hardware.Camera.open()
+          camera.release()
+          success = true
+          Log.d(TAG, "Basic camera reset successful")
+        } catch (e: Exception) {
+          Log.e(TAG, "Error with basic camera reset: ${e.message}")
+        }
+        
+        // Approach 2: Camera service reset - more aggressive
+        if (!success) {
+          try {
+            val process = Runtime.getRuntime().exec("dumpsys media.camera reset")
+            process.waitFor(500, TimeUnit.MILLISECONDS) // Add timeout
+            success = true
+            Log.d(TAG, "Camera service reset successful")
+          } catch (e: Exception) {
+            Log.e(TAG, "Camera service reset failed: ${e.message}")
+          }
+        }
+        
+        // Approach 3: Camera kill - most aggressive (requires root, will fail gracefully)
+        if (!success) {
+          try {
+            Runtime.getRuntime().exec("killall -9 android.hardware.camera")
+            Thread.sleep(200)
+            success = true
+            Log.d(TAG, "Camera process kill attempted")
+          } catch (e: Exception) {
+            // Expected to fail on non-rooted devices
+            Log.d(TAG, "Camera process kill failed (expected on non-rooted devices)")
+          }
+        }
+        
+        // Final delay to let camera system recover
+        Thread.sleep(200)
+        
+        // Update UI to indicate camera reset completed
+        Handler(Looper.getMainLooper()).post {
+          Toast.makeText(context, 
+              "Camera reconnection completed", 
+              Toast.LENGTH_SHORT).show()
+        }
+        
+        success
+      } catch (e: Exception) {
+        Log.e(TAG, "Error in camera reset thread", e)
+        false
+      }
+    }
+    
+    // Set a timeout for the camera reset operation to prevent ANR
+    try {
+      return future.get(3000, TimeUnit.MILLISECONDS) // 3 second timeout
+    } catch (e: Exception) {
+      Log.e(TAG, "Camera reset timed out or was interrupted", e)
+      
+      // If we timeout, try one more simple approach and return
+      Handler(Looper.getMainLooper()).post {
+        Toast.makeText(context, 
+            "Camera reset timed out, using fallback", 
+            Toast.LENGTH_SHORT).show()
+      }
+      
+      return false
+    } finally {
+      executor.shutdownNow() // Ensure executor is shutdown
+    }
   } catch (e: Exception) {
     Log.e(TAG, "Error in forceCameraReset", e)
     return false

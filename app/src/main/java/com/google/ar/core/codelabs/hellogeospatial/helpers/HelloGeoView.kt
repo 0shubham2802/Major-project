@@ -62,6 +62,9 @@ import kotlin.math.sqrt
 import kotlin.math.atan2
 import kotlin.math.PI
 import com.google.ar.core.codelabs.hellogeospatial.helpers.ARCoreSessionLifecycleHelper
+import com.google.ar.core.Config
+import com.google.ar.core.examples.java.common.samplerender.SampleRender
+import com.google.ar.core.codelabs.hellogeospatial.HelloGeoRenderer
 
 /** Contains UI elements for Hello Geo. */
 class HelloGeoView : DefaultLifecycleObserver {
@@ -83,7 +86,13 @@ class HelloGeoView : DefaultLifecycleObserver {
   
   // Root view containing all UI elements
   val root: View
-  val surfaceView: GLSurfaceView
+  
+  // For HelloGeoActivity constructor
+  lateinit var activitySurfaceView: GLSurfaceView
+  
+  // For AR mode - nullable
+  private var arSurfaceView: GLSurfaceView? = null
+  
   val searchView: SearchView?
   
   // Add button container for navigation controls
@@ -118,6 +127,15 @@ class HelloGeoView : DefaultLifecycleObserver {
   
   // ARCore session helper
   var arCoreSessionHelper: ARCoreSessionLifecycleHelper? = null
+  
+  // AR session
+  private var session: Session? = null
+  
+  // Renderer for AR content
+  private var renderer: HelloGeoRenderer? = null
+  
+  // Track if AR session was successfully created
+  private var arSessionCreated = false
 
   // Constructor for HelloGeoActivity
   constructor(activity: HelloGeoActivity) {
@@ -132,7 +150,7 @@ class HelloGeoView : DefaultLifecycleObserver {
     
     // Initialize UI from activity_main layout
     root = View.inflate(activity, R.layout.activity_main, null)
-    surfaceView = root.findViewById(R.id.surfaceview)
+    activitySurfaceView = root.findViewById(R.id.surfaceview)
     searchView = root.findViewById(R.id.searchView)
     statusText = root.findViewById(R.id.statusText)
     
@@ -154,19 +172,8 @@ class HelloGeoView : DefaultLifecycleObserver {
     
     // Set up map fragment
     mapFragment = (activity.supportFragmentManager.findFragmentById(R.id.map)!! as SupportMapFragment).also {
-      try {
-        it.getMapAsync { googleMap -> 
-          try {
-            Log.d("HelloGeoView", "Map loaded successfully")
-            mapView = MapView(activity, googleMap) 
-          } catch (e: Exception) {
-            Log.e("HelloGeoView", "Error initializing MapView: ${e.message}", e)
-            showMapError(activity, "Error initializing map view: ${e.message}")
-          }
-        }
-      } catch (e: Exception) {
-        Log.e("HelloGeoView", "Error loading Google Maps: ${e.message}", e)
-        showMapError(activity, "Error loading Google Maps. Please check your internet connection and API key.")
+      it.getMapAsync { googleMap -> 
+        mapView = MapView(activity as AppCompatActivity, googleMap)
       }
     }
     
@@ -186,28 +193,26 @@ class HelloGeoView : DefaultLifecycleObserver {
     // Initialize error helper
     this.mapErrorHelper = MapErrorHelper(activity)
     
-    // For AR activity, we don't inflate a layout - we just need a reference to hold the surfaceView
-    // The surfaceView itself is created and managed by the ARActivity
-    root = LinearLayout(activity) // Dummy root view - not actually used
-    surfaceView = GLSurfaceView(activity) // This will be replaced by ARActivity
+    // Initialize root view
+    root = View.inflate(activity, R.layout.activity_ar, null)
     
-    // These elements don't exist in AR mode
+    // No surface view initialized yet - will be set by initialize()
     searchView = null
-    statusText = null
-    mapTouchWrapper = null
-    mapFragment = null
+    statusText = root.findViewById(R.id.statusText)
     
-    // Initialize button container for possible AR controls
+    // Initialize button container
     buttonContainer = LinearLayout(activity).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.BOTTOM or Gravity.END
       setPadding(0, 0, 32, 32)
     }
     
-    // No need for search view or map initialization in AR mode
+    // Not used in AR mode
+    mapTouchWrapper = null
+    mapFragment = null
   }
   
-  // Constructor for SplitScreenActivity (similar to ARActivity constructor)
+  // Constructor for SplitScreenActivity
   constructor(activity: SplitScreenActivity) {
     this.context = activity
     this.appCompatActivity = activity
@@ -218,23 +223,27 @@ class HelloGeoView : DefaultLifecycleObserver {
     // Initialize error helper
     this.mapErrorHelper = MapErrorHelper(activity)
     
-    // For split screen mode, we also just need a reference to the surfaceView
-    // The actual surfaceView is managed by the SplitScreenActivity
-    root = LinearLayout(activity) // Dummy root view - not actually used
-    surfaceView = GLSurfaceView(activity) // This will be replaced by SplitScreenActivity
-    
-    // These elements don't exist in split screen mode as they're handled by the activity
+    // Initialize UI
+    root = View.inflate(activity, R.layout.activity_split_screen, null)
+    statusText = root.findViewById(R.id.statusText)
     searchView = null
-    statusText = null
-    mapTouchWrapper = null
-    mapFragment = null
     
-    // Initialize button container for AR controls
+    // Initialize button container
     buttonContainer = LinearLayout(activity).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.BOTTOM or Gravity.END
       setPadding(0, 0, 32, 32)
     }
+    
+    // Set up map fragment
+    mapFragment = (activity.supportFragmentManager.findFragmentById(R.id.map)!! as SupportMapFragment).also {
+      it.getMapAsync { googleMap -> 
+        mapView = MapView(activity as AppCompatActivity, googleMap)
+      }
+    }
+    
+    // No map touch wrapper for split screen
+    mapTouchWrapper = null
   }
   
   private fun setupButtonContainer() {
@@ -330,10 +339,28 @@ class HelloGeoView : DefaultLifecycleObserver {
   
   // Add method to set up the AR session
   fun setupSession(session: Session) {
-    // Set the session for the GLSurfaceView
-    surfaceView.preserveEGLContextOnPause = true
-    surfaceView.setEGLContextClientVersion(2)
-    surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+    try {
+      this.session = session
+      Log.d(TAG, "Setting up AR session")
+      
+      // Configure the session for best experience
+      val config = session.config
+      config.focusMode = Config.FocusMode.AUTO
+      config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+      
+      // Setup geospatial features
+      config.geospatialMode = Config.GeospatialMode.ENABLED
+      
+      // Apply the configuration
+      session.configure(config)
+      
+      // Mark session as created
+      arSessionCreated = true
+      Log.d(TAG, "AR session successfully created and configured")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error setting up AR session", e)
+      arSessionCreated = false
+    }
   }
 
   private fun searchLocation(locationName: String) {
@@ -720,7 +747,7 @@ class HelloGeoView : DefaultLifecycleObserver {
   // Add alternate onResume and onPause methods without the owner parameter
   fun onResume() {
     try {
-      surfaceView.onResume()
+      activitySurfaceView.onResume()
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error in onResume", e)
     }
@@ -728,7 +755,7 @@ class HelloGeoView : DefaultLifecycleObserver {
 
   fun onPause() {
     try {
-      surfaceView.onPause()
+      activitySurfaceView.onPause()
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error in onPause", e)
     }
@@ -737,7 +764,7 @@ class HelloGeoView : DefaultLifecycleObserver {
   // Original lifecycle methods still needed for lifecycle observer pattern
   override fun onResume(owner: LifecycleOwner) {
     try {
-      surfaceView.onResume()
+      activitySurfaceView.onResume()
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error in onResume", e)
     }
@@ -745,7 +772,7 @@ class HelloGeoView : DefaultLifecycleObserver {
 
   override fun onPause(owner: LifecycleOwner) {
     try {
-      surfaceView.onPause()
+      activitySurfaceView.onPause()
     } catch (e: Exception) {
       Log.e("HelloGeoView", "Error in onPause", e)
     }
@@ -932,5 +959,56 @@ class HelloGeoView : DefaultLifecycleObserver {
     } catch (e: Exception) {
       Log.e(TAG, "Error setting up location tracking", e)
     }
+  }
+
+  /**
+   * Initialize the view with a surface view for AR mode
+   */
+  fun initialize(surfaceView: GLSurfaceView) {
+    this.arSurfaceView = surfaceView
+    Log.d(TAG, "HelloGeoView initialized with surface view")
+  }
+  
+  /**
+   * Check if AR session has been created
+   */
+  fun isArSessionCreated(): Boolean {
+    return arSessionCreated
+  }
+
+  /**
+   * Set the renderer for this view
+   */
+  fun setRenderer(renderer: HelloGeoRenderer) {
+    this.renderer = renderer
+    
+    // Initialize SampleRender with the surfaceView
+    arSurfaceView?.let { sv ->
+      try {
+        Log.d(TAG, "Initializing SampleRender with HelloGeoRenderer")
+        SampleRender(sv, renderer, context.assets)
+        
+        // Attempt to set up session if available
+        session?.let { setupSession(it) }
+      } catch (e: Exception) {
+        Log.e(TAG, "Error setting up renderer", e)
+      }
+    } ?: run {
+      Log.e(TAG, "Cannot set renderer - surfaceView is null")
+    }
+  }
+
+  /**
+   * Pause AR rendering
+   */
+  fun pause() {
+    arSurfaceView?.onPause()
+  }
+  
+  /**
+   * Resume AR rendering
+   */
+  fun resume() {
+    arSurfaceView?.onResume()
   }
 }

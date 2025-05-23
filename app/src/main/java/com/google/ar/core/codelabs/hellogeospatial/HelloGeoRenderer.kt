@@ -172,10 +172,30 @@ class HelloGeoRenderer(val context: Context) :
       // Initialize background renderer with explicit camera texture creation
       backgroundRenderer = BackgroundRenderer(render)
       
-      // CRITICAL: Create camera texture directly and explicitly
-      backgroundRenderer.createCameraTexture(context)
+      // CRITICAL: Create camera texture directly and explicitly with retry mechanism
+      var textureCreated = false
+      var retryCount = 0
+      val maxRetries = 3
       
-      // Get texture ID immediately and log it
+      while (!textureCreated && retryCount < maxRetries) {
+        try {
+          textureCreated = backgroundRenderer.createCameraTexture(context)
+          
+          if (!textureCreated) {
+            Log.w(TAG, "Failed to create camera texture, retrying (${retryCount + 1}/$maxRetries)")
+            Thread.sleep(100)
+            retryCount++
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error creating camera texture on attempt ${retryCount + 1}: ${e.message}")
+          retryCount++
+          if (retryCount < maxRetries) {
+            Thread.sleep(100)
+          }
+        }
+      }
+      
+      // Get texture ID and log it
       val textureId = backgroundRenderer.getCameraColorTexture().textureId
       Log.d(TAG, "Created camera texture with ID: $textureId")
       
@@ -187,6 +207,16 @@ class HelloGeoRenderer(val context: Context) :
           hasSetTextureNames = true
         } catch (e: Exception) {
           Log.e(TAG, "Failed to set camera texture name on session", e)
+          
+          // Try one more time after a short delay
+          try {
+            Thread.sleep(100)
+            session.setCameraTextureName(textureId)
+            hasSetTextureNames = true
+            Log.d(TAG, "Successfully set camera texture on retry")
+          } catch (e2: Exception) {
+            Log.e(TAG, "Failed to set camera texture on retry", e2)
+          }
         }
       }
       
@@ -198,13 +228,9 @@ class HelloGeoRenderer(val context: Context) :
         virtualObjectMesh = Mesh.createFromAsset(render, "models/pawn.obj")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to load pawn mesh, using fallback", e)
-        // Use backup approach - create a fallback
-        try {
-          virtualObjectMesh = Mesh.createFromAsset(render, "models/geospatial_marker.obj")
-        } catch (e2: Exception) {
-          Log.e(TAG, "Failed to load fallback mesh, app may crash", e2)
-          throw RuntimeException("Cannot create any mesh, AR cannot work", e2)
-        }
+        
+        // Create a simple cube mesh as fallback
+        virtualObjectMesh = Mesh.createFromAsset(render, "models/cube.obj")
       }
       
       try {

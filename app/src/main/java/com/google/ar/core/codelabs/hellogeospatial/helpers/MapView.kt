@@ -32,8 +32,9 @@ import com.google.android.gms.maps.model.Marker
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.ar.core.codelabs.hellogeospatial.HelloGeoActivity
 import com.google.ar.core.codelabs.hellogeospatial.R
+import androidx.appcompat.app.AppCompatActivity
 
-class MapView(val activity: HelloGeoActivity, val googleMap: GoogleMap) {
+class MapView(val activity: AppCompatActivity, val googleMap: GoogleMap) {
   private val CAMERA_MARKER_COLOR: Int = Color.argb(255, 0, 255, 0)
   private val EARTH_MARKER_COLOR: Int = Color.argb(255, 125, 125, 125)
   private val SEARCH_MARKER_COLOR: Int = Color.argb(255, 255, 0, 0)
