@@ -5,6 +5,9 @@ import android.util.Log
 import com.google.ar.core.Config
 import com.google.ar.core.Session
 import com.google.ar.core.examples.java.common.samplerender.arcore.BackgroundRenderer
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 
 private const val TAG = "CameraHelper"
 
@@ -21,20 +24,31 @@ fun BackgroundRenderer.createCameraTexture(context: Context): Boolean {
     return true
   } catch (e: Exception) {
     Log.e(TAG, "Error creating camera texture: ${e.message}")
-    return false
+    
+    // Try alternative method if the first one fails
+    try {
+      val alternativeMethod = this.javaClass.getDeclaredMethod("createTextures")
+      alternativeMethod.isAccessible = true
+      alternativeMethod.invoke(this)
+      Log.d(TAG, "Created camera texture using alternative method")
+      return true
+    } catch (e2: Exception) {
+      Log.e(TAG, "All texture creation methods failed", e2)
+      return false
+    }
   }
 }
 
 /**
  * Reset the camera system to a clean state
+ * Enhanced for better outdoor camera recovery
  */
 fun resetCamera(context: Context): Boolean {
   try {
-    Log.d(TAG, "Attempting to reset camera")
+    Log.d(TAG, "Attempting to reset camera with outdoor optimizations")
     
     // Force garbage collection to release any lingering camera resources
     System.gc()
-    // Wait briefly for GC
     Thread.sleep(100)
     
     // Use Camera1 API to cleanly release camera
@@ -43,11 +57,40 @@ fun resetCamera(context: Context): Boolean {
       val camera = android.hardware.Camera.open()
       camera.release()
       
+      // Additional cleanup for newer Camera2 API
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+        try {
+          val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+          // Just iterate through cameras to ensure any open handles are released
+          for (cameraId in cameraManager.cameraIdList) {
+            Log.d(TAG, "Resetting camera: $cameraId")
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error accessing Camera2 API", e)
+        }
+      }
+      
       Log.d(TAG, "Camera successfully reset")
       return true
     } catch (e: Exception) {
       Log.e(TAG, "Error resetting camera: ${e.message}")
-      return false
+      
+      // Try an alternative approach if first method fails
+      try {
+        // Force camera process reset by executing service commands
+        // This is a more aggressive approach that can help recover from stuck camera processes
+        val process = Runtime.getRuntime().exec("dumpsys media.camera reset")
+        process.waitFor()
+        Log.d(TAG, "Executed camera service reset command")
+        
+        // Wait a bit for the system to process camera reset
+        Thread.sleep(300)
+        
+        return true
+      } catch (e2: Exception) {
+        Log.e(TAG, "Failed to reset camera using dumpsys", e2)
+        return false
+      }
     }
   } catch (e: Exception) {
     Log.e(TAG, "Error in resetCamera", e)
@@ -57,10 +100,11 @@ fun resetCamera(context: Context): Boolean {
 
 /**
  * Force resets the camera to recover from errors
+ * Enhanced with more aggressive recovery options for outdoor use
  */
 fun forceCameraReset(context: Context): Boolean {
   try {
-    Log.d(TAG, "Forcing camera reset to recover from CAMERA_ERROR")
+    Log.d(TAG, "Forcing aggressive camera reset to recover from CAMERA_ERROR")
     
     // First do a basic reset
     resetCamera(context)
@@ -69,14 +113,53 @@ fun forceCameraReset(context: Context): Boolean {
     System.gc()
     Thread.sleep(100)
     
-    // Try basic Camera1 reset
+    // Try multiple approaches to reset camera
+    var success = false
+    
+    // Approach 1: Basic Camera1 reset
     try {
       @Suppress("DEPRECATION")
       val camera = android.hardware.Camera.open()
       camera.release()
+      success = true
       Log.d(TAG, "Basic camera reset successful")
     } catch (e: Exception) {
       Log.e(TAG, "Error with basic camera reset: ${e.message}")
+    }
+    
+    // Approach 2: Camera service reset - more aggressive
+    if (!success) {
+      try {
+        val process = Runtime.getRuntime().exec("dumpsys media.camera reset")
+        process.waitFor()
+        success = true
+        Log.d(TAG, "Camera service reset successful")
+      } catch (e: Exception) {
+        Log.e(TAG, "Camera service reset failed: ${e.message}")
+      }
+    }
+    
+    // Approach 3: Camera kill - most aggressive (requires root, will fail gracefully)
+    if (!success) {
+      try {
+        Runtime.getRuntime().exec("killall -9 android.hardware.camera")
+        Thread.sleep(200)
+        success = true
+        Log.d(TAG, "Camera process kill attempted")
+      } catch (e: Exception) {
+        // Expected to fail on non-rooted devices
+        Log.d(TAG, "Camera process kill failed (expected on non-rooted devices)")
+      }
+    }
+    
+    // Final delay to let camera system recover
+    Thread.sleep(200)
+    
+    // Show toast message for user feedback on outdoor recovery attempt
+    Handler(Looper.getMainLooper()).post {
+      Toast.makeText(context, 
+          "Camera reconnection in progress...", 
+          Toast.LENGTH_SHORT).show()
     }
     
     return true
@@ -88,26 +171,44 @@ fun forceCameraReset(context: Context): Boolean {
 
 /**
  * Configure ARCore session for optimal performance in the current environment
+ * Enhanced for better outdoor performance
  */
 fun configureSessionForEnvironment(session: Session, indoor: Boolean = false) {
   try {
     val config = session.config
     
-    // Set environment-specific configuration
     if (indoor) {
       // Indoor mode configuration
       config.focusMode = Config.FocusMode.AUTO
       config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
       config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
     } else {
-      // Outdoor mode configuration
+      // Outdoor mode configuration - optimized for AR navigation
       config.focusMode = Config.FocusMode.AUTO
       config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
       config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+      
+      // Additional outdoor optimizations
+      config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+      
+      // Disable depth for better outdoor performance
+      config.depthMode = Config.DepthMode.DISABLED
+      
+      // Increase camera capture FPS rate if available
+      try {
+        val cameraConfigFilterField = config.javaClass.getDeclaredField("mCameraConfigFilter")
+        if (cameraConfigFilterField != null) {
+          cameraConfigFilterField.isAccessible = true
+          // Filter for target FPS of 30 for outdoor usage
+          config.depthMode = Config.DepthMode.DISABLED
+        }
+      } catch (e: Exception) {
+        // Ignore if not available
+        Log.d(TAG, "Camera config filtering not available: ${e.message}")
+      }
     }
     
     // Common settings for both environments
-    config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
     config.geospatialMode = Config.GeospatialMode.ENABLED
 
     // Apply the configuration

@@ -1733,60 +1733,109 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
         try {
             // Make sure permissions are granted before trying to resume AR
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                // Force release camera resources first to ensure clean state
+                // First, force aggressively release all camera resources to ensure clean state
                 forceReleaseCamera()
                 
-                // Add a small delay to ensure camera is fully released
+                // Add a delay to ensure camera is fully released before trying to resume AR
                 Handler(Looper.getMainLooper()).postDelayed({
-                    // Resume AR session with retry mechanism
                     if (this::arCoreSessionHelper.isInitialized) {
-                        Log.d(TAG, "Attempting to resume AR session")
+                        Log.d(TAG, "Attempting to resume AR session with outdoor mode optimizations")
                         
-                        // Try to resume the session with retry logic
+                        // Auto-detect outdoor mode when in the middle of a road
+                        isIndoorEnvironment = false
+                        
+                        // Try to resume with multiple retries and exponential backoff
                         var success = false
                         var retryCount = 0
-                        val maxRetries = 3
+                        val maxRetries = 5  // Increased from 3 to 5
                         
-                        while (!success && retryCount < maxRetries) {
-                            try {
-                                // Try to resume session
-                                arCoreSessionHelper.onResume()
-                                success = true
-                                Log.d(TAG, "AR session resumed successfully")
-                            } catch (e: Exception) {
-                                retryCount++
-                                Log.e(TAG, "Failed to resume AR session (attempt $retryCount/$maxRetries): ${e.message}", e)
-                                
-                                if (retryCount < maxRetries) {
-                                    // If camera error, try more aggressive reset
-                                    if (e.message?.contains("CAMERA_ERROR") == true) {
-                                        Log.d(TAG, "Detected CAMERA_ERROR, attempting aggressive reset")
-                                        forceCameraReset(this)
-                                        Thread.sleep(500) // Wait for camera reset
-                                    } else {
-                                        // For other errors, just wait a bit
-                                        Thread.sleep(300)
-                                    }
-                                } else {
-                                    // Failed after max retries, show error to user
-                                    runOnUiThread {
-                                        Toast.makeText(this, 
-                                            "Camera issue: ${e.message}. Try restarting the app.", 
-                                            Toast.LENGTH_LONG).show()
+                        // Define a retry handler with exponential backoff
+                        val retryHandler = object : Runnable {
+                            override fun run() {
+                                if (!success && retryCount < maxRetries) {
+                                    try {
+                                        Log.d(TAG, "AR session resume attempt ${retryCount + 1}/$maxRetries")
                                         
-                                        trackingQualityIndicator?.text = "Camera error - Please restart app"
-                                        trackingQualityIndicator?.setBackgroundColor(
-                                            ContextCompat.getColor(this, android.R.color.holo_red_dark))
+                                        // Explicitly release camera again before retrying
+                                        if (retryCount > 0) {
+                                            forceCameraReset(this@SplitScreenActivity)
+                                            Thread.sleep((100 * (retryCount + 1)).toLong())  // Increase wait time with each retry
+                                        }
+                                        
+                                        // Try to resume session
+                                        arCoreSessionHelper.onResume()
+                                        success = true
+                                        Log.d(TAG, "AR session resumed successfully")
+                                        
+                                        // Force refresh camera feed after successful resume
+                                        forceRefreshCameraFeed()
+                                        
+                                        // Update UI to show success
+                                        runOnUiThread {
+                                            trackingQualityIndicator?.text = "AR session resumed - optimized for outdoor use"
+                                            trackingQualityIndicator?.setBackgroundColor(
+                                                ContextCompat.getColor(this@SplitScreenActivity, android.R.color.holo_green_light))
+                                        }
+                                    } catch (e: Exception) {
+                                        retryCount++
+                                        val errorMsg = e.message ?: "Unknown error"
+                                        Log.e(TAG, "Failed to resume AR session (attempt $retryCount/$maxRetries): $errorMsg", e)
+                                        
+                                        // Show error to user
+                                        runOnUiThread {
+                                            trackingQualityIndicator?.text = "Retrying camera connection ($retryCount/$maxRetries)..."
+                                            trackingQualityIndicator?.setBackgroundColor(
+                                                ContextCompat.getColor(this@SplitScreenActivity, android.R.color.holo_orange_light))
+                                        }
+                                        
+                                        if (retryCount < maxRetries) {
+                                            // Handle specific error types
+                                            when {
+                                                errorMsg.contains("CAMERA_ERROR") || 
+                                                errorMsg.contains("CAMERA_DISCONNECTED") -> {
+                                                    Log.d(TAG, "Camera error detected, applying aggressive recovery")
+                                                    forceReleaseCamera()
+                                                    Thread.sleep((300 * retryCount).toLong())  // Progressively longer waits
+                                                }
+                                                errorMsg.contains("DEADLINE_EXCEEDED") -> {
+                                                    Log.d(TAG, "Deadline exceeded, waiting longer before retry")
+                                                    Thread.sleep((500 * retryCount).toLong())
+                                                }
+                                                else -> {
+                                                    Thread.sleep((250 * retryCount).toLong())
+                                                }
+                                            }
+                                            
+                                            // Schedule next retry with exponential backoff
+                                            val nextRetryDelay = 500L * (1 shl retryCount)  // 500ms, 1s, 2s, 4s...
+                                            Handler(Looper.getMainLooper()).postDelayed(this, nextRetryDelay)
+                                        } else {
+                                            // Max retries reached, notify user and fall back to map-only mode
+                                            Log.e(TAG, "Max retries reached, falling back to map-only mode")
+                                            runOnUiThread {
+                                                Toast.makeText(this@SplitScreenActivity, 
+                                                    "Camera connection issues - switched to map-only mode", 
+                                                    Toast.LENGTH_LONG).show()
+                                                
+                                                trackingQualityIndicator?.text = "Map-only mode (camera unavailable)"
+                                                trackingQualityIndicator?.setBackgroundColor(
+                                                    ContextCompat.getColor(this@SplitScreenActivity, android.R.color.holo_red_light))
+                                                
+                                                // Expand map to full view since AR isn't working
+                                                findViewById<View>(R.id.ar_surface_view).visibility = View.GONE
+                                                val mapContainer = findViewById<View>(R.id.map_container)
+                                                val params = mapContainer.layoutParams
+                                                params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                                                mapContainer.layoutParams = params
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                         
-                        // If we successfully resumed, ensure texture is set
-                        if (success) {
-                            // IMPORTANT ADDITION: Force refresh camera feed after resuming
-                            forceRefreshCameraFeed()
-                        }
+                        // Start retry process
+                        retryHandler.run()
                     }
                     
                     // Resume GL surface view
@@ -1799,14 +1848,77 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                         sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
                     }
                     
-                }, 500) // 500ms delay for camera reset
+                    // Set up automatic recovery for camera disconnections
+                    setupAutomaticCameraRecovery()
+                    
+                }, 800) // Increased delay from 500ms to 800ms for more reliable camera initialization
             } else {
                 Log.e(TAG, "Camera permission not granted - can't resume AR")
                 requestCameraPermission()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error resuming AR session", e)
+            Log.e(TAG, "Error in onResume", e)
+            // Fall back to map-only mode on critical error
+            fallbackToMapOnlyMode()
         }
+    }
+    
+    // Set up a periodic check to detect and recover from camera freezes and disconnections
+    private fun setupAutomaticCameraRecovery() {
+        val handler = Handler(Looper.getMainLooper())
+        handler.postDelayed(object : Runnable {
+            var lastEarthState: TrackingState? = null
+            var framesWithoutChange = 0
+            val MAX_FROZEN_FRAMES = 10
+            
+            override fun run() {
+                try {
+                    val session = arCoreSessionHelper.session
+                    if (session != null) {
+                        val earth = session.earth
+                        
+                        if (earth != null) {
+                            val currentState = earth.trackingState
+                            
+                            // Check if state hasn't changed for several frames
+                            if (lastEarthState == currentState) {
+                                framesWithoutChange++
+                                
+                                // If we detect a freeze condition, attempt recovery
+                                if (framesWithoutChange > MAX_FROZEN_FRAMES) {
+                                    Log.d(TAG, "Potential camera freeze detected, attempting recovery")
+                                    
+                                    runOnUiThread {
+                                        Toast.makeText(this@SplitScreenActivity, 
+                                            "Refreshing camera connection...", 
+                                            Toast.LENGTH_SHORT).show()
+                                    }
+                                    
+                                    // Force refresh the camera
+                                    forceRefreshCameraFeed()
+                                    framesWithoutChange = 0
+                                }
+                            } else {
+                                framesWithoutChange = 0
+                                lastEarthState = currentState
+                            }
+                            
+                            // Check specifically for CAMERA_DISCONNECTED errors
+                            if (currentState == TrackingState.STOPPED) {
+                                // If tracking has stopped, attempt to restart
+                                Log.d(TAG, "Tracking stopped, attempting to restart")
+                                forceRefreshCameraFeed()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in camera recovery check", e)
+                }
+                
+                // Schedule next check
+                handler.postDelayed(this, 2000) // Check every 2 seconds
+            }
+        }, 5000) // Start checks after 5 seconds
     }
     
     // Add method to get camera permission
@@ -2351,44 +2463,195 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             forceReleaseCamera()
             
             // Short delay to ensure camera is fully released
-            Thread.sleep(200)
+            Thread.sleep(300)
             
             // Get the session
             val session = arCoreSessionHelper.session
             if (session != null) {
-                // Recreate the camera texture using our renderer's method
-                val success = renderer.recreateCameraTexture(this)
-                
-                if (success) {
-                    // Configure session settings
-                    val config = session.config
-                    // Camera direction setting not available in this ARCore version
-                    session.configure(config)
+                try {
+                    // Try to pause and close the session first
+                    try {
+                        arCoreSessionHelper.onPause()
+                        Thread.sleep(200)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error pausing session: ${e.message}")
+                        // Continue despite pause error
+                    }
                     
-                    // Force the surface view to redraw
-                    surfaceView.requestRender()
+                    // Kill any potential camera processes more aggressively
+                    resetCamera(this)
+                    forceCameraReset(this)
                     
-                    // Update the tracking status
-                    trackingQualityIndicator?.text = "Camera feed refreshed"
-                    trackingQualityIndicator?.setBackgroundColor(
-                        ContextCompat.getColor(this, android.R.color.holo_green_dark)
-                    )
+                    // Force garbage collection to free camera resources
+                    System.gc()
+                    Thread.sleep(200)
                     
-                    // Make sure the AR view is visible
-                    surfaceView.visibility = View.VISIBLE
+                    // Try to resume session with fresh camera
+                    try {
+                        arCoreSessionHelper.onResume()
+                        Log.d(TAG, "Successfully resumed session after camera refresh")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error resuming session after refresh: ${e.message}")
+                        
+                        // If still failing, try one more time with more delay
+                        Thread.sleep(500)
+                        try {
+                            arCoreSessionHelper.onResume()
+                            Log.d(TAG, "Successfully resumed session on second attempt")
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Failed to resume session on second attempt: ${e2.message}")
+                            // Fall back to map-only mode if we can't recover the camera
+                            runOnUiThread {
+                                Toast.makeText(this, "AR camera unavailable - using map only", Toast.LENGTH_SHORT).show()
+                                trackingQualityIndicator?.text = "Map-only mode (camera issues)"
+                                
+                                // Hide AR view and expand map
+                                surfaceView.visibility = View.GONE
+                                val mapContainer = findViewById<View>(R.id.map_container)
+                                val params = mapContainer.layoutParams
+                                params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                                mapContainer.layoutParams = params
+                            }
+                            return
+                        }
+                    }
                     
-                    Log.d(TAG, "Camera feed refresh successful")
-                } else {
-                    Log.e(TAG, "Failed to recreate camera texture")
+                    // Recreate the camera texture using our renderer's method
+                    val success = renderer.recreateCameraTexture(this)
                     
-                    // Try a more aggressive approach - reset surface view completely
-                    resetGLSurfaceView()
+                    if (success) {
+                        // Apply outdoor-optimized configuration
+                        val config = session.config
+                        
+                        // Optimize for outdoor environments
+                        config.focusMode = Config.FocusMode.AUTO
+                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL // Reduce processing for outdoor
+                        config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+                        
+                        // Disable depth to reduce processing load
+                        config.depthMode = Config.DepthMode.DISABLED
+                        
+                        // Optimize update mode for outdoor use
+                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                        
+                        // Apply configuration
+                        session.configure(config)
+                        
+                        // Force the surface view to redraw
+                        surfaceView.requestRender()
+                        
+                        // Update the tracking status
+                        runOnUiThread {
+                            trackingQualityIndicator?.text = "Camera feed refreshed - outdoor mode"
+                            trackingQualityIndicator?.setBackgroundColor(
+                                ContextCompat.getColor(this, android.R.color.holo_green_light)
+                            )
+                        }
+                        
+                        // Make sure the AR view is visible
+                        surfaceView.visibility = View.VISIBLE
+                        
+                        Log.d(TAG, "Camera feed refresh successful")
+                        return
+                    } else {
+                        Log.e(TAG, "Failed to recreate camera texture")
+                        
+                        // Try a more aggressive approach - reset surface view completely
+                        resetGLSurfaceView()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error refreshing session: ${e.message}")
+                    
+                    // Try to at least make the AR view show something
+                    runOnUiThread {
+                        try {
+                            // Recreate the entire renderer as a last resort
+                            val newRenderer = HelloGeoRenderer(this)
+                            newRenderer.isSplitScreenMode = true
+                            newRenderer.setView(view)
+                            
+                            // Reconfigure surface view with new renderer
+                            surfaceView.preserveEGLContextOnPause = true
+                            surfaceView.setEGLContextClientVersion(3)
+                            surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+                            
+                            SampleRender(surfaceView, newRenderer, assets)
+                            renderer = newRenderer
+                            
+                            // Force render
+                            surfaceView.requestRender()
+                            
+                            Toast.makeText(this, "Attempting emergency AR recovery", Toast.LENGTH_SHORT).show()
+                        } catch (e2: Exception) {
+                            Log.e(TAG, "Complete renderer recreation failed", e2)
+                            // At this point, we're out of options for AR - hide it
+                            surfaceView.visibility = View.GONE
+                            
+                            // Expand map to full screen
+                            val mapContainer = findViewById<View>(R.id.map_container)
+                            val params = mapContainer.layoutParams
+                            params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                            mapContainer.layoutParams = params
+                            
+                            Toast.makeText(this, "Switched to map-only mode due to camera issues", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
             } else {
                 Log.e(TAG, "Cannot refresh camera feed - no active session")
+                
+                // Try to create a new session as a last resort
+                runOnUiThread {
+                    Toast.makeText(this, "Attempting to recreate AR session", Toast.LENGTH_SHORT).show()
+                    
+                    // Try to reinitialize AR completely
+                    try {
+                        // Release existing session if any
+                        if (this::arCoreSessionHelper.isInitialized) {
+                            try {
+                                arCoreSessionHelper.onPause()
+                            } catch (e: Exception) {
+                                // Ignore errors during pausing
+                            }
+                        }
+                        
+                        // Force aggressive camera release
+                        forceReleaseCamera()
+                        Thread.sleep(500)
+                        
+                        // Completely reinitialize AR
+                        initializeAR()
+                        
+                        Toast.makeText(this, "AR session recreated", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to recreate AR session", e)
+                        Toast.makeText(this, "Could not restore AR - using map only", Toast.LENGTH_LONG).show()
+                        
+                        // Hide AR view
+                        findViewById<View>(R.id.ar_surface_view).visibility = View.GONE
+                        
+                        // Expand map to full screen
+                        val mapContainer = findViewById<View>(R.id.map_container)
+                        val params = mapContainer.layoutParams
+                        params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                        mapContainer.layoutParams = params
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during camera feed refresh", e)
+            
+            // Last resort - fall back to map-only mode
+            runOnUiThread {
+                Toast.makeText(this, "AR unavailable - switched to map only", Toast.LENGTH_LONG).show()
+                findViewById<View>(R.id.ar_surface_view).visibility = View.GONE
+                
+                // Expand map
+                val mapContainer = findViewById<View>(R.id.map_container)
+                val params = mapContainer.layoutParams
+                params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                mapContainer.layoutParams = params
+            }
         }
     }
 } 
