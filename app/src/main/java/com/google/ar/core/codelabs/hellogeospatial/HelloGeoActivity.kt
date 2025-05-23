@@ -102,12 +102,22 @@ class HelloGeoActivity : AppCompatActivity() {
     // Take recovery action
     try {
       Toast.makeText(this, "Application responsiveness issue detected, recovering...", Toast.LENGTH_SHORT).show()
-      startFallbackActivity()
+      val fallbackIntent = Intent(this, FallbackActivity::class.java)
+      fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      fallbackIntent.putExtra("FROM_ANR_RECOVERY", true)
+      startActivity(fallbackIntent)
+      finish()
     } catch (e: Exception) {
       Log.e(TAG, "Error in watchdog recovery", e)
+      // Try system recovery as last resort
+      try {
+        Runtime.getRuntime().exit(0)
+      } catch (e2: Exception) {
+        Log.e(TAG, "Failed even system exit", e2)
+      }
     }
   }
-  private val WATCHDOG_TIMEOUT_MS = 5000L // 5 seconds
+  private val WATCHDOG_TIMEOUT_MS = 8000L // 8 seconds - increased from 5
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -205,18 +215,25 @@ class HelloGeoActivity : AppCompatActivity() {
    * Reset the watchdog timer
    */
   private fun resetWatchdog() {
-    // Remove existing watchdog
+    // Cancel the current watchdog
     watchdogHandler.removeCallbacks(watchdogRunnable)
     
-    // Post a new one
+    // Schedule a new watchdog check
     watchdogHandler.postDelayed(watchdogRunnable, WATCHDOG_TIMEOUT_MS)
+    
+    // Schedule periodic pings to keep checking UI thread
+    watchdogHandler.postDelayed({
+      // Only continue if activity is still active
+      if (!isFinishing && !isDestroyed) {
+        resetWatchdog()
+      }
+    }, WATCHDOG_TIMEOUT_MS / 2)
   }
   
   /**
    * Stop the watchdog timer
    */
   private fun stopWatchdog() {
-    // Remove the watchdog callback
     watchdogHandler.removeCallbacks(watchdogRunnable)
   }
   
@@ -931,6 +948,33 @@ class HelloGeoActivity : AppCompatActivity() {
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error in Camera1 release", e)
+    }
+  }
+
+  /**
+   * Called by the renderer when it detects critical performance issues
+   */
+  fun onRendererPoorPerformance() {
+    // Switch to a handler to avoid blocking the renderer thread
+    Handler(Looper.getMainLooper()).post {
+      try {
+        Log.w(TAG, "Critical renderer performance issue detected, switching to fallback mode")
+        
+        // Show a toast to inform the user
+        Toast.makeText(
+          this,
+          "Performance issue detected with AR view, switching to map view",
+          Toast.LENGTH_LONG
+        ).show()
+        
+        // Switch to fallback activity for better performance
+        val fallbackIntent = Intent(this, FallbackActivity::class.java)
+        fallbackIntent.putExtra("FROM_PERFORMANCE_ISSUE", true)
+        startActivity(fallbackIntent)
+        finish()
+      } catch (e: Exception) {
+        Log.e(TAG, "Error handling poor renderer performance", e)
+      }
     }
   }
 }

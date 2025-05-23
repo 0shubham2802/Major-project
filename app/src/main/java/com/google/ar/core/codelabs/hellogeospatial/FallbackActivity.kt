@@ -92,6 +92,18 @@ class FallbackActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Check if this was launched from ANR recovery or performance issue
+        val fromAnrRecovery = intent.getBooleanExtra("FROM_ANR_RECOVERY", false)
+        val fromPerformanceIssue = intent.getBooleanExtra("FROM_PERFORMANCE_ISSUE", false)
+        
+        if (fromAnrRecovery) {
+            Log.d(TAG, "Activity launched from ANR recovery")
+            Toast.makeText(this, "Successfully recovered from application freeze", Toast.LENGTH_LONG).show()
+        } else if (fromPerformanceIssue) {
+            Log.d(TAG, "Activity launched due to performance issues")
+            Toast.makeText(this, "Switched to map-only mode for better performance", Toast.LENGTH_LONG).show()
+        }
+        
         // Set a default uncaught exception handler to catch and log any unexpected errors
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             Log.e(TAG, "Uncaught exception", throwable)

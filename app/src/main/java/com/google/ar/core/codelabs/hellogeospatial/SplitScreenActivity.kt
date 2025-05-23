@@ -2654,4 +2654,31 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             }
         }
     }
+
+    /**
+     * Called by the renderer when it detects critical performance issues
+     */
+    fun onRendererPoorPerformance() {
+        // Switch to a handler to avoid blocking the renderer thread
+        Handler(Looper.getMainLooper()).post {
+            try {
+                Log.w(TAG, "Critical renderer performance issue detected, switching to fallback mode")
+                
+                // Show a toast to inform the user
+                Toast.makeText(
+                    this,
+                    "Performance issue detected with AR view, switching to map-only view",
+                    Toast.LENGTH_LONG
+                ).show()
+                
+                // Switch to fallback activity for better performance
+                val fallbackIntent = Intent(this, FallbackActivity::class.java)
+                fallbackIntent.putExtra("FROM_PERFORMANCE_ISSUE", true)
+                startActivity(fallbackIntent)
+                finish()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error handling poor renderer performance", e)
+            }
+        }
+    }
 } 

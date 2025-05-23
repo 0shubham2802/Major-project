@@ -68,7 +68,7 @@ class HelloGeoApplication : Application() {
      */
     private fun setupANRWatchdog() {
         try {
-            anrWatchDog = ANRWatchDog(5000) // 5 second timeout
+            anrWatchDog = ANRWatchDog(10000) // 10 second timeout (increased from 5)
             
             // Set ANR listener to handle freezes
             anrWatchDog.setANRListener { anrError ->
@@ -91,12 +91,28 @@ class HelloGeoApplication : Application() {
                         // Launch fallback activity to recover
                         val fallbackIntent = Intent(applicationContext, FallbackActivity::class.java)
                         fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        startActivity(fallbackIntent)
+                        fallbackIntent.putExtra("FROM_ANR_RECOVERY", true)
+                        try {
+                            startActivity(fallbackIntent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to start FallbackActivity directly", e)
+                            // Try with a delay as a last resort
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                try {
+                                    startActivity(fallbackIntent)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to start FallbackActivity even with delay", e)
+                                }
+                            }, 1000)
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in ANR recovery", e)
                     }
                 }
             }
+            
+            // Configure ANR watchdog to be more resilient
+            anrWatchDog.setReportMainThreadOnly()
             
             // Start the watchdog
             anrWatchDog.start()

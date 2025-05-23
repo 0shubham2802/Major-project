@@ -72,6 +72,11 @@ class HelloGeoRenderer(val context: Context) :
     
     // Track Earth quality
     private var REQUIRED_TRACKING_CONFIDENCE = 0.7f // Min confidence to consider tracking reliable
+    
+    // Performance monitoring
+    private const val PERFORMANCE_MONITOR_INTERVAL_MS = 5000L // Check performance every 5 seconds
+    private const val MAX_FRAME_TIME_MS = 100L // Maximum acceptable frame time (ms)
+    private const val THROTTLE_THRESHOLD_MS = 50L // Start throttling if frame time exceeds this
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -371,6 +376,20 @@ class HelloGeoRenderer(val context: Context) :
   //</editor-fold>
 
   override fun onDrawFrame(render: SampleRender) {
+    // Start tracking frame time for performance monitoring
+    val frameStartTime = System.currentTimeMillis()
+    val frameDelta = if (lastFrameTimestamp > 0) frameStartTime - lastFrameTimestamp else 0
+    lastFrameTimestamp = frameStartTime
+    
+    // Update frame time history
+    frameTimeHistory[frameTimeIndex] = frameDelta
+    frameTimeIndex = (frameTimeIndex + 1) % frameTimeHistory.size
+    
+    // Check if we need to adjust performance
+    if (frameTimeIndex == 0) { // Only check once per cycle through the history array
+      adjustPerformanceSettings()
+    }
+    
     val session = arSession ?: return
 
     // Update session to get current frame
@@ -1984,6 +2003,81 @@ class HelloGeoRenderer(val context: Context) :
         Log.e(TAG, "Failed to create any shader", e)
         throw RuntimeException("Cannot create any shader, AR might not work", e)
       }
+    }
+  }
+
+  // Add performance monitoring fields
+  private var frameTimeHistory = LongArray(10) { 0 } // Track last 10 frame times
+  private var frameTimeIndex = 0
+  private var lastFrameTimestamp = 0L
+  private var isPerformanceThrottled = false
+  private var lastPerformanceCheckTime = 0L
+  private var consecutiveSlowFrames = 0
+  
+  // Add a method to throttle rendering quality when performance is poor
+  private fun adjustPerformanceSettings() {
+    // Calculate average frame time
+    val now = System.currentTimeMillis()
+    
+    // Only check periodically to avoid overhead
+    if (now - lastPerformanceCheckTime < PERFORMANCE_MONITOR_INTERVAL_MS) {
+      return
+    }
+    
+    lastPerformanceCheckTime = now
+    
+    // Calculate average frame time
+    val averageFrameTime = frameTimeHistory.average()
+    
+    if (averageFrameTime > THROTTLE_THRESHOLD_MS) {
+      if (!isPerformanceThrottled) {
+        Log.w(TAG, "Performance issue detected, throttling rendering quality. Avg frame time: $averageFrameTime ms")
+        isPerformanceThrottled = true
+        
+        // Reduce rendering quality
+        setLowPrecisionMode(true)
+      }
+    } else {
+      // If performance is good again, restore quality
+      if (isPerformanceThrottled && averageFrameTime < THROTTLE_THRESHOLD_MS * 0.7) {
+        Log.d(TAG, "Performance improved, restoring rendering quality")
+        isPerformanceThrottled = false
+        
+        // Only restore normal precision if not explicitly in low precision mode
+        if (!isLowPrecisionMode) {
+          setLowPrecisionMode(false)
+        }
+      }
+    }
+    
+    // If we detect extremely slow frames, alert the activity
+    if (averageFrameTime > MAX_FRAME_TIME_MS) {
+      consecutiveSlowFrames++
+      
+      if (consecutiveSlowFrames > 3) {
+        Log.e(TAG, "Critical performance issue detected! Avg frame time: $averageFrameTime ms")
+        
+        // Alert the activity through context
+        when (context) {
+          is HelloGeoActivity -> {
+            (context as HelloGeoActivity).onRendererPoorPerformance()
+          }
+          is SplitScreenActivity -> {
+            (context as SplitScreenActivity).onRendererPoorPerformance()
+          }
+          is Activity -> {
+            // Generic activity handling
+            (context as Activity).runOnUiThread {
+              Toast.makeText(context, "Performance issue detected", Toast.LENGTH_SHORT).show()
+            }
+          }
+        }
+        
+        // Reset counter to avoid spamming
+        consecutiveSlowFrames = 0
+      }
+    } else {
+      consecutiveSlowFrames = 0
     }
   }
 }
