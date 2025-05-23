@@ -10,6 +10,12 @@ import android.os.Looper
 import android.widget.Toast
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import android.app.Activity
+import android.hardware.camera2.CameraAccessException
+import android.hardware.camera2.CameraManager
+import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
+import android.content.pm.PackageManager
 
 private const val TAG = "CameraHelper"
 
@@ -254,4 +260,182 @@ fun configureSessionForEnvironment(session: Session, indoor: Boolean = false) {
   } catch (e: Exception) {
     Log.e(TAG, "Failed to configure session: ${e.message}", e)
   }
+}
+
+/**
+ * Forces a camera reset to release any camera resources that might be stuck
+ */
+fun resetCamera(activity: Activity) {
+    try {
+        Log.d(TAG, "Starting aggressive camera reset")
+        
+        // Use a combination of Camera1 and Camera2 API to ensure all resources are released
+        resetCamera2(activity)
+        resetLegacyCamera()
+        
+        // Force garbage collection to clean up any lingering resources
+        System.gc()
+        System.runFinalization()
+        
+        Log.d(TAG, "Camera reset complete")
+    } catch (e: Exception) {
+        Log.e(TAG, "Error during camera reset", e)
+    }
+}
+
+/**
+ * Reset Camera2 API resources
+ */
+private fun resetCamera2(activity: Activity) {
+    try {
+        Log.d(TAG, "Resetting Camera2 API resources")
+        val cameraManager = activity.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            ?: return
+        
+        // Get all camera IDs
+        val cameraIds = try {
+            cameraManager.cameraIdList
+        } catch (e: CameraAccessException) {
+            Log.e(TAG, "Failed to get camera ID list", e)
+            return
+        }
+        
+        // Process each camera
+        for (cameraId in cameraIds) {
+            try {
+                Log.d(TAG, "Attempting reset for Camera2 camera: $cameraId")
+                
+                // Create a semaphore to ensure the operation completes
+                val semaphore = java.util.concurrent.Semaphore(0)
+                
+                // Callback for camera device states
+                val stateCallback = object : android.hardware.camera2.CameraDevice.StateCallback() {
+                    override fun onOpened(camera: android.hardware.camera2.CameraDevice) {
+                        try {
+                            Log.d(TAG, "Camera2 device opened, now closing")
+                            camera.close()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error closing opened camera", e)
+                        } finally {
+                            semaphore.release()
+                        }
+                    }
+                    
+                    override fun onDisconnected(camera: android.hardware.camera2.CameraDevice) {
+                        Log.d(TAG, "Camera2 device disconnected")
+                        camera.close()
+                        semaphore.release()
+                    }
+                    
+                    override fun onError(camera: android.hardware.camera2.CameraDevice, error: Int) {
+                        Log.e(TAG, "Camera2 device error: $error")
+                        camera.close()
+                        semaphore.release()
+                    }
+                    
+                    override fun onClosed(camera: android.hardware.camera2.CameraDevice) {
+                        Log.d(TAG, "Camera2 device closed")
+                        semaphore.release()
+                    }
+                }
+                
+                // Check for camera permission
+                if (androidx.core.app.ActivityCompat.checkSelfPermission(
+                        activity, 
+                        android.Manifest.permission.CAMERA
+                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    Log.w(TAG, "No camera permission during reset")
+                    continue
+                }
+                
+                // Try to open and immediately close the camera to force a reset
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        cameraManager.openCamera(cameraId, stateCallback, null)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error opening camera for reset: ${e.message}")
+                        semaphore.release() // Make sure we don't deadlock
+                    }
+                }
+                
+                // Wait with timeout for operation to complete
+                semaphore.tryAcquire(2, java.util.concurrent.TimeUnit.SECONDS)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during Camera2 reset for camera $cameraId", e)
+            }
+        }
+        
+        // Double check that we've given time for camera to be released
+        Thread.sleep(100)
+        
+    } catch (e: Exception) {
+        Log.e(TAG, "Error in Camera2 reset process", e)
+    }
+}
+
+/**
+ * Reset legacy Camera API resources as fallback
+ */
+@Suppress("DEPRECATION")
+private fun resetLegacyCamera() {
+    try {
+        Log.d(TAG, "Resetting legacy Camera API resources")
+        
+        // Try with both front and back cameras
+        val cameraTypes = listOf(
+            android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK,
+            android.hardware.Camera.CameraInfo.CAMERA_FACING_FRONT
+        )
+        
+        for (cameraType in cameraTypes) {
+            var camera: android.hardware.Camera? = null
+            
+            try {
+                // Get number of cameras
+                val numCameras = android.hardware.Camera.getNumberOfCameras()
+                Log.d(TAG, "Device has $numCameras cameras")
+                
+                // Try to find the camera of this type
+                var cameraFound = false
+                for (i in 0 until numCameras) {
+                    val info = android.hardware.Camera.CameraInfo()
+                    android.hardware.Camera.getCameraInfo(i, info)
+                    if (info.facing == cameraType) {
+                        cameraFound = true
+                        break
+                    }
+                }
+                
+                if (!cameraFound) {
+                    Log.d(TAG, "No camera of type $cameraType found")
+                    continue
+                }
+                
+                Log.d(TAG, "Opening camera of type $cameraType for reset")
+                camera = android.hardware.Camera.open(cameraType)
+                
+                if (camera != null) {
+                    Log.d(TAG, "Camera opened successfully, now releasing")
+                    // Wait a moment with camera open
+                    Thread.sleep(100)
+                    // Release the camera
+                    camera.release()
+                    Log.d(TAG, "Camera released successfully")
+                    // Wait after release
+                    Thread.sleep(100)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error with legacy camera reset: ${e.message}")
+                // Make sure camera is released even if there's an error
+                try {
+                    camera?.release()
+                } catch (releaseEx: Exception) {
+                    Log.e(TAG, "Error releasing camera in exception handler", releaseEx)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error in legacy camera reset", e)
+    }
 } 

@@ -2140,10 +2140,10 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                     // Explicitly ensure camera texture is created and set
                     val session = arCoreSessionHelper.session
                     if (session != null) {
-                                            // Configure camera settings
-                    val config = session.config
-                    // Note: CameraDirection enum is not directly available in some ARCore versions
-                    // Using older Camera config approach instead
+                        // Configure camera settings
+                        val config = session.config
+                        // Note: CameraDirection enum is not directly available in some ARCore versions
+                        // Using older Camera config approach instead
                         session.configure(config)
                         
                         try {
@@ -2196,6 +2196,9 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
                             
                             // Force a render to show the camera feed
                             surfaceView.requestRender()
+                            
+                            // CRITICAL: Set up a health check at 14 seconds to prevent the 15-second crash
+                            setupCameraHealthCheck()
                         } catch (e: Exception) {
                             Log.e(TAG, "Error setting up AR session in view/renderer", e)
                         }
@@ -2211,6 +2214,105 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AR components", e)
         }
+    }
+    
+    /**
+     * Set up a camera health check that runs at 14 seconds to prevent the 15-second crash
+     * This is a critical fix for the consistent crash issue
+     */
+    private fun setupCameraHealthCheck() {
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                Log.d(TAG, "Running 14-second camera health check")
+                
+                // Check if we have a valid session
+                val session = arCoreSessionHelper.session
+                if (session != null) {
+                    // Check if session is tracking properly
+                    val earth = session.earth
+                    if (earth != null && earth.trackingState == TrackingState.TRACKING) {
+                        Log.d(TAG, "AR session is healthy at 14-second check")
+                        
+                        // Update the UI to indicate the health check passed
+                        runOnUiThread {
+                            trackingQualityIndicator?.text = "AR tracking healthy (14s check passed)"
+                            trackingQualityIndicator?.setBackgroundColor(
+                                ContextCompat.getColor(this, android.R.color.holo_green_light)
+                            )
+                        }
+                    } else {
+                        // If not tracking properly, perform a session refresh
+                        Log.w(TAG, "AR session not tracking properly at 14-second check, refreshing")
+                        
+                        runOnUiThread {
+                            trackingQualityIndicator?.text = "Refreshing camera at 14s checkpoint..."
+                            trackingQualityIndicator?.setBackgroundColor(
+                                ContextCompat.getColor(this, android.R.color.holo_orange_light)
+                            )
+                            
+                            // Show a toast to inform the user
+                            Toast.makeText(this, "Refreshing camera connection...", Toast.LENGTH_SHORT).show()
+                        }
+                        
+                        // Pause and resume the session to refresh it
+                        try {
+                            // First pause the session
+                            arCoreSessionHelper.onPause()
+                            
+                            // Force camera reset
+                            resetCamera(this)
+                            
+                            // Short delay to ensure camera is released
+                            Thread.sleep(200)
+                            
+                            // Resume the session
+                            arCoreSessionHelper.onResume()
+                            
+                            // Update UI after successful refresh
+                            runOnUiThread {
+                                trackingQualityIndicator?.text = "Camera reset complete"
+                                trackingQualityIndicator?.setBackgroundColor(
+                                    ContextCompat.getColor(this, android.R.color.holo_green_light)
+                                )
+                            }
+                            
+                            Log.d(TAG, "14-second camera refresh completed successfully")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error during 14-second camera refresh", e)
+                            
+                            // If refresh fails, try a more aggressive approach
+                            try {
+                                // Force camera reset
+                                forceCameraReset(this)
+                                
+                                // Recreate the session
+                                arCoreSessionHelper.recreateSession()
+                                
+                                Log.d(TAG, "Aggressive camera refresh completed")
+                            } catch (e2: Exception) {
+                                Log.e(TAG, "Aggressive camera refresh failed", e2)
+                                
+                                // If all else fails, fall back to map-only mode
+                                runOnUiThread {
+                                    Toast.makeText(this, "Camera reset failed, switching to map-only mode", Toast.LENGTH_LONG).show()
+                                    findViewById<View>(R.id.ar_surface_view).visibility = View.GONE
+                                    
+                                    // Expand map to full screen
+                                    val mapContainer = findViewById<View>(R.id.map_container)
+                                    val params = mapContainer.layoutParams
+                                    params.height = ViewGroup.LayoutParams.MATCH_PARENT
+                                    mapContainer.layoutParams = params
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "No valid session at 14-second check")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during 14-second camera health check", e)
+            }
+        }, 14000) // Run at 14 seconds - just before the 15-second crash point
     }
 
     private fun configureSession(session: Session) {
@@ -2410,31 +2512,24 @@ class SplitScreenActivity : AppCompatActivity(), OnMapReadyCallback, SensorEvent
             Log.d(TAG, "Attempting camera reset (attempt $cameraRetryCount)")
             
             // Reset camera
-            val wasReset = resetCamera(this)
+            resetCamera(this) // Don't store the return value
             
             // Show status to user
-            val message = if (wasReset) 
-                "Camera reset, retrying..." 
-            else 
-                "Camera reset failed"
+            Toast.makeText(this, "Camera reset, retrying...", Toast.LENGTH_SHORT).show()
             
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-            
-            if (wasReset) {
-                // Destroy and recreate session
-                Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        // Close existing session
-                        arCoreSessionHelper.session?.close()
-                        
-                        // Create a new session
-                        arCoreSessionHelper.onDestroy()
-                        arCoreSessionHelper.onResume()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error recreating AR session", e)
-                    }
-                }, 1000)
-            }
+            // Destroy and recreate session
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    // Close existing session
+                    arCoreSessionHelper.session?.close()
+                    
+                    // Create a new session
+                    arCoreSessionHelper.onDestroy()
+                    arCoreSessionHelper.onResume()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error recreating AR session", e)
+                }
+            }, 1000)
         } else {
             // Max retries reached, disable AR
             Toast.makeText(this, "Camera unavailable - continuing with map only", Toast.LENGTH_LONG).show()
