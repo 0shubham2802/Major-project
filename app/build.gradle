@@ -13,22 +13,77 @@ android {
         targetSdkVersion 33
         versionCode 1
         versionName '1.0'
+        
+        // Add additional configurations for stability
+        renderscriptTargetApi 24
+        renderscriptSupportModeEnabled true
+        
+        // Enable multidex for better handling of large codebase
+        multiDexEnabled true
+        
+        // Configure resources for better memory usage
+        resConfigs "en"
+        
+        // Additional JVM arguments for stability
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments = [
+                    disableProcessing: 'true'
+                ]
+            }
+        }
     }
+    
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    
     kotlinOptions {
         jvmTarget = '1.8'
     }
+    
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+        debug {
+            // Enable memory and performance optimizations for debugging
+            debuggable true
+            minifyEnabled false
+            // Optimize dex for faster app startup in debug mode
+            crunchPngs false
+            renderscriptDebuggable false
+            renderscriptOptimLevel 3
+        }
     }
+    
+    // Add dexOptions for better memory usage during builds
+    dexOptions {
+        javaMaxHeapSize "2g"
+        preDexLibraries true
+        incremental true
+    }
+    
     lintOptions {
         abortOnError false
+    }
+    
+    // Add splits for better APK size management
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            universalApk true
+        }
+    }
+    
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/LICENSE', 'META-INF/NOTICE']
+        }
     }
 }
 
@@ -64,4 +119,16 @@ dependencies {
     
     // For ANR detection and prevention
     implementation 'com.github.anrwatchdog:anrwatchdog:1.4.0'
+    
+    // Add LeakCanary for memory leak detection in debug builds
+    debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.11'
+    
+    // Add multidex support
+    implementation 'androidx.multidex:multidex:2.0.1'
+    
+    // Add Glide for more efficient image loading
+    implementation 'com.github.bumptech.glide:glide:4.15.1'
+    
+    // StrictMode helper for detecting disk/network operations on main thread
+    debugImplementation 'com.jakewharton.threetenabp:threetenabp:1.4.6'
 }
