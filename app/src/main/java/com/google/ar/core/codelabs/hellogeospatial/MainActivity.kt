@@ -1,8 +1,11 @@
 package com.google.ar.core.codelabs.hellogeospatial
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraAccessException
+import android.hardware.camera2.CameraManager
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -23,14 +26,23 @@ class MainActivity : AppCompatActivity() {
         private const val CAMERA_PERMISSION_CODE = 100
     }
 
+    private lateinit var cameraManager: CameraManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Initialize camera manager
+        cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
         // Set up the button
         findViewById<Button>(R.id.basicArButton).setOnClickListener {
             if (checkCameraPermission()) {
-                startActivity(Intent(this, BasicARActivity::class.java))
+                if (isCameraAvailable()) {
+                    startActivity(Intent(this, BasicARActivity::class.java))
+                } else {
+                    Toast.makeText(this, "Camera is not available right now", Toast.LENGTH_LONG).show()
+                }
             } else {
                 requestCameraPermission()
             }
@@ -50,8 +62,33 @@ class MainActivity : AppCompatActivity() {
         updateArStatus()
     }
 
+    private fun isCameraAvailable(): Boolean {
+        try {
+            for (cameraId in cameraManager.cameraIdList) {
+                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
+                    return true
+                }
+            }
+        } catch (e: CameraAccessException) {
+            Toast.makeText(this, "Error checking camera: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+        return false
+    }
+
     private fun updateArStatus() {
         val statusText = findViewById<TextView>(R.id.arStatusText)
+        
+        if (!checkCameraPermission()) {
+            statusText.text = "Camera permission required for AR"
+            return
+        }
+
+        if (!isCameraAvailable()) {
+            statusText.text = "Camera is not available"
+            return
+        }
         
         // Check ARCore availability
         val availability = ArCoreApk.getInstance().checkAvailability(this)
@@ -94,6 +131,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == CAMERA_PERMISSION_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "Camera permission granted", Toast.LENGTH_SHORT).show()
+                updateArStatus()
             } else {
                 Toast.makeText(
                     this,
