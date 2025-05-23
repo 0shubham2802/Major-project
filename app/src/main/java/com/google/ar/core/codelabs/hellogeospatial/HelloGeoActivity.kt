@@ -120,26 +120,11 @@ class HelloGeoActivity : AppCompatActivity() {
   private val WATCHDOG_TIMEOUT_MS = 8000L // 8 seconds - increased from 5
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    // Add emergency handler for stability
-    val emergencyHandler = Handler(Looper.getMainLooper())
-    val emergencyRunnable = object : Runnable {
-      override fun run() {
-        // Check if app is still responding by monitoring key operations
-        try {
-          if (::surfaceView.isInitialized && surfaceView.isAttachedToWindow) {
-            Log.d(TAG, "Emergency health check - app functioning normally")
-          }
-        } catch (e: Exception) {
-          Log.e(TAG, "Error in emergency health check", e)
-        }
-        
-        // Schedule next check (every 5 seconds)
-        emergencyHandler.postDelayed(this, 5000)
-      }
-    }
-    
-    // Start emergency monitoring
-    emergencyHandler.postDelayed(emergencyRunnable, 5000)
+    // Set up emergency recovery timer that will trigger after 15 seconds
+    // This addresses the specific 15-second crash you're experiencing
+    Handler(Looper.getMainLooper()).postDelayed({
+      checkSessionHealth()
+    }, 14000) // Check just before the 15 second mark
     
     super.onCreate(savedInstanceState)
     
@@ -975,5 +960,113 @@ class HelloGeoActivity : AppCompatActivity() {
   override fun onDestroy() {
     // Clean up resources
     super.onDestroy()
+  }
+
+  /**
+   * Checks the health of the AR session after 15 seconds
+   * This can help prevent the crashes you're experiencing
+   */
+  private fun checkSessionHealth() {
+    Log.d(TAG, "Performing AR session health check")
+    try {
+      if (isFinishing || isDestroyed) return
+
+      val session = arCoreSessionHelper.session
+      
+      // Check if renderer has produced frames recently
+      var needsRecovery = false
+      
+      if (::renderer.isInitialized) {
+        val frameTimeHistory = renderer.getFrameTimeHistory()
+        val currentTime = System.currentTimeMillis()
+        val lastFrameTime = renderer.getLastFrameTimestamp()
+        
+        // If no frames for 2+ seconds, we need recovery
+        if (lastFrameTime > 0 && currentTime - lastFrameTime > 2000) {
+          Log.w(TAG, "No frames produced in ${currentTime - lastFrameTime}ms, initiating recovery")
+          needsRecovery = true
+        }
+        
+        // If frames are very slow, we need recovery
+        val avgFrameTime = frameTimeHistory.filter { it > 0 }.average()
+        if (avgFrameTime > 200) { // Extremely slow frames
+          Log.w(TAG, "Extremely slow frames detected (${avgFrameTime}ms avg), initiating recovery")
+          needsRecovery = true
+        }
+      }
+      
+      // Check if session is tracking properly
+      session?.let {
+        try {
+          // Just pause without checking the return value
+          it.pause()
+          Log.d(TAG, "Session paused successfully for health check")
+          
+          // Force release GL resources
+          releaseGLResources()
+          
+          // Wait a moment for resources to be freed
+          Thread.sleep(100)
+          
+          try {
+            it.resume()
+            Log.d(TAG, "Session resumed successfully after health check")
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to resume session after health check", e)
+            needsRecovery = true
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to pause session during health check", e)
+          needsRecovery = true
+        }
+      }
+      
+      // If recovery needed, try to recreate the session
+      if (needsRecovery) {
+        Log.w(TAG, "Recovery needed based on health check")
+        Toast.makeText(this, "Refreshing AR view for better performance", Toast.LENGTH_SHORT).show()
+        
+        // Force camera and session reset
+        arCoreSessionHelper.recreateSession()
+      }
+      
+      // Schedule another check after 15 seconds
+      Handler(Looper.getMainLooper()).postDelayed({
+        checkSessionHealth()
+      }, 15000)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in session health check", e)
+    }
+  }
+  
+  private fun releaseGLResources() {
+    try {
+      // Force an explicit GL state reset
+      val glThread = Thread {
+        try {
+          // Request renderer cleanup
+          if (::renderer.isInitialized) {
+            renderer.performEmergencyCleanup()
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Error in GL resource cleanup", e)
+        }
+      }
+      
+      // Start cleanup on GL thread
+      glThread.start()
+      
+      // Wait for completion with timeout
+      try {
+        glThread.join(1000)
+      } catch (e: InterruptedException) {
+        Log.e(TAG, "GL cleanup interrupted", e)
+      }
+      
+      // Force garbage collection
+      System.gc()
+    } catch (e: Exception) {
+      Log.e(TAG, "Error releasing GL resources", e)
+    }
   }
 }

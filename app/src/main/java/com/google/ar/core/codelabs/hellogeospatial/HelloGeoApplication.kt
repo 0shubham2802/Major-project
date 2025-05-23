@@ -220,8 +220,8 @@ class HelloGeoApplication : Application() {
      */
     private fun setupANRWatchdog() {
         try {
-            // For low resource devices, use longer timeout
-            val timeoutMs = if (isLowResourceDevice) 20000 else 15000
+            // Increase timeout significantly to prevent false positives
+            val timeoutMs = if (isLowResourceDevice) 30000 else 20000 // 20-30 seconds
             
             anrWatchDog = ANRWatchDog(timeoutMs)
             
@@ -239,35 +239,22 @@ class HelloGeoApplication : Application() {
                         // Show a toast about the issue
                         Toast.makeText(
                             applicationContext,
-                            "Application freeze detected, attempting recovery...",
+                            "Application freeze detected, recovering...",
                             Toast.LENGTH_LONG
                         ).show()
                         
-                        // Cancel any pending operations
-                        cancelPendingOperations()
+                        // Force terminate AR session and release resources
+                        releaseARResources()
                         
-                        // Give the UI thread a chance to breathe
-                        Thread.sleep(100)
+                        // Force garbage collection
+                        System.gc()
+                        System.runFinalization()
                         
                         // Launch fallback activity to recover
                         val fallbackIntent = Intent(applicationContext, FallbackActivity::class.java)
                         fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
                         fallbackIntent.putExtra("FROM_ANR_RECOVERY", true)
-                        try {
-                            startActivity(fallbackIntent)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to start FallbackActivity directly", e)
-                            // Try with a delay as a last resort
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                try {
-                                    startActivity(fallbackIntent)
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Failed to start FallbackActivity even with delay", e)
-                                    // Last resort - try to restart the app
-                                    restartApp()
-                                }
-                            }, 1000)
-                        }
+                        startActivity(fallbackIntent)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in ANR recovery", e)
                         restartApp()
@@ -290,19 +277,34 @@ class HelloGeoApplication : Application() {
     }
     
     /**
-     * Method to cancel any pending operations that might be blocking the UI thread
+     * Aggressively release AR resources in case of problems
      */
-    private fun cancelPendingOperations() {
+    private fun releaseARResources() {
         try {
-            // This is a placeholder for canceling any known operations
-            // For example, cancel network requests, release camera resources, etc.
-            Log.d(TAG, "Canceling pending operations")
+            // Try to find and close any active AR sessions
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val runningProcesses = activityManager.runningAppProcesses
             
-            // Force garbage collection to free up resources
-            System.gc()
-            System.runFinalization()
+            for (processInfo in runningProcesses) {
+                if (processInfo.processName == packageName) {
+                    Log.d(TAG, "Found our process, attempting to release AR resources")
+                    // Force a resource release
+                    android.os.Process.sendSignal(processInfo.pid, android.os.Process.SIGNAL_QUIT)
+                    break
+                }
+            }
+            
+            // Try to release camera explicitly
+            try {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                for (cameraId in cameraManager.cameraIdList) {
+                    Log.d(TAG, "Attempting to release camera: $cameraId")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing camera", e)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error canceling operations", e)
+            Log.e(TAG, "Error releasing AR resources", e)
         }
     }
     

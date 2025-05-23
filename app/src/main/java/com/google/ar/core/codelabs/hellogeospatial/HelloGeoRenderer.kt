@@ -378,6 +378,9 @@ class HelloGeoRenderer(val context: Context) :
   //</editor-fold>
 
   override fun onDrawFrame(render: SampleRender) {
+    // Add emergency timeout for the entire frame render process
+    val frameRenderTimeout = System.currentTimeMillis() + 500 // Max 500ms for frame rendering
+    
     // Start tracking frame time for performance monitoring
     val frameStartTime = System.currentTimeMillis()
     val frameDelta = if (lastFrameTimestamp > 0) frameStartTime - lastFrameTimestamp else 0
@@ -395,16 +398,41 @@ class HelloGeoRenderer(val context: Context) :
     val session = arSession ?: return
 
     try {
+      // Check if we're exceeding the emergency timeout
+      if (System.currentTimeMillis() > frameRenderTimeout) {
+        Log.e(TAG, "Frame render taking too long, aborting to prevent ANR")
+        return
+      }
+      
       // Update session to get current frame
       displayRotationHelper.updateSessionIfNeeded(session)
       
+      // Emergency check - don't allow frame to continue if too slow
+      if (System.currentTimeMillis() > frameRenderTimeout) {
+        Log.e(TAG, "Session update took too long, aborting frame to prevent ANR")
+        return
+      }
+      
       // Required to get camera image to render
-      session.setCameraTextureName(backgroundRenderer.getCameraColorTexture().textureId)
-
+      try {
+        session.setCameraTextureName(backgroundRenderer.getCameraColorTexture().textureId)
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to set camera texture name", e)
+        // Continue anyway, the frame may still be usable
+      }
+      
       // Handle frame exception in a more robust way
       val currentFrame: Frame
       try {
+        // Limit frame acquisition time
+        val frameStartTime = System.currentTimeMillis()
         currentFrame = session.update()
+        val frameTime = System.currentTimeMillis() - frameStartTime
+        
+        // Log slow frame acquisition
+        if (frameTime > 100) {
+          Log.w(TAG, "Slow frame acquisition: $frameTime ms")
+        }
       } catch (e: CameraNotAvailableException) {
         Log.e(TAG, "Camera not available", e)
         showError(context, "Camera is not available, please restart the app")
@@ -414,9 +442,19 @@ class HelloGeoRenderer(val context: Context) :
         return
       }
       
-      // Update camera's texture coordinate transformation
-      // This must be called every frame
-      backgroundRenderer.updateDisplayGeometry(currentFrame)
+      // Emergency check - don't allow frame to continue if too slow
+      if (System.currentTimeMillis() > frameRenderTimeout) {
+        Log.e(TAG, "Frame preparation took too long, aborting to prevent ANR")
+        return
+      }
+      
+      try {
+        // Update camera's texture coordinate transformation
+        backgroundRenderer.updateDisplayGeometry(currentFrame)
+      } catch (e: Exception) {
+        Log.e(TAG, "Error updating display geometry", e)
+        // Try to continue with rendering
+      }
 
       // Force draw the background camera feed in split screen mode
       // This ensures the camera is always visible, even if AR features aren't tracking
@@ -428,6 +466,18 @@ class HelloGeoRenderer(val context: Context) :
           Log.e(TAG, "Error drawing camera background in split mode", e)
           // Continue with the rest of the rendering
         }
+      }
+
+      // Continue processing the frame only if we have enough time
+      if (System.currentTimeMillis() > frameRenderTimeout) {
+        Log.w(TAG, "Skipping complex AR processing to prevent ANR")
+        // Still try to render the basic frame
+        try {  
+          backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to render virtual scene in emergency mode", e)
+        }
+        return
       }
 
       // Adapt to environment light conditions if available
@@ -534,6 +584,12 @@ class HelloGeoRenderer(val context: Context) :
           Log.e(TAG, "Failed to draw background in exception handler", innerEx)
         }
       }
+    } finally {
+      // Check total frame time and log if it's too long
+      val totalFrameTime = System.currentTimeMillis() - frameStartTime
+      if (totalFrameTime > 100) {
+        Log.w(TAG, "Slow frame detected: $totalFrameTime ms")
+      }
     }
 
     try {  
@@ -541,12 +597,6 @@ class HelloGeoRenderer(val context: Context) :
       backgroundRenderer.drawVirtualScene(render, virtualSceneFramebuffer, Z_NEAR, Z_FAR)
     } catch (e: Exception) {
       Log.e(TAG, "Exception drawing virtual scene", e)
-    }
-    
-    // Check total frame time
-    val totalFrameTime = System.currentTimeMillis() - frameStartTime
-    if (totalFrameTime > 100) {
-      Log.w(TAG, "Slow frame detected: $totalFrameTime ms")
     }
   }
   
@@ -1616,7 +1666,41 @@ class HelloGeoRenderer(val context: Context) :
   
   // Helper method for performance adjustment
   private fun adjustPerformanceSettings() {
-    // Placeholder for performance adjustment
+    try {
+      // Calculate average frame time
+      var sum = 0L
+      var count = 0
+      
+      for (time in frameTimeHistory) {
+        if (time > 0) {
+          sum += time
+          count++
+        }
+      }
+      
+      val avgFrameTime = if (count > 0) sum / count else 0L
+      
+      // Log performance statistics every 30 frames
+      if (frameTimeIndex == 0) {
+        Log.d(TAG, "Average frame time: $avgFrameTime ms")
+      }
+      
+      // If frames are consistently slow, take action
+      if (avgFrameTime > 50) { // 50ms = 20fps
+        Log.w(TAG, "Performance issue detected: $avgFrameTime ms average frame time")
+        
+        // Enable low precision mode if not already enabled
+        if (!isLowPrecisionMode) {
+          Log.d(TAG, "Enabling low precision mode due to performance issues")
+          setLowPrecisionMode(true)
+        }
+        
+        // Force GC to free up memory
+        System.gc()
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error in performance adjustment", e)
+    }
   }
   
   // Helper for angle conversion
@@ -1686,5 +1770,77 @@ class HelloGeoRenderer(val context: Context) :
   // Set rendering parameters for different environments
   fun setRenderingForEnvironment(isIndoor: Boolean) {
     // Placeholder implementation
+  }
+
+  /**
+   * Get frame time history for performance analysis
+   */
+  fun getFrameTimeHistory(): LongArray {
+    return frameTimeHistory
+  }
+  
+  /**
+   * Get the last frame timestamp
+   */
+  fun getLastFrameTimestamp(): Long {
+    return lastFrameTimestamp
+  }
+  
+  /**
+   * Perform emergency cleanup of GL resources to recover from issues
+   */
+  fun performEmergencyCleanup() {
+    try {
+      Log.d(TAG, "Performing emergency cleanup")
+      
+      // Try to release active anchors
+      try {
+        for (anchor in anchors) {
+          try {
+            anchor.detach()
+          } catch (e: Exception) {
+            Log.e(TAG, "Error detaching anchor", e)
+          }
+        }
+        anchors.clear()
+        
+        destinationAnchor?.let {
+          try {
+            it.detach()
+            destinationAnchor = null
+          } catch (e: Exception) {
+            Log.e(TAG, "Error detaching destination anchor", e)
+          }
+        }
+        
+        // Clear route points
+        routePoints = emptyList()
+        
+        Log.d(TAG, "Anchors cleared during emergency cleanup")
+      } catch (e: Exception) {
+        Log.e(TAG, "Error clearing anchors", e)
+      }
+      
+      // Reset tracking states
+      framesWithoutEarthTracking = 0
+      earthInitializedTime = 0
+      lastEarthTrackingErrorTime = 0
+      hasFallenBackToMapMode = false
+      
+      // Force a camera texture reset on next frame
+      hasSetTextureNames = false
+      
+      // Reset performance monitoring
+      lastFrameTimestamp = 0
+      frameTimeHistory.fill(0)
+      frameTimeIndex = 0
+      
+      // Enable low-precision mode for better stability
+      setLowPrecisionMode(true)
+      
+      Log.d(TAG, "Emergency cleanup completed")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error during emergency cleanup", e)
+    }
   }
 }

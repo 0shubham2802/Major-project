@@ -17,6 +17,7 @@ package com.google.ar.core.codelabs.hellogeospatial.helpers
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Handler
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -48,6 +49,12 @@ class ARCoreSessionLifecycleHelper(
   private val MAX_RETRY_ATTEMPTS = 3
   private val RETRY_DELAY_MS = 500L
 
+  /**
+   * Creates a new ARCore Session or resumes an existing session if available.
+   * Handles cleaning up the current session if it exists.
+   */
+  private var sessionCreateAttempts = 0
+  
   // Non-lifecycle version of onResume
   fun onResume() {
     val session = this.session ?: tryCreateSession() ?: return
@@ -118,6 +125,17 @@ class ARCoreSessionLifecycleHelper(
   }
 
   private fun tryCreateSession(): Session? {
+    // If we've tried and failed to create a session more than 3 times,
+    // fall back to a non-AR experience to avoid continuous crashes
+    if (sessionCreateAttempts > 3) {
+      Log.e(TAG, "Too many session creation failures, falling back to non-AR experience")
+      handleFatalError("Failed to create AR session after multiple attempts")
+      return null
+    }
+    
+    sessionCreateAttempts++
+    Log.d(TAG, "Attempting to create session (attempt #$sessionCreateAttempts)")
+    
     // The app must have been given the CAMERA permission. If we don't have it yet, request it.
     if (!GeoPermissionsHelper.hasGeoPermissions(activity)) {
       GeoPermissionsHelper.requestPermissions(activity)
@@ -125,6 +143,9 @@ class ARCoreSessionLifecycleHelper(
     }
 
     return try {
+      // Clear any existing session
+      clearSession()
+      
       // Request installation if necessary.
       when (ArCoreApk.getInstance().requestInstall(activity, !installRequested)!!) {
         ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
@@ -164,7 +185,7 @@ class ARCoreSessionLifecycleHelper(
       Log.d(TAG, "Session created successfully")
       
       // Reset retry count on success
-      retryCount = 0
+      sessionCreateAttempts = 0
       lastException = null
       
       newSession
@@ -173,6 +194,93 @@ class ARCoreSessionLifecycleHelper(
       lastException = e
       exceptionCallback?.invoke(e)
       null
+    }
+  }
+  
+  /**
+   * Force recreate the session to clear any camera issues
+   */
+  fun recreateSession() {
+    Log.d(TAG, "Attempting to recreate AR session")
+    
+    // Force session close
+    session?.let {
+      try {
+        it.pause()
+        it.close()
+      } catch (e: Exception) {
+        Log.e(TAG, "Error closing existing session", e)
+      }
+    }
+    
+    // Release camera resources
+    resetCamera(activity)
+    
+    // Force garbage collection
+    System.gc()
+    System.runFinalization()
+    
+    // Wait a moment for resources to be freed
+    try {
+      Thread.sleep(100)
+    } catch (e: InterruptedException) {
+      Log.e(TAG, "Sleep interrupted", e)
+    }
+    
+    // Try to create a new session
+    session = tryCreateSession()
+    
+    // Resume if created successfully
+    session?.let {
+      try {
+        it.resume()
+        Log.d(TAG, "Session recreated and resumed successfully")
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to resume recreated session", e)
+        exceptionCallback?.invoke(e)
+      }
+    }
+  }
+  
+  /**
+   * Clears the current session safely
+   */
+  private fun clearSession() {
+    // Close the current session if it exists
+    try {
+      session?.let {
+        it.pause()
+        it.close()
+        session = null
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error cleaning up session", e)
+    }
+  }
+  
+  /**
+   * Handle a fatal error that requires fallback to non-AR mode
+   */
+  private fun handleFatalError(message: String) {
+    Log.e(TAG, "Fatal AR error: $message")
+    try {
+      // Show error on UI thread
+      val mainHandler = Handler(android.os.Looper.getMainLooper())
+      mainHandler.post {
+        Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+        
+        // Launch fallback activity
+        try {
+          val intent = Intent(activity, FallbackActivity::class.java)
+          intent.putExtra("ERROR_MESSAGE", message)
+          activity.startActivity(intent)
+          activity.finish()
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to start fallback activity", e)
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error handling fatal AR error", e)
     }
   }
 
