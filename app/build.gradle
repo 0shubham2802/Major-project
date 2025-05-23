@@ -34,6 +34,7 @@ android {
         }
     }
     
+    // Reduce app size
     buildTypes {
         release {
             minifyEnabled true
@@ -41,9 +42,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            // Disable optimization for debug to ensure easier testing
-            minifyEnabled false
-            shrinkResources false
+            // Enable optimization for debug to reduce app size
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     
@@ -75,6 +77,7 @@ android {
         exclude 'META-INF/NOTICE.txt'
         exclude 'META-INF/notice.txt'
         exclude 'META-INF/ASL2.0'
+        exclude '**/*.so'
     }
 
     compileOptions {
@@ -83,6 +86,24 @@ android {
     }
     kotlinOptions {
         jvmTarget = '1.8'
+    }
+
+    // Exclude problematic files
+    sourceSets {
+        main {
+            java {
+                exclude '**/HelloGeoActivity.kt'
+                exclude '**/HelloGeoView.kt'
+                exclude '**/HelloGeoRenderer.kt'
+                exclude '**/HelloGeoApplication.kt'
+                exclude '**/helpers/DirectionsHelper.kt'
+                exclude '**/helpers/MapErrorHelper.kt'
+                exclude '**/helpers/MapViewWrapper.kt'
+                exclude '**/helpers/GoogleApiKeyValidator.kt'
+                exclude '**/rendering/**'
+                exclude '**/helpers/ARCoreHelper.kt'
+            }
+        }
     }
 }
 
