@@ -14,6 +14,9 @@ import android.os.HandlerThread
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
+import android.widget.Button
+import android.widget.RelativeLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -29,6 +32,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
         private const val TAG = "BasicARActivity"
         private const val CAMERA_PERMISSION_CODE = 100
         private const val CAMERA_OPEN_TIMEOUT_MS = 2500L
+        private const val MAX_RETRY_COUNT = 3
     }
 
     private lateinit var surfaceView: SurfaceView
@@ -38,6 +42,8 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var cameraCaptureSession: CameraCaptureSession? = null
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+    private var retryButton: Button? = null
+    private var retryCount = 0
     
     // A semaphore to prevent the app from exiting before closing the camera
     private val cameraOpenCloseLock = Semaphore(1)
@@ -45,9 +51,35 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Create a layout that will hold our surface view and retry button
+        val layout = RelativeLayout(this)
+        
         // Create a simple surface view for the camera
         surfaceView = SurfaceView(this)
-        setContentView(surfaceView)
+        val params = RelativeLayout.LayoutParams(
+            RelativeLayout.LayoutParams.MATCH_PARENT,
+            RelativeLayout.LayoutParams.MATCH_PARENT
+        )
+        surfaceView.layoutParams = params
+        
+        // Add retry button that will be shown when camera fails
+        retryButton = Button(this).apply {
+            text = "Retry Camera"
+            visibility = View.GONE
+            val buttonParams = RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.WRAP_CONTENT,
+                RelativeLayout.LayoutParams.WRAP_CONTENT
+            )
+            buttonParams.addRule(RelativeLayout.CENTER_IN_PARENT)
+            layoutParams = buttonParams
+            setOnClickListener {
+                resetAndRetryCameraOpen()
+            }
+        }
+        
+        layout.addView(surfaceView)
+        layout.addView(retryButton)
+        setContentView(layout)
         
         // Initialize the surface holder
         surfaceHolder = surfaceView.holder
@@ -55,6 +87,38 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
         
         // Get the camera manager
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        
+        // Force release any existing camera instances
+        releaseGlobalCameraResources()
+    }
+    
+    /**
+     * Attempt to reset system camera resources
+     */
+    private fun releaseGlobalCameraResources() {
+        try {
+            // Sometimes on Android, camera instances aren't properly released
+            // This is a system-level issue that we can attempt to mitigate
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            
+            // Log available cameras
+            for (cameraId in cameraManager.cameraIdList) {
+                Log.d(TAG, "Camera $cameraId available")
+            }
+            
+            // Use the application-level resource management
+            (application as? ARApplication)?.forceReleaseCameraResources()
+            
+            // A dummy gesture to force the system to reconsider camera allocations
+            Runtime.getRuntime().gc()
+            
+            // Give the system a moment to collect resources
+            Handler().postDelayed({
+                Log.d(TAG, "Forced memory cleanup to release camera resources")
+            }, 100)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing global camera resources", e)
+        }
     }
 
     override fun onResume() {
@@ -81,6 +145,23 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
         
         // Stop background thread
         stopBackgroundThread()
+    }
+    
+    /**
+     * Reset and retry camera opening after a short delay
+     */
+    private fun resetAndRetryCameraOpen() {
+        retryButton?.visibility = View.GONE
+        
+        closeCamera()
+        releaseGlobalCameraResources()
+        
+        // Wait a bit before trying again
+        Handler().postDelayed({
+            if (!isFinishing) {
+                openCamera()
+            }
+        }, 1000)
     }
 
     private fun startBackgroundThread() {
@@ -146,6 +227,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
         try {
             if (!cameraOpenCloseLock.tryAcquire(CAMERA_OPEN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 Toast.makeText(this, "Time out waiting to lock camera", Toast.LENGTH_LONG).show()
+                showRetryButton()
                 return
             }
             
@@ -154,6 +236,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
             if (cameraId.isEmpty()) {
                 Toast.makeText(this, "No back-facing camera found", Toast.LENGTH_LONG).show()
                 cameraOpenCloseLock.release()
+                showRetryButton()
                 return
             }
             
@@ -164,6 +247,8 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                         cameraOpenCloseLock.release()
                         cameraDevice = camera
                         createCameraPreviewSession()
+                        retryCount = 0 // Reset retry count on success
+                        hideRetryButton()
                     }
                     
                     override fun onDisconnected(camera: CameraDevice) {
@@ -175,6 +260,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                             "Camera disconnected", 
                             Toast.LENGTH_SHORT
                         ).show()
+                        showRetryButton()
                     }
                     
                     override fun onError(camera: CameraDevice, error: Int) {
@@ -186,8 +272,10 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                         val errorMsg = when(error) {
                             CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> 
                                 "Camera is already in use"
-                            CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> 
+                            CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> {
+                                handleMaxCameraError()
                                 "Maximum cameras in use"
+                            }
                             CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> 
                                 "Camera is disabled"
                             CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> 
@@ -203,29 +291,74 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                             Toast.LENGTH_LONG
                         ).show()
                         
-                        // Try to recover by closing any existing camera resources and reopening
-                        Handler(mainLooper).postDelayed({
-                            closeCamera()
-                            openCamera()
-                        }, 1000)
+                        if (error != CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE) {
+                            // For other errors, we try one immediate retry
+                            Handler(mainLooper).postDelayed({
+                                if (!isFinishing && retryCount < MAX_RETRY_COUNT) {
+                                    retryCount++
+                                    closeCamera()
+                                    openCamera()
+                                } else {
+                                    showRetryButton()
+                                }
+                            }, 1000)
+                        }
                     }
                 }, backgroundHandler)
             } catch (e: CameraAccessException) {
                 Log.e(TAG, "Error opening camera", e)
                 Toast.makeText(this, "Failed to open camera: ${e.message}", Toast.LENGTH_SHORT).show()
                 cameraOpenCloseLock.release()
+                showRetryButton()
             } catch (e: SecurityException) {
                 Log.e(TAG, "Security exception opening camera", e)
                 Toast.makeText(this, "No camera permission", Toast.LENGTH_SHORT).show()
                 cameraOpenCloseLock.release()
+                showRetryButton()
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error opening camera", e)
                 Toast.makeText(this, "Unexpected error: ${e.message}", Toast.LENGTH_SHORT).show()
                 cameraOpenCloseLock.release()
+                showRetryButton()
             }
         } catch (e: InterruptedException) {
             Log.e(TAG, "Interrupted while trying to lock camera opening", e)
             Toast.makeText(this, "Error locking camera", Toast.LENGTH_SHORT).show()
+            showRetryButton()
+        }
+    }
+    
+    /**
+     * Handle the max camera error by forcing a system-level camera reset
+     */
+    private fun handleMaxCameraError() {
+        // Aggressive cleanup to try to free camera resources
+        closeCamera()
+        releaseGlobalCameraResources()
+        
+        // Show the retry button for the user
+        showRetryButton()
+        
+        // Try to restart with a longer delay
+        if (retryCount < MAX_RETRY_COUNT) {
+            retryCount++
+            Handler(mainLooper).postDelayed({
+                if (!isFinishing) {
+                    openCamera()
+                }
+            }, 2000)
+        }
+    }
+    
+    private fun showRetryButton() {
+        runOnUiThread {
+            retryButton?.visibility = View.VISIBLE
+        }
+    }
+    
+    private fun hideRetryButton() {
+        runOnUiThread {
+            retryButton?.visibility = View.GONE
         }
     }
     
@@ -280,6 +413,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                                 "Error starting preview: ${e.message}",
                                 Toast.LENGTH_SHORT
                             ).show()
+                            showRetryButton()
                         }
                     }
                     
@@ -292,8 +426,13 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                         
                         // Try again after a delay
                         Handler(mainLooper).postDelayed({
-                            closeCamera()
-                            openCamera()
+                            if (!isFinishing && retryCount < MAX_RETRY_COUNT) {
+                                retryCount++
+                                closeCamera()
+                                openCamera()
+                            } else {
+                                showRetryButton()
+                            }
                         }, 1000)
                     }
                 },
@@ -306,6 +445,7 @@ class BasicARActivity : AppCompatActivity(), SurfaceHolder.Callback {
                 "Error setting up preview: ${e.message}",
                 Toast.LENGTH_SHORT
             ).show()
+            showRetryButton()
         }
     }
     

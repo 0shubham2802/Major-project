@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraManager
 import android.os.Bundle
+import android.os.Handler
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var cameraManager: CameraManager
+    private var isProcessingCameraAction = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,12 +39,13 @@ class MainActivity : AppCompatActivity() {
 
         // Set up the button
         findViewById<Button>(R.id.basicArButton).setOnClickListener {
+            if (isProcessingCameraAction) {
+                Toast.makeText(this, "Please wait, processing camera...", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            
             if (checkCameraPermission()) {
-                if (isCameraAvailable()) {
-                    startActivity(Intent(this, BasicARActivity::class.java))
-                } else {
-                    Toast.makeText(this, "Camera is not available right now", Toast.LENGTH_LONG).show()
-                }
+                prepareCameraAndStart()
             } else {
                 requestCameraPermission()
             }
@@ -60,6 +63,37 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateArStatus()
+        isProcessingCameraAction = false
+    }
+    
+    /**
+     * Prepare camera resources and launch the camera activity
+     */
+    private fun prepareCameraAndStart() {
+        isProcessingCameraAction = true
+        
+        // Update button state
+        findViewById<Button>(R.id.basicArButton).isEnabled = false
+        
+        // Reset camera resources at application level
+        (application as? ARApplication)?.forceReleaseCameraResources()
+        
+        // Force garbage collection
+        System.gc()
+        
+        // Wait briefly for resources to be cleaned up
+        Handler().postDelayed({
+            // Check camera availability again after cleanup
+            if (isCameraAvailable()) {
+                startActivity(Intent(this, BasicARActivity::class.java))
+            } else {
+                Toast.makeText(this, "Camera is not available right now. Try again.", Toast.LENGTH_LONG).show()
+            }
+            
+            // Restore button state
+            findViewById<Button>(R.id.basicArButton).isEnabled = true
+            isProcessingCameraAction = false
+        }, 500)
     }
 
     private fun isCameraAvailable(): Boolean {
