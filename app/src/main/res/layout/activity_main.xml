@@ -21,6 +21,7 @@
     tools:context=".HelloGeoActivity">
 
   <androidx.cardview.widget.CardView
+      android:id="@+id/search_card"
       android:layout_width="match_parent"
       android:layout_height="50dp"
       android:layout_marginStart="16dp"
@@ -53,8 +54,21 @@
       android:id="@+id/surfaceview"
       android:layout_width="fill_parent"
       android:layout_height="fill_parent"
-      android:layout_below="@id/searchView"
+      android:layout_below="@id/search_card"
       android:layout_gravity="top" />
+
+  <com.google.android.material.floatingactionbutton.FloatingActionButton
+      android:id="@+id/split_screen_fab"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_above="@id/map_wrapper"
+      android:layout_alignParentEnd="true"
+      android:layout_marginEnd="16dp"
+      android:layout_marginBottom="16dp"
+      android:src="@android:drawable/ic_dialog_dialer"
+      app:backgroundTint="#2196F3"
+      app:tint="@android:color/white"
+      android:contentDescription="Split Screen Mode" />
 
   <com.google.ar.core.codelabs.hellogeospatial.helpers.MapTouchWrapper
       android:id="@+id/map_wrapper"
