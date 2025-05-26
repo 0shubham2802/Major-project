@@ -11,3 +11,46 @@
 -keep class com.google.android.gms.location.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -keep class com.google.android.gms.tasks.** { *; }
+<<<<<<< HEAD
+=======
+
+# Keep the AR Core classes
+-keep class com.google.ar.** { *; }
+-keep interface com.google.ar.** { *; }
+
+# Keep Google Maps components
+-keep class com.google.android.gms.maps.** { *; }
+-keep interface com.google.android.gms.maps.** { *; }
+
+# Keep local model classes
+-keep class com.google.ar.core.codelabs.hellogeospatial.model.** { *; }
+
+# Keep any classes/interfaces with onXxx callbacks from AR/Maps
+-keepclasseswithmembers class * {
+    public void onMapReady(com.google.android.gms.maps.GoogleMap);
+    public void onArSessionFailed(com.google.ar.core.exceptions.UnavailableException);
+}
+
+# Keep serialization classes
+-keepattributes *Annotation*
+-keepattributes Signature
+-keepattributes Exceptions
+
+# Keep lifecycle methods
+-keepclassmembers class * implements androidx.lifecycle.LifecycleObserver {
+    <methods>;
+}
+
+# General Android optimizations
+-optimizationpasses 5
+-dontusemixedcaseclassnames
+-dontskipnonpubliclibraryclasses
+-dontpreverify
+-verbose
+-optimizations !code/simplification/arithmetic,!field/*,!class/merging/*
+
+# Keep necessary resources
+-keepclassmembers class **.R$* {
+    public static <fields>;
+}
+>>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d

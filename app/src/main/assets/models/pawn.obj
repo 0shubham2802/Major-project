@@ -1,0 +1,18 @@
+# Simple pawn model for AR navigation
+# Created as minimal replacement since the original is missing
+
+# Vertices
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 0.0 1.0
+v 0.0 0.0 1.0
+v 0.5 1.5 0.5
+
+# Faces (triangles)
+f 1 2 5
+f 2 3 5
+f 3 4 5
+f 4 1 5
+
+# Base quad
+f 1 2 3 4 

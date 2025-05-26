@@ -31,3 +31,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+<<<<<<< HEAD
+=======
+local.properties
+>>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
