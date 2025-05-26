@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 <!--
    Copyright 2022 Google LLC
 
@@ -22,7 +21,6 @@
     tools:context=".HelloGeoActivity">
 
   <androidx.cardview.widget.CardView
-      android:id="@+id/search_card"
       android:layout_width="match_parent"
       android:layout_height="50dp"
       android:layout_marginStart="16dp"
@@ -55,21 +53,8 @@
       android:id="@+id/surfaceview"
       android:layout_width="fill_parent"
       android:layout_height="fill_parent"
-      android:layout_below="@id/search_card"
+      android:layout_below="@id/searchView"
       android:layout_gravity="top" />
-
-  <com.google.android.material.floatingactionbutton.FloatingActionButton
-      android:id="@+id/split_screen_fab"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:layout_above="@id/map_wrapper"
-      android:layout_alignParentEnd="true"
-      android:layout_marginEnd="16dp"
-      android:layout_marginBottom="16dp"
-      android:src="@android:drawable/ic_dialog_dialer"
-      app:backgroundTint="#2196F3"
-      app:tint="@android:color/white"
-      android:contentDescription="Split Screen Mode" />
 
   <com.google.ar.core.codelabs.hellogeospatial.helpers.MapTouchWrapper
       android:id="@+id/map_wrapper"
@@ -95,75 +80,3 @@
   </com.google.ar.core.codelabs.hellogeospatial.helpers.MapTouchWrapper>
 
 </RelativeLayout>
-=======
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout 
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    tools:context=".MainActivity">
-    
-    <TextView
-        android:id="@+id/welcomeText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="AR Navigation"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:layout_marginTop="48dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-        
-    <TextView
-        android:id="@+id/descriptionText"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Experience AR camera"
-        android:textAlignment="center"
-        android:layout_marginTop="16dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/welcomeText" />
-        
-    <Button
-        android:id="@+id/basicArButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Start AR Camera"
-        android:layout_marginStart="32dp"
-        android:layout_marginEnd="32dp"
-        android:layout_marginTop="48dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/descriptionText" />
-        
-    <TextView
-        android:id="@+id/arStatusText"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Checking AR capabilities..."
-        android:textAlignment="center"
-        android:layout_marginTop="32dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="24dp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/basicArButton" />
-        
-    <ImageView
-        android:id="@+id/arLogoImage"
-        android:layout_width="150dp"
-        android:layout_height="150dp"
-        android:src="@drawable/ic_launcher"
-        android:layout_marginBottom="48dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
-        
-</androidx.constraintlayout.widget.ConstraintLayout> 
->>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
