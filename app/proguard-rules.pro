@@ -11,8 +11,6 @@
 -keep class com.google.android.gms.location.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -keep class com.google.android.gms.tasks.** { *; }
-<<<<<<< HEAD
-=======
 
 # Keep the AR Core classes
 -keep class com.google.ar.** { *; }
@@ -53,4 +51,3 @@
 -keepclassmembers class **.R$* {
     public static <fields>;
 }
->>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d

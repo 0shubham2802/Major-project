@@ -16,18 +16,13 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-<<<<<<< HEAD
-    package="com.google.ar.core.codelabs.hellogeospatial">
-=======
     package="com.google.ar.core.codelabs.hellogeospatial"
     android:installLocation="auto">
->>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
 
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-
 
   <!-- Explicitly make camera and AR optional so app works without them -->
   <uses-feature android:name="android.hardware.camera" android:required="false"/>
@@ -42,26 +37,6 @@
       android:usesCleartextTraffic="false"
       android:largeHeap="true"
       android:hardwareAccelerated="true"
-<<<<<<< HEAD
-      android:name=".HelloGeoApplication"
-      tools:ignore="GoogleAppIndexingWarning">
-
-    <activity
-        android:name=".HelloGeoActivity"
-        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
-        android:exported="true"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
-        android:screenOrientation="portrait"
-        android:windowSoftInputMode="adjustResize">
-    </activity>
-    
-    <activity
-        android:name=".FallbackActivity"
-        android:exported="true"
-        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" 
-        android:screenOrientation="portrait"
-        android:windowSoftInputMode="adjustResize"
-=======
       android:name=".ARApplication"
       tools:ignore="GoogleAppIndexingWarning">
       
@@ -69,27 +44,23 @@
     <activity
         android:name=".MainActivity"
         android:exported="true"
->>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
+        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
+        android:screenOrientation="portrait"
         android:theme="@style/AppTheme">
         <intent-filter>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
         </intent-filter>
-<<<<<<< HEAD
-        <intent-filter>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.DEFAULT" />
-        </intent-filter>
     </activity>
-    
+
     <activity
-        android:name=".ARActivity"
+        android:name=".BasicARActivity"
+        android:configChanges="orientation|screenSize"
         android:exported="false"
-        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" 
-        android:screenOrientation="portrait"
-        android:theme="@style/Theme.AppCompat.NoActionBar">
+        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:screenOrientation="portrait">
     </activity>
-    
+
     <activity
         android:name=".SplitScreenActivity"
         android:exported="false"
@@ -97,7 +68,7 @@
         android:screenOrientation="portrait"
         android:theme="@style/Theme.AppCompat.NoActionBar">
     </activity>
-    
+
     <!-- Indicates whether "Google Play Services for AR" (ARCore) is "required" or "optional". -->
     <meta-data android:name="com.google.ar.core" android:value="optional" />
     
@@ -111,17 +82,5 @@
     <meta-data
         android:name="com.google.android.geo.API_KEY"
         android:value="AIzaSyDocaPAY_UaBvT5bdxupj_VEf9NHs7EcpE"/>
-=======
-    </activity>
-
-    <!-- Camera activity -->
-    <activity
-        android:name=".BasicARActivity"
-        android:configChanges="orientation|screenSize"
-        android:exported="false"
-        android:theme="@style/Theme.AppCompat.NoActionBar"
-        android:screenOrientation="portrait">
-    </activity>
->>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
   </application>
 </manifest>
