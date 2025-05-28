@@ -18,6 +18,7 @@ package com.google.ar.core.codelabs.hellogeospatial
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.opengl.GLES20
 import android.opengl.Matrix
 import android.util.Log
 import android.widget.Toast
@@ -67,6 +68,13 @@ class HelloGeoRenderer(val context: Context) :
     
     // Track Earth quality
     private const val REQUIRED_TRACKING_CONFIDENCE = 0.7f // Min confidence to consider tracking reliable
+    
+    // AR visualization constants
+    private const val ARROW_SCALE = 1.5f
+    private const val ARROW_HOVER_HEIGHT = 1.7f  // Meters above ground
+    private const val ARROW_SPACING = 3.0f      // Meters between arrows
+    private const val MAX_VISIBLE_ARROWS = 5     // Maximum number of arrows visible at once
+    private const val PATH_LINE_WIDTH = 0.15f    // Width of the path line in meters
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -332,85 +340,194 @@ class HelloGeoRenderer(val context: Context) :
   // Draw the navigation path connecting the anchors
   private fun drawNavigationPath(render: SampleRender, earth: Earth, cameraGeospatialPose: GeospatialPose) {
     try {
-      // Determine how many anchors to draw based on tracking quality
       val trackingConfidence = calculateTrackingConfidence(cameraGeospatialPose)
       
-      // Only draw if we have good enough tracking
       if (trackingConfidence > REQUIRED_TRACKING_CONFIDENCE) {
-        // Get current position
         val currentPosition = LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude)
         
-        // Draw each anchor in the path
-        for (i in anchors.indices) {
-          val anchor = anchors[i]
+        // Find the closest point on the route to the current position
+        val (closestPoint, distanceToRoute) = findClosestPointOnRoute(currentPosition, routePoints)
+        
+        // Only show AR visualization if we're close enough to the route
+        if (distanceToRoute < 50) { // Within 50 meters of route
+          // Draw floating path line
+          drawPathLine(render, earth, cameraGeospatialPose)
           
-          // Skip detached anchors
-          if (anchor.trackingState == TrackingState.STOPPED) continue
-          
-          // Calculate the model matrix for this anchor
-          anchor.getPose().toMatrix(modelMatrix, 0)
-          
-          // Calculate distance to this anchor point (for color-coding)
-          val anchorData = anchorData[anchor] ?: AnchorType.WAYPOINT
-          val isWithinVisibleRange = isAnchorInVisibleRange(anchor, cameraGeospatialPose)
-          
-          // Different rendering for different points in the path
-          when {
-              // Start point (green)
-              anchorData == AnchorType.START -> {
-                  if (isWithinVisibleRange) {
-                      Matrix.scaleM(modelMatrix, 0, 0.5f, 0.5f, 1.5f)
-                      Matrix.translateM(modelMatrix, 0, 0f, 0f, 0.5f)
-                      drawAnchorWithColor(render, modelMatrix, 0f, 1f, 0f, 1f)
-                  }
-              }
-              // Destination point (red)
-              anchorData == AnchorType.DESTINATION -> {
-                  // Always show destination with large marker
-                  Matrix.scaleM(modelMatrix, 0, 1.0f, 1.0f, 2.0f)
-                  Matrix.translateM(modelMatrix, 0, 0f, 0f, 1.0f)
-                  // Pulsate the destination for better visibility
-                  val pulsateFrequency = 0.003f
-                  val currentTimeMillis = System.currentTimeMillis().toFloat()
-                  val sinResult = sin((pulsateFrequency * currentTimeMillis).toDouble())
-                  val sinValue = sinResult.toFloat()
-                  val pulsateValue = 0.7f + 0.3f * sinValue
-                  drawAnchorWithColor(render, modelMatrix, 1f, 0f, 0f, pulsateValue)
-              }
-              // Turn points (yellow)
-              anchorData == AnchorType.TURN -> {
-                  if (isWithinVisibleRange) {
-                      Matrix.scaleM(modelMatrix, 0, 0.6f, 0.6f, 1.0f)
-                      Matrix.translateM(modelMatrix, 0, 0f, 0f, 0.5f)
-                      drawAnchorWithColor(render, modelMatrix, 1f, 0.8f, 0f, 0.9f)
-                  }
-              }
-              // Regular waypoint
-              else -> {
-                  if (isWithinVisibleRange) {
-                      // Smaller blue dots for the path
-                      Matrix.scaleM(modelMatrix, 0, 0.3f, 0.3f, 0.8f)
-                      Matrix.translateM(modelMatrix, 0, 0f, 0f, 0.4f)
-                      drawAnchorWithColor(render, modelMatrix, 0f, 0.5f, 1f, 0.7f)
-                  }
-              }
-          }
+          // Draw direction arrows
+          drawDirectionalArrows(render, earth, cameraGeospatialPose, closestPoint)
         }
         
-        // Draw a floating arrow pointing to the next waypoint if it's not directly visible
-        drawDirectionalIndicator(render, cameraGeospatialPose)
-      } else {
-        // Low tracking confidence - show a warning if we haven't recently
-        val now = System.currentTimeMillis()
-        if (now - lastTrackingQualityWarningTime > 5000) {
-          Log.w(TAG, "Low tracking confidence: $trackingConfidence")
-          showError("Low tracking quality. Please ensure you're outdoors with a clear view of the sky.")
-          lastTrackingQualityWarningTime = now
-        }
+        // Always draw the destination marker
+        drawDestinationMarker(render, earth, cameraGeospatialPose)
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error drawing navigation path", e)
     }
+  }
+  
+  private fun drawPathLine(render: SampleRender, earth: Earth, cameraGeospatialPose: GeospatialPose) {
+    // Create a line strip for the path
+    val pathPoints = mutableListOf<Float>()
+    
+    for (i in 0 until routePoints.size - 1) {
+      val start = routePoints[i]
+      val end = routePoints[i + 1]
+      
+      // Create anchors at regular intervals along the line
+      val distance = calculateDistance(start, end)
+      val segments = (distance / 2).toInt() // One point every 2 meters
+      
+      for (j in 0..segments) {
+        val fraction = j.toFloat() / segments
+        val interpolated = interpolateLatLng(start, end, fraction)
+        
+        // Create anchor at interpolated point
+        val anchor = earth.createAnchor(
+          interpolated.latitude,
+          interpolated.longitude,
+          cameraGeospatialPose.altitude - 0.5f, // Slightly below camera
+          0f, 0f, 0f, 1f
+        )
+        
+        // Add to path points
+        val pose = anchor.pose
+        pathPoints.add(pose.tx())
+        pathPoints.add(pose.ty())
+        pathPoints.add(pose.tz())
+      }
+    }
+    
+    // Draw the path line using GL_LINE_STRIP
+    if (pathPoints.size >= 3) {
+      GLES20.glLineWidth(PATH_LINE_WIDTH)
+      // Draw blue line with transparency
+      virtualObjectShader.setVec4("u_Color", floatArrayOf(0f, 0.5f, 1f, 0.6f))
+      // TODO: Implement actual line drawing with proper GL calls
+    }
+  }
+
+  private fun drawDirectionalArrows(
+    render: SampleRender, 
+    earth: Earth,
+    cameraGeospatialPose: GeospatialPose,
+    closestRoutePoint: LatLng
+  ) {
+    // Find the next few points along the route
+    val nextPoints = findNextRoutePoints(closestRoutePoint, MAX_VISIBLE_ARROWS)
+    
+    for (i in nextPoints.indices) {
+      val point = nextPoints[i]
+      
+      // Create an anchor for this arrow
+      val anchor = earth.createAnchor(
+        point.latitude,
+        point.longitude,
+        cameraGeospatialPose.altitude + ARROW_HOVER_HEIGHT,
+        0f, 0f, 0f, 1f
+      )
+      
+      // Calculate arrow orientation to point to next waypoint
+      val nextPoint = if (i < nextPoints.size - 1) nextPoints[i + 1] else null
+      val rotation = if (nextPoint != null) {
+        calculateBearing(point, nextPoint)
+      } else {
+        cameraGeospatialPose.heading
+      }
+      
+      // Update model matrix for this arrow
+      anchor.pose.toMatrix(modelMatrix, 0)
+      
+      // Scale and position the arrow
+      Matrix.scaleM(modelMatrix, 0, ARROW_SCALE, ARROW_SCALE, ARROW_SCALE)
+      Matrix.rotateM(modelMatrix, 0, rotation, 0f, 1f, 0f)
+      
+      // Calculate alpha based on distance (fade out distant arrows)
+      val distance = calculateDistance(
+        LatLng(cameraGeospatialPose.latitude, cameraGeospatialPose.longitude),
+        point
+      )
+      val alpha = (1.0f - (distance / (ARROW_SPACING * MAX_VISIBLE_ARROWS))).coerceIn(0.2f, 0.8f)
+      
+      // Draw the arrow with appropriate color and transparency
+      virtualObjectShader.setVec4("u_Color", floatArrayOf(1f, 1f, 1f, alpha))
+      virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+      render.draw(arrowMesh, virtualObjectShader)
+    }
+  }
+
+  private fun drawDestinationMarker(render: SampleRender, earth: Earth, cameraGeospatialPose: GeospatialPose) {
+    destinationAnchor?.let { anchor ->
+      if (anchor.trackingState == TrackingState.TRACKING) {
+        // Get the pose of the destination anchor
+        anchor.pose.toMatrix(modelMatrix, 0)
+        
+        // Scale and position the destination marker
+        Matrix.scaleM(modelMatrix, 0, 2f, 2f, 2f)
+        Matrix.translateM(modelMatrix, 0, 0f, 2f, 0f)
+        
+        // Add a pulsing animation
+        val pulseFactor = 1f + 0.2f * sin(System.currentTimeMillis() * 0.003f)
+        Matrix.scaleM(modelMatrix, 0, pulseFactor, pulseFactor, pulseFactor)
+        
+        // Draw with a distinct color
+        virtualObjectShader.setVec4("u_Color", floatArrayOf(1f, 0.3f, 0f, 0.8f))
+        virtualObjectShader.setMat4("u_ModelViewProjection", modelViewProjectionMatrix)
+        render.draw(virtualObjectMesh, virtualObjectShader)
+      }
+    }
+  }
+
+  // Helper function to find next points along route
+  private fun findNextRoutePoints(currentPoint: LatLng, count: Int): List<LatLng> {
+    val points = mutableListOf<LatLng>()
+    var lastPoint = currentPoint
+    var remainingDistance = count * ARROW_SPACING
+    
+    var routeIndex = routePoints.indexOf(currentPoint)
+    if (routeIndex == -1) {
+      // Find closest point on route
+      routeIndex = findClosestRoutePointIndex(currentPoint, routePoints)
+    }
+    
+    while (points.size < count && routeIndex < routePoints.size - 1) {
+      val nextPoint = routePoints[routeIndex + 1]
+      val segmentDistance = calculateDistance(lastPoint, nextPoint)
+      
+      if (segmentDistance <= remainingDistance) {
+        points.add(nextPoint)
+        lastPoint = nextPoint
+        remainingDistance -= segmentDistance
+        routeIndex++
+      } else {
+        // Interpolate a point along this segment
+        val fraction = remainingDistance / segmentDistance
+        val interpolated = interpolateLatLng(lastPoint, nextPoint, fraction)
+        points.add(interpolated)
+        break
+      }
+    }
+    
+    return points
+  }
+
+  // Helper function to interpolate between two LatLng points
+  private fun interpolateLatLng(start: LatLng, end: LatLng, fraction: Float): LatLng {
+    return LatLng(
+      start.latitude + (end.latitude - start.latitude) * fraction,
+      start.longitude + (end.longitude - start.longitude) * fraction
+    )
+  }
+
+  // Helper function to calculate bearing between two points
+  private fun calculateBearing(start: LatLng, end: LatLng): Float {
+    val startLat = Math.toRadians(start.latitude)
+    val endLat = Math.toRadians(end.latitude)
+    val dLng = Math.toRadians(end.longitude - start.longitude)
+    
+    val y = sin(dLng) * cos(endLat)
+    val x = cos(startLat) * sin(endLat) - sin(startLat) * cos(endLat) * cos(dLng)
+    
+    return Math.toDegrees(atan2(y, x)).toFloat()
   }
   
   // Check if an anchor is within visible range of the user
