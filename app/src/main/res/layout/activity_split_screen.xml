@@ -116,7 +116,15 @@
                         android:textSize="14sp" />
 
                 </LinearLayout>
-                
+
+                <!-- Navigation Overlay (initially hidden) -->
+                <include
+                    android:id="@+id/map_navigation_overlay"
+                    layout="@layout/map_navigation_overlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:visibility="gone" />
+
                 <!-- Mode control buttons positioned in the bottom-left corner of map section -->
                 <LinearLayout
                     android:id="@+id/mode_controls"
@@ -151,6 +159,60 @@
             </FrameLayout>
 
         </LinearLayout>
+
+        <!-- Transport Mode Icons - positioned at the bottom-left above controls bar -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/split_screen_transport_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="16dp"
+            app:cardBackgroundColor="#FFFFFF"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="4dp"
+            android:visibility="gone">
+            
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="8dp">
+
+                <!-- Walking Mode Button -->
+                <ImageView
+                    android:id="@+id/split_walking_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:padding="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_walking"
+                    android:contentDescription="Walking"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Two Wheeler Mode Button -->
+                <ImageView
+                    android:id="@+id/split_two_wheeler_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:padding="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_two_wheeler"
+                    android:contentDescription="Two Wheeler"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Car Mode Button -->
+                <ImageView
+                    android:id="@+id/split_car_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:padding="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_car"
+                    android:contentDescription="Car" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
 
     </FrameLayout>
 

@@ -31,6 +31,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+<<<<<<< HEAD
 
 # New additions from the code block
 .DS_Store
@@ -40,3 +41,9 @@ out/
 gradle-app.setting
 !gradle-wrapper.jar
 .gradletasknamecache
+=======
+<<<<<<< HEAD
+=======
+local.properties
+>>>>>>> aa77e5378985bbb16e4493f985f2046e93bc796d
+>>>>>>> c151f18695107cbc89324a0da3b7f4399532b9e2

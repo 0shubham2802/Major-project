@@ -23,9 +23,11 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.util.Log
 
 /** Helper to ask camera permission.  */
 object GeoPermissionsHelper {
+  private const val TAG = "GeoPermissionsHelper"
   private val PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION)
 
   /** Check to see we have the necessary permissions for this app.  */
@@ -35,15 +37,33 @@ object GeoPermissionsHelper {
     }
   }
 
+  /** Check if we have camera permission specifically */
+  fun hasCameraPermission(activity: Activity): Boolean {
+    return ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) == 
+      PackageManager.PERMISSION_GRANTED
+  }
+
+  /** Request camera permission specifically */
+  fun requestCameraPermission(activity: Activity) {
+    ActivityCompat.requestPermissions(
+      activity, 
+      arrayOf(Manifest.permission.CAMERA), 
+      CAMERA_PERMISSION_CODE)
+  }
+
   /** Check to see we have the necessary permissions for this app, and ask for them if we don't.  */
   fun requestPermissions(activity: Activity?) {
-    ActivityCompat.requestPermissions(
-      activity!!, PERMISSIONS, 0)
+    activity?.let {
+      ActivityCompat.requestPermissions(
+        it, PERMISSIONS, GEO_PERMISSION_CODE)
+      
+      Log.d(TAG, "Requesting permissions: ${PERMISSIONS.joinToString()}")
+    }
   }
 
   /** Check to see if we need to show the rationale for this permission.  */
   fun shouldShowRequestPermissionRationale(activity: Activity): Boolean {
-    return PERMISSIONS.any {  ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
+    return PERMISSIONS.any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
   }
 
   /** Launch Application Setting to grant permission.  */
@@ -53,4 +73,8 @@ object GeoPermissionsHelper {
     intent.data = Uri.fromParts("package", activity.packageName, null)
     activity.startActivity(intent)
   }
+  
+  // Permission request codes
+  const val CAMERA_PERMISSION_CODE = 101
+  const val GEO_PERMISSION_CODE = 102
 }
