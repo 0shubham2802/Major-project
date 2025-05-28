@@ -7,6 +7,12 @@ import android.util.Log
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.PolylineOptions
+import com.google.maps.DirectionsApi
+import com.google.maps.GeoApiContext
+import com.google.maps.android.PolyUtil
+import com.google.maps.model.DirectionsResult
+import com.google.maps.model.TravelMode
+import com.google.ar.core.codelabs.hellogeospatial.R
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.IOException
@@ -15,6 +21,8 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.ArrayList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Helper class for fetching directions from Google Maps Directions API
@@ -64,19 +72,36 @@ class DirectionsHelper(private val context: Context) {
         fun onDirectionsError(errorMessage: String)
     }
     
+    private val geoApiContext: GeoApiContext by lazy {
+        GeoApiContext.Builder()
+            .apiKey(context.getString(R.string.google_maps_key))
+            .build()
+    }
+    
     /**
      * Fetch directions between two points (basic)
      */
-    fun getDirections(origin: LatLng, destination: LatLng, listener: DirectionsListener) {
-        FetchDirectionsTask(object : DirectionsWithInstructionsListener {
-            override fun onDirectionsReady(pathPoints: List<LatLng>, instructions: List<String>, steps: List<DirectionStep>) {
-                listener.onDirectionsReady(pathPoints)
+    suspend fun getDirections(origin: LatLng, destination: LatLng, travelMode: TravelMode): List<LatLng> = withContext(Dispatchers.IO) {
+        try {
+            val result = DirectionsApi.newRequest(geoApiContext)
+                .origin(com.google.maps.model.LatLng(origin.latitude, origin.longitude))
+                .destination(com.google.maps.model.LatLng(destination.latitude, destination.longitude))
+                .mode(travelMode)
+                .await()
+
+            if (result.routes.isEmpty() || result.routes[0].legs.isEmpty()) {
+                return@withContext emptyList()
             }
-            
-            override fun onDirectionsError(errorMessage: String) {
-                listener.onDirectionsError(errorMessage)
+
+            // Convert encoded polyline to list of LatLng
+            val encodedPath = result.routes[0].overviewPolyline.encodedPath
+            return@withContext PolyUtil.decode(encodedPath).map { 
+                LatLng(it.lat, it.lng)
             }
-        }, currentTransportMode).execute(origin, destination)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext emptyList()
+        }
     }
     
     /**

@@ -28,6 +28,7 @@ import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.Polyline
 import com.google.ar.core.ArCoreApk
@@ -53,6 +54,11 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
 import androidx.cardview.widget.CardView
+import com.google.maps.model.TravelMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Split-screen activity showing both AR and Map views simultaneously
@@ -1527,8 +1533,24 @@ private fun retryMapLoading() {
         }
     }
     
-    private fun drawRouteOnMap(pathPoints: List<LatLng>) {
-        directionsHelper.drawRouteOnMap(googleMap!!, pathPoints)
+    private fun drawRouteOnMap(routePoints: List<LatLng>) {
+        // Clear any existing polylines
+        map?.polylines?.forEach { it.remove() }
+        
+        // Draw the new route
+        val polylineOptions = PolylineOptions()
+            .addAll(routePoints)
+            .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
+            .width(12f)
+        
+        map?.addPolyline(polylineOptions)
+        
+        // Adjust camera to show the entire route
+        if (routePoints.isNotEmpty()) {
+            val bounds = LatLngBounds.builder()
+            routePoints.forEach { bounds.include(it) }
+            map?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 100))
+        }
     }
     
     private fun launchARMode() {

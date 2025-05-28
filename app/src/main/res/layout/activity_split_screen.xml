@@ -210,6 +210,39 @@
                     android:src="@drawable/ic_car"
                     android:contentDescription="Car" />
 
+                <!-- Split Walking Mode Button -->
+                <Button
+                    android:id="@+id/split_walking_mode_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Split Walking"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginBottom="8dp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/walking_mode_button" />
+
+                <!-- Four Wheeler Mode Button -->
+                <Button
+                    android:id="@+id/four_wheeler_mode_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Four Wheeler"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginBottom="8dp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/walking_mode_button" />
+
+                <!-- Split Four Wheeler Mode Button -->
+                <Button
+                    android:id="@+id/split_four_wheeler_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Split Four Wheeler"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginBottom="8dp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/split_walking_mode_button" />
+
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>

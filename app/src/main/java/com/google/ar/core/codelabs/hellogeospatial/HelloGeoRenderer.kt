@@ -75,6 +75,8 @@ class HelloGeoRenderer(val context: Context) :
     private const val ARROW_SPACING = 3.0f      // Meters between arrows
     private const val MAX_VISIBLE_ARROWS = 5     // Maximum number of arrows visible at once
     private const val PATH_LINE_WIDTH = 0.15f    // Width of the path line in meters
+    private const val DISTANCE_SCALE_FACTOR = 0.1f  // Scale factor for AR visualization
+    private const val ARROW_HEIGHT = 1.7f  // Height of the AR arrow above ground
   }
 
   lateinit var backgroundRenderer: BackgroundRenderer
@@ -374,7 +376,7 @@ class HelloGeoRenderer(val context: Context) :
       val end = routePoints[i + 1]
       
       // Create anchors at regular intervals along the line
-      val distance = calculateDistance(start, end)
+      val distance = calculateDistance(start.latitude, start.longitude, end.latitude, end.longitude)
       val segments = (distance / 2).toInt() // One point every 2 meters
       
       for (j in 0..segments) {
@@ -1352,25 +1354,14 @@ class HelloGeoRenderer(val context: Context) :
   
   // Calculate distance between two points in meters
   private fun calculateDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
-    val earthRadius = 6371000.0 // meters
-    
-    val dLat = toRadians(lat2 - lat1)
-    val dLng = toRadians(lng2 - lng1)
-    
-    val sinHalfDLat = sin(dLat / 2)
-    val sinHalfDLng = sin(dLng / 2)
-    
-    val lat1Rad = toRadians(lat1)
-    val lat2Rad = toRadians(lat2)
-    val cosLat1 = cos(lat1Rad)
-    val cosLat2 = cos(lat2Rad)
-    
-    val a = sinHalfDLat * sinHalfDLat + 
-            cosLat1 * cosLat2 * sinHalfDLng * sinHalfDLng
-    
-    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    
-    return earthRadius * c // Distance in meters
+    val earthRadius = 6371.0 // kilometers
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLng = Math.toRadians(lng2 - lng1)
+    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2)
+    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return earthRadius * c
   }
   
   fun clearAnchors() {
@@ -1758,5 +1749,65 @@ class HelloGeoRenderer(val context: Context) :
   
   private fun toDegrees(radians: Double): Double {
     return radians * 180.0 / PI
+  }
+
+  private fun findClosestPointOnRoute(currentLocation: LatLng, routePoints: List<LatLng>): LatLng {
+    var closestPoint = routePoints.first()
+    var minDistance = Double.MAX_VALUE
+    
+    for (point in routePoints) {
+      val distance = calculateDistance(
+        currentLocation.latitude, currentLocation.longitude,
+        point.latitude, point.longitude
+      )
+      if (distance < minDistance) {
+        minDistance = distance
+        closestPoint = point
+      }
+    }
+    
+    return closestPoint
+  }
+
+  private fun findClosestRoutePointIndex(currentLocation: LatLng, routePoints: List<LatLng>): Int {
+    var closestIndex = 0
+    var minDistance = Double.MAX_VALUE
+    
+    for (i in routePoints.indices) {
+      val point = routePoints[i]
+      val distance = calculateDistance(
+        currentLocation.latitude, currentLocation.longitude,
+        point.latitude, point.longitude
+      )
+      if (distance < minDistance) {
+        minDistance = distance
+        closestIndex = i
+      }
+    }
+    
+    return closestIndex
+  }
+
+  private fun updateArrowPosition(currentLocation: LatLng, targetLocation: LatLng) {
+    val distance = calculateDistance(
+      currentLocation.latitude, currentLocation.longitude,
+      targetLocation.latitude, targetLocation.longitude
+    )
+    
+    // Convert distance to meters and scale for AR visualization
+    val scaledDistance = (distance * 1000).toFloat() * DISTANCE_SCALE_FACTOR
+    
+    // Calculate direction vector
+    val dx = (targetLocation.longitude - currentLocation.longitude).toFloat()
+    val dy = (targetLocation.latitude - currentLocation.latitude).toFloat()
+    
+    // Calculate rotation angle
+    val angle = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+    
+    // Update arrow transform matrix
+    Matrix.setIdentityM(modelMatrix, 0)
+    Matrix.translateM(modelMatrix, 0, 0f, ARROW_HEIGHT, -scaledDistance)
+    Matrix.rotateM(modelMatrix, 0, angle, 0f, 1f, 0f)
+    Matrix.scaleM(modelMatrix, 0, ARROW_SCALE, ARROW_SCALE, ARROW_SCALE)
   }
 }
