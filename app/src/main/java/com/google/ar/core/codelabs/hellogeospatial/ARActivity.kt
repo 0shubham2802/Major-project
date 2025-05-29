@@ -611,15 +611,21 @@ class ARActivity : AppCompatActivity() {
         super.onResume()
         
         try {
-            // Resume AR session
+            // Resume ARCore session
             arCoreSessionHelper.onResume()
             
-            // Resume navigation updates if we were navigating
-            if (isNavigating) {
-                startNavigationUpdates()
-            }
+            // Resume rendering
+            surfaceView.onResume()
+            
+            // Resume our custom view
+            view.onResume(arCoreSessionHelper.session)
+            
+            // Update lifecycle state
+            lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+            
         } catch (e: Exception) {
             Log.e(TAG, "Error in onResume", e)
+            showError("Failed to resume AR: ${e.message}")
         }
     }
     
@@ -627,11 +633,18 @@ class ARActivity : AppCompatActivity() {
         super.onPause()
         
         try {
-            view.onPause()
+            // Pause ARCore session
             arCoreSessionHelper.onPause()
             
-            // Stop navigation updates
-            navigationUpdateHandler?.removeCallbacksAndMessages(null)
+            // Pause rendering
+            surfaceView.onPause()
+            
+            // Pause our custom view
+            view.onPause(arCoreSessionHelper.session)
+            
+            // Update lifecycle state
+            lifecycleRegistry.currentState = Lifecycle.State.STARTED
+            
         } catch (e: Exception) {
             Log.e(TAG, "Error in onPause", e)
         }

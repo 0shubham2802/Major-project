@@ -1535,22 +1535,28 @@ private fun retryMapLoading() {
     
     private fun drawRouteOnMap(routePoints: List<LatLng>) {
         // Clear any existing polylines
-        map?.polylines?.forEach { it.remove() }
-        
-        // Draw the new route
-        val polylineOptions = PolylineOptions()
-            .addAll(routePoints)
-            .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
-            .width(12f)
-        
-        map?.addPolyline(polylineOptions)
-        
-        // Adjust camera to show the entire route
-        if (routePoints.isNotEmpty()) {
-            val bounds = LatLngBounds.builder()
-            routePoints.forEach { bounds.include(it) }
-            map?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 100))
+        googleMap?.let { map ->
+            map.clear() // This will clear all polylines
+            
+            // Draw the new route
+            val polylineOptions = com.google.android.gms.maps.model.PolylineOptions()
+                .addAll(routePoints)
+                .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
+                .width(12f)
+            
+            map.addPolyline(polylineOptions)
+            
+            // Adjust camera to show the entire route
+            if (routePoints.isNotEmpty()) {
+                val bounds = com.google.android.gms.maps.model.LatLngBounds.builder()
+                routePoints.forEach { bounds.include(it) }
+                map.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 100))
+            }
         }
+    }
+    
+    private fun drawRoute(points: List<LatLng>) {
+        drawRouteOnMap(points)
     }
     
     private fun launchARMode() {

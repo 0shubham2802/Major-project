@@ -96,7 +96,7 @@ class DirectionsHelper(private val context: Context) {
             // Convert encoded polyline to list of LatLng
             val encodedPath = result.routes[0].overviewPolyline.encodedPath
             return@withContext PolyUtil.decode(encodedPath).map { 
-                LatLng(it.lat, it.lng)
+                LatLng(it.latitude, it.longitude)
             }
         } catch (e: Exception) {
             e.printStackTrace()

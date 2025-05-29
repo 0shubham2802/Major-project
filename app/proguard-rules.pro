@@ -11,8 +11,6 @@
 -keep class com.google.android.gms.location.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -keep class com.google.android.gms.tasks.** { *; }
-<<<<<<< HEAD
-=======
 
 # Keep the AR Core classes
 -keep class com.google.ar.** { *; }
@@ -53,4 +51,20 @@
 -keepclassmembers class **.R$* {
     public static <fields>;
 }
->>>>>>> c151f18695107cbc89324a0da3b7f4399532b9e2
+
+# Please add these rules to your existing keep rules in order to suppress warnings.
+# This is generated automatically by the Android Gradle plugin.
+-dontwarn com.google.ar.sceneform.animation.AnimationEngine
+-dontwarn com.google.ar.sceneform.animation.AnimationLibraryLoader
+-dontwarn com.google.ar.sceneform.assets.Loader
+-dontwarn com.google.ar.sceneform.assets.ModelData
+-dontwarn com.google.devtools.build.android.desugar.runtime.ThrowableExtension
+-dontwarn org.bouncycastle.jsse.BCSSLParameters
+-dontwarn org.bouncycastle.jsse.BCSSLSocket
+-dontwarn org.bouncycastle.jsse.provider.BouncyCastleJsseProvider
+-dontwarn org.conscrypt.Conscrypt$Version
+-dontwarn org.conscrypt.Conscrypt
+-dontwarn org.conscrypt.ConscryptHostnameVerifier
+-dontwarn org.openjsse.javax.net.ssl.SSLParameters
+-dontwarn org.openjsse.javax.net.ssl.SSLSocket
+-dontwarn org.openjsse.net.ssl.OpenJSSE
